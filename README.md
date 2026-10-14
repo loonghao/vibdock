@@ -6,6 +6,8 @@ Use a microphone button to talk to an agent, silence an input device, and get ba
 
 **Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Pending source changes add authenticated Web configuration, a resident Windows shortcut binding, two executable entry points, and dual-entry packaging. These changes have local integration evidence but are not a new published release. Physical Ulanzi buttons and native launcher/tray interaction still need acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting controls remain planned; VibDock is independent of these vendors.
 
+**Known service limitation:** Pending service builds have failed responsiveness checks with slow clients. A proposed transport repair also fails normal browser authorization. These failures are being repaired and must pass both normal configuration and resilience checks before a resident-service release. Current review builds are not accepted for unattended use.
+
 ## Download and run
 
 Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); the pending release pipeline packages both and checks their executable subsystems. No Node.js, Python, or separate Web server is required.
