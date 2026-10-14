@@ -39,7 +39,26 @@ Adapters declare actions, scope, prerequisites, and state-query capability. CLI,
 
 All device/application data is mock data. No audio, global capture, desktop overlay, app detection, plugin loading, or authenticated control API is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS; the page probes `/health` to show whether that service is running, and the embedded server's CSP permits same-origin requests for that probe while leaving every other directive locked down.
 
-Bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`, so they survive a reload or reopen in the same browser. This is still a design artifact, not backend persistence: it is per-browser, is not shared with the resident service, and is not a device configuration. The page states this wherever a save succeeds, and reports an explicit error when the browser refuses to write. The header badge and the banner distinguish three situations: service running in design-preview mode, service running with audio control, and no service reachable.
+Bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`, so they survive a reload or reopen in the same browser. This is a draft, not the authoritative configuration: it is per-browser and is not shared with the resident service.
+
+## Service mode versus design-preview mode
+
+The page runs in one of two modes, reported by `GET /health` and shown in the header badge and banner.
+
+In **design-preview mode** (`audio_control: false`, no token published) the service is read-only. The page keeps its previous behaviour: devices and applications are mock data, actions only preview feedback, and saves go no further than the browser draft. No authorization is offered because there is nothing to authorize against.
+
+In **service mode** (`audio_control: true`) the backend exposes an authenticated API. The page then:
+
+- accepts a one-use bootstrap code when the launcher opens the page with one, exchanges it for a scoped session token, and erases the code from the address bar so it cannot be replayed from a shared link. The session token is held in memory only — never in `localStorage`, never in the URL, never logged — and is sent as `X-Vibdock-Token` on each request. The bootstrap endpoint is service-owned;
+- falls back to a manual token paste **only while that endpoint does not exist**, labelled in the UI as a temporary route rather than the finished flow;
+- verifies any token against `GET /api/config` before treating the session as authorized, and reports an invalid token as such;
+- loads real capture devices from `POST /api/actions/devices` and requires one to be selected before saving;
+- writes configuration with `POST /api/config` and updates the page draft **only after the backend confirms the write**, so a failed save never replaces what is actually configured;
+- calls `POST /api/actions/{status,mute,unmute,toggle}` for the test action and distinguishes a verified outcome (the service read back a real mute state) from a request that was accepted but not verifiable.
+
+Only the microphone device is offered as a target; Codex, WorkBuddy, and WeChat Input remain labelled unsupported and cannot be selected, so a selection never implies integration support that does not exist. Global hotkey and hardware-origin claims are likewise not made: browser key capture is not global registration, and the page says so.
+
+The backend stores exactly one binding — a device plus a hotkey — and the page represents it that way, in its own section, rather than attributing it to whichever hardware button happens to be selected. Per-key bindings are not a backend capability; the hardware buttons in the device view select which draft is being edited and remain explicitly a draft concept until the service grows per-key configuration.
 
 ## Interaction behavior
 
