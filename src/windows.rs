@@ -529,13 +529,20 @@ mod tests {
             );
             // Whether or not this layout maps it, no sentinel stands in:
             // the result is a real virtual key or an explicit absence.
-            match character_key(character) {
-                Some(mapping) => assert_ne!(
-                    u32::from(mapping as u8),
+            //
+            // The guard must read `virtual_key`'s u32 result directly. A
+            // narrower check on the u16 mapping folded through `as u8` can
+            // never equal u32::MAX, so it would pass no matter what.
+            match virtual_key(Key::Character(character)) {
+                Some(key) => assert_ne!(
+                    key,
                     u32::MAX,
                     "{character} must not resolve to the sentinel virtual key"
                 ),
-                None => assert_eq!(virtual_key(Key::Character(character)), None),
+                None => assert!(
+                    character_key(character).is_none(),
+                    "{character} must only be absent because the layout lacks it"
+                ),
             }
         }
     }
