@@ -60,6 +60,32 @@ async function req(route, options = {}) {
   assert.ok(ready, "Service readiness exceeded 15 seconds");
   assert.ok(token);
   assert.equal((await req("/health")).status, 200);
+  const idle = net.createConnection({ host: "127.0.0.1", port });
+  idle.on("error", () => {});
+  try {
+    await new Promise((resolve, reject) => {
+      idle.once("connect", resolve);
+      idle.once("error", reject);
+    });
+    await pause(80);
+    assert.equal((await req("/health")).status, 200);
+    assert.equal((await req("/api/config")).status, 200);
+    console.log(
+      "PASS idle preconnection: health and authenticated configuration remain responsive",
+    );
+  } catch (error) {
+    failures.push(`idle preconnection: ${error.name}: ${error.message}`);
+    console.error(`FAIL ${failures.at(-1)}`);
+  } finally {
+    idle.destroy();
+  }
+  await pause(80);
+  assert.equal(
+    (await req("/health")).status,
+    200,
+    "Service must recover after the owned idle connection closes",
+  );
+
   try {
     const payload = JSON.stringify({ hotkey: "Ctrl + Alt + Shift + F20" });
     const status = await new Promise((resolve, reject) => {
