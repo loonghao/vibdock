@@ -112,6 +112,8 @@ function updateModeLabels(){
 // updated only after the service confirms the write, so a failed save never
 // replaces what is actually configured.
 async function saveBinding(){
+  if(mode==='service'&&!serviceToken){say('保存失败：页面未授权，请从托盘重新打开配置或重新授权。','error');return;}
+
   const shortcut=$('shortcut').value.trim();
   if(!shortcut){$('shortcutError').textContent='请先录入快捷键。';$('shortcut').setAttribute('aria-invalid','true');say('保存失败：还没有录入触发快捷键。','error');return;}
   const other=conflictFor(shortcut,selected);
@@ -149,7 +151,7 @@ $('save').onclick=saveBinding;
 $('revert').onclick=()=>{loadEditor();say('已放弃未保存的修改。','idle');};
 $('conflictCancel').onclick=()=>{conflict=null;showEditor();say('请改用其他组合键，或选择别的按键。','idle');$('record').focus();};
 $('conflictReplace').onclick=()=>{if(!conflict)return;$('editor-body').hidden=false;$('conflictView').hidden=true;saved.delete(conflictFor(conflict.shortcut,selected));conflict=null;saveBinding();};
-$('test').onclick=async ()=>{const label=actionLabel($('target').value,$('action').value);
+$('test').onclick=async ()=>{if(mode==='service'&&!serviceToken){say('测试失败：页面未授权，请重新打开配置。','error');return;}const label=actionLabel($('target').value,$('action').value);
 if(mode==='service'&&serviceToken){
   const deviceId=$('device').value||'';
   if(!deviceId){toast('测试失败 · 请先选择麦克风','error');say('测试失败：尚未选择服务返回的麦克风。','error');return;}
@@ -332,6 +334,15 @@ function renderBindingStatus(config){
     if(fresh)say(status.textContent,'ok');
   }
 }
+function expireBrowserSession(){
+  serviceToken=null;
+  bindingPollStarted=false;
+  $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';
+  $('authRow').hidden=false;
+  $('authError').textContent='会话已过期或服务已重启，请从托盘重新打开配置页。';
+  $('sbStatus').textContent='运行状态未知 · 页面未授权';$('sbStatus').dataset.state='unknown';
+  $('device').disabled=true;
+}
 function startBindingStatusPoll(){
   if(bindingPollStarted)return;
   bindingPollStarted=true;
@@ -342,6 +353,7 @@ function startBindingStatusPoll(){
       const timeout=setTimeout(()=>controller.abort(),5000);
       try{
         const response=await api('/api/config',{signal:controller.signal});
+        if(response.status===401||response.status===403){expireBrowserSession();return;}
         if(!response.ok)throw new Error('服务未确认状态');
         renderBindingStatus(await readJson(response));
       }catch{
