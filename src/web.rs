@@ -363,10 +363,13 @@ mod tests {
         service_mode: bool,
     ) -> (u16, String) {
         // A private state directory keeps these writes away from the user's
-        // real configuration and from any shared LOCALAPPDATA.
+        // real configuration and from any shared LOCALAPPDATA. The name is
+        // unique per call, so concurrent or interleaved callers never share a
+        // tree: no cleanup ordering can delete a directory another call is
+        // still writing into.
         let guard = STATE_DIR_LOCK.lock().unwrap();
         let original = std::env::var_os("LOCALAPPDATA");
-        let dir = std::env::temp_dir().join(format!("vibdock-web-test-{}", std::process::id()));
+        let dir = private_test_dir();
         std::env::set_var("LOCALAPPDATA", &dir);
         let state = Config::default();
         let (mut code, mut mime, mut payload) = route(
@@ -404,14 +407,32 @@ mod tests {
             Some(value) => std::env::set_var("LOCALAPPDATA", value),
             None => std::env::remove_var("LOCALAPPDATA"),
         }
-        drop(guard);
+        // Clean up while still holding the lock. Releasing first lets another
+        // test set the same PID-derived directory and write into it while this
+        // cleanup deletes it, which surfaced as a spurious 500 from a failed
+        // config save inside the deleted tree.
         let _ = fs::remove_dir_all(&dir);
+        drop(guard);
         (code, payload)
     }
 
     /// Serialises tests that temporarily redirect `LOCALAPPDATA`, because the
     /// process-wide environment is shared across the parallel test runner.
     static STATE_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Distinguishes the private state directory of each `call`, so two calls
+    /// never share one tree even if their lifetimes overlap.
+    static STATE_DIR_SEQUENCE: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// Returns a state directory unique to one caller.
+    ///
+    /// Uniqueness per call — rather than per process — is what makes the tests
+    /// safe: a cleanup in one call cannot delete a tree another call is using.
+    fn private_test_dir() -> std::path::PathBuf {
+        let unique = STATE_DIR_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!("vibdock-web-test-{}-{unique}", std::process::id()))
+    }
 
     /// Routes a request whose body was rejected as oversized or undecodable.
     fn call_rejected(method: &Method, path: &str, service_mode: bool) -> u16 {
@@ -701,6 +722,40 @@ mod tests {
             .0,
             401
         );
+    }
+
+    #[test]
+    fn repeated_config_writes_each_get_their_own_state_dir() {
+        // Regression: every `call` previously shared one PID-derived directory,
+        // so a cleanup running while another caller was still using the tree
+        // deleted it mid-write and a valid request came back as a 500 from a
+        // failed save. Concurrent use from another thread must not corrupt or
+        // invalidate this call's own private directory.
+        let writer = std::thread::spawn(|| {
+            for _ in 0..50 {
+                let dir = private_test_dir();
+                let _ = fs::create_dir_all(&dir);
+                let _ = fs::write(dir.join("probe.txt"), b"x");
+                let _ = fs::remove_dir_all(&dir);
+            }
+        });
+        for attempt in 0..25 {
+            let (code, payload) = call(
+                &Method::Post,
+                "/api/config",
+                host().as_str(),
+                Some("http://127.0.0.1:43128"),
+                true,
+                "{\"hotkey\":\"F9\"}",
+                true,
+            );
+            assert_eq!(code, 200, "attempt {attempt}: expected 200, got {payload}");
+            assert!(
+                payload.contains("\"hotkey\":\"F9\""),
+                "attempt {attempt}: payload was {payload}"
+            );
+        }
+        writer.join().expect("writer thread must not panic");
     }
 
     #[test]
