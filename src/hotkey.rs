@@ -106,12 +106,16 @@ impl Key {
         if name.is_empty() {
             return None;
         }
-        if let Some(digits) = name.strip_prefix(['f', 'F']) {
+        if let Some(digits) = name
+            .strip_prefix(['f', 'F'])
+            .filter(|digits| !digits.is_empty())
+        {
             let number: u8 = digits.parse().ok()?;
             return (1..=24).contains(&number).then_some(Key::Function(number));
         }
         const NAMED: &[(&str, Key)] = &[
             ("space", Key::Character(' ')),
+            ("plus", Key::Character('+')),
             ("enter", Key::Enter),
             ("return", Key::Enter),
             ("escape", Key::Escape),
@@ -148,6 +152,7 @@ impl Key {
             // The space key would otherwise serialise as an invisible,
             // unparseable run of whitespace inside a `+`-separated string.
             Key::Character(' ') => "Space".to_string(),
+            Key::Character('+') => "Plus".to_string(),
             Key::Character(character) => character.to_string(),
             Key::Escape => "Escape".to_string(),
             Key::Enter => "Enter".to_string(),
@@ -365,6 +370,8 @@ mod tests {
             "Ctrl + Escape",
             "Alt + Tab",
             "Ctrl + A",
+            "Ctrl + F",
+            "Ctrl + Shift + Plus",
             "Ctrl + Alt + 1",
             "Shift + Slash",
         ] {
