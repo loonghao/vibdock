@@ -171,14 +171,14 @@ pub(crate) fn instance_path() -> Result<PathBuf> {
 
 /// Live-instance record: the bound port and the token guarding writes.
 #[derive(Debug, PartialEq)]
-pub(crate) struct Instance {
-    pub(crate) port: u16,
-    pub(crate) token: String,
+pub struct Instance {
+    pub port: u16,
+    pub token: String,
 }
 
 impl Instance {
     /// Serialises the record as a single JSON line.
-    pub(crate) fn to_json(&self) -> String {
+    pub fn to_json(&self) -> String {
         format!("{{\"port\":{},\"token\":\"{}\"}}", self.port, self.token)
     }
 
@@ -226,7 +226,7 @@ pub(crate) fn read_instance() -> Option<Instance> {
 /// either — an unrelated process can inherit the port. The candidate must
 /// answer an authenticated challenge on the recorded address, so the port is
 /// confirmed to be held by a service holding this exact token.
-pub(crate) fn live_instance() -> Option<Instance> {
+pub fn live_instance() -> Option<Instance> {
     let instance = read_instance()?;
     instance_answers(instance.port, &instance.token).then_some(instance)
 }
@@ -251,9 +251,17 @@ fn challenge(port: u16, token: &str) -> Option<bool> {
         "GET /instance HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
          Authorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))
-        .or_else(|_| std::net::TcpStream::connect(("::1", port)))
-        .ok()?;
+    let mut stream = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(150),
+    )
+    .or_else(|_| {
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+            std::time::Duration::from_millis(150),
+        )
+    })
+    .ok()?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_millis(700)))
         .ok()?;
@@ -282,9 +290,17 @@ fn challenge(port: u16, token: &str) -> Option<bool> {
 /// Only used to detect that a port is occupied by a foreign process, never as
 /// proof that our service is running — see [`instance_answers`].
 pub(crate) fn probe_port(port: u16) -> bool {
-    std::net::TcpStream::connect(("127.0.0.1", port))
-        .or_else(|_| std::net::TcpStream::connect(("::1", port)))
-        .is_ok()
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(150),
+    )
+    .or_else(|_| {
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+            std::time::Duration::from_millis(150),
+        )
+    })
+    .is_ok()
 }
 
 /// Removes a stale instance marker, but only after proving no valid owner
@@ -648,7 +664,7 @@ impl Config {
     }
 
     /// Serialises the config as a single JSON line.
-    pub(crate) fn to_json(&self) -> String {
+    pub fn to_json(&self) -> String {
         serde_json::json!({
             "device_id": self.device_id.clone().unwrap_or_default(),
             "hotkey": self.hotkey.clone().unwrap_or_default(),

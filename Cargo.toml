@@ -3,10 +3,22 @@ name = "vibdock"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "vibdock"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vibdock"
+path = "src/bin/vibdock.rs"
+
+[[bin]]
+name = "vibdock-launcher"
+path = "src/bin/vibdock-launcher.rs"
+
 [dependencies]
 serde_json = "1"
 tiny_http = "0.12"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Variant", "Win32_System_Com", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
+windows = { version = "0.61", features = ["Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Variant", "Win32_System_Com", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_IO", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
 

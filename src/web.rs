@@ -14,7 +14,7 @@ use crate::{
 
 const PAGE: &str = include_str!("../docs/design/index.html");
 /// Formats the loopback bind address for the configured port.
-pub(crate) fn address() -> String {
+pub fn address() -> String {
     format!("127.0.0.1:{}", service::port())
 }
 /// Upper bound on a request body. Bodies larger than this are rejected with
@@ -324,8 +324,18 @@ fn with_headers<T: std::io::Read>(response: Response<T>) -> Response<T> {
 /// When `instance` carries a token the server publishes its address, accepts
 /// authenticated writes, and clears the published record on shutdown. Without a
 /// token it behaves exactly as the previous read-only design preview.
-pub(crate) fn serve(instance: Option<Instance>) -> Result<()> {
+pub fn serve(instance: Option<Instance>) -> Result<()> {
     let server = Server::http(address()).map_err(|e| e.to_string())?;
+    serve_server(server, instance)
+}
+
+/// Adopts the startup claim without releasing its bound port.
+pub fn serve_listener(listener: std::net::TcpListener, instance: Option<Instance>) -> Result<()> {
+    let server = Server::from_listener(listener, None).map_err(|e| e.to_string())?;
+    serve_server(server, instance)
+}
+
+fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
     let token = instance.as_ref().map(|i| i.token.clone());
     if let Some(instance) = &instance {
         service::write_instance(instance)?;

@@ -8,7 +8,7 @@ Use a microphone button to talk to an agent, silence an input device, and get ba
 
 ## Download and run
 
-Release archives contain one Rust executable and this README. No Node.js, Python, or separate Web server is required.
+Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); packaging both is pending. No Node.js, Python, or separate Web server is required.
 
 | Platform | Current capability |
 | --- | --- |
@@ -62,17 +62,23 @@ clears its instance marker as it exits.
 
 ## Tray entry (Windows)
 
-`tray` runs a notification icon with **Open configuration**, **Status**, and
-**Exit**, sharing the same service core as the console CLI:
+Double-click `vibdock-launcher.exe` to start or reuse an authenticated resident
+service, open its configuration page, and show a notification icon with
+**Open configuration**, **Status**, and **Exit**. The launcher and console CLI
+share the same Rust core. Keep both executables in the same directory.
 
 ```powershell
-.ibdock.exe tray
+.\vibdock-launcher.exe
 ```
 
 The tray owns no business logic: Open launches the service's own bound URL,
 Status reports whether a service is answering, and Exit performs the same
 authenticated shutdown as `service-stop`. Repeated launches reuse the running
-instance rather than starting a second one.
+instance rather than starting a second one. The service is a separate process:
+closing the browser or terminating the launcher leaves it running. Tray Exit
+requests an authenticated shutdown; a shutdown error keeps the tray available.
+Native tray interaction still requires desktop acceptance. The page remains a
+design preview until its separate backend integration is delivered.
 
 Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
 tests, so they do not disturb a service already on the default one.

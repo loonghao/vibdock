@@ -9,8 +9,11 @@
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM},
-        System::LibraryLoader::GetModuleHandleW,
+        Foundation::{
+            CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND, LPARAM,
+            LRESULT, POINT, WPARAM,
+        },
+        System::{LibraryLoader::GetModuleHandleW, Threading::CreateMutexW},
         UI::{
             Shell::{
                 ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD,
@@ -30,12 +33,67 @@ const MENU_OPEN: u32 = 1;
 const MENU_STATUS: u32 = 2;
 const MENU_EXIT: u32 = 3;
 
+/// Name of the mutex that keeps a single tray instance alive.
+const TRAY_MUTEX: &str = "VibDockTraySingleton";
+
+/// Claims exclusive ownership of the tray icon for this process.
+///
+/// `RegisterClassW` only fails for a class already registered *in this
+/// process*, so it cannot tell us another tray is running. A named mutex is
+/// visible across processes and is the correct single-instance check here.
+struct TraySingleton(HANDLE);
+
+impl TraySingleton {
+    /// Takes the claim, or returns `None` if another tray already holds it.
+    ///
+    /// `CreateMutexW` succeeds whether or not it created the mutex; the
+    /// distinguishing signal is `GetLastError` reporting
+    /// `ERROR_ALREADY_EXISTS`. That is the standard Win32 single-instance
+    /// pattern, and the only reliable way to see another process's claim.
+    fn acquire() -> Option<TraySingleton> {
+        let name: Vec<u16> = TRAY_MUTEX.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            let handle = CreateMutexW(None, false, PCWSTR(name.as_ptr())).ok()?;
+            let already_running = GetLastError() == ERROR_ALREADY_EXISTS;
+            if already_running {
+                let _ = CloseHandle(handle);
+                return None;
+            }
+            Some(TraySingleton(handle))
+        }
+    }
+}
+
+impl Drop for TraySingleton {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
 /// Runs the tray entry until the user chooses Exit.
 ///
 /// Shows a notification icon with Open / Status / Exit. Exit performs the real
 /// authenticated shutdown of the resident service, so the tray is what stops
 /// the service on Windows rather than a process terminated by name.
-pub(crate) fn run() -> crate::Result<()> {
+///
+/// Only one tray runs at a time. `RegisterClassW` is process-local, so it
+/// cannot detect another instance; a named mutex can, and it is what stops a
+/// second double-click from stacking a second icon over the service this tray
+/// already controls.
+pub fn run() -> crate::Result<()> {
+    // Held for the lifetime of the tray; dropping it on return releases the
+    // claim so a later launch can take it again.
+    let _singleton = match TraySingleton::acquire() {
+        Some(guard) => guard,
+        None => {
+            // Another tray is already running. It owns the icon and the menu,
+            // so the useful action is to open its page and leave it in control.
+            open_configuration();
+            return Ok(());
+        }
+    };
     unsafe {
         let instance = GetModuleHandleW(None)?;
         // A message-only window: the tray icon needs one to receive events.
@@ -143,9 +201,14 @@ fn show_menu(window: HWND) -> Option<u32> {
     }
 }
 
-/// Opens the service's own bound URL in the default browser.
+/// Opens the running service's actual bound URL in the default browser.
+///
+/// Uses the live instance's recorded port, not this process's own address: a
+/// launcher and the resident service can be started with different
+/// `VIBDOCK_PORT` values, and opening the wrong one would show a page that
+/// does not control the running service.
 fn open_configuration() {
-    let url = format!("http://{}/", crate::web::address());
+    let url = crate::configuration_url();
     let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
     unsafe {
         // SW_SHOWNORMAL; the result is advisory and the service stays up either
@@ -162,10 +225,38 @@ fn open_configuration() {
 }
 
 /// Reports whether a resident service is currently answering.
+///
+/// Uses a message box rather than stdout: this entry point is a GUI-subsystem
+/// executable with no console, so printed output would be invisible.
 fn report_status() {
-    match service::live_instance() {
-        Some(instance) => println!("Service running on http://127.0.0.1:{}", instance.port),
-        None => println!("Service not running."),
+    let (title, body) = match service::live_instance() {
+        Some(instance) => (
+            "VibDock — Running",
+            format!(
+                "The VibDock service is running on http://127.0.0.1:{}.\n\n\
+                 The token is available in the service state file.",
+                instance.port
+            ),
+        ),
+        None => (
+            "VibDock — Not running",
+            "No VibDock service is currently running.".to_string(),
+        ),
+    };
+    notify(title, &body, MB_ICONINFORMATION);
+}
+
+/// Shows a small dialog. The only visible channel in a GUI-subsystem binary.
+fn notify(title: &str, body: &str, icon: MESSAGEBOX_STYLE) {
+    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+    let body: Vec<u16> = body.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let _ = MessageBoxW(
+            None,
+            PCWSTR(body.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | icon,
+        );
     }
 }
 
@@ -193,11 +284,27 @@ fn message_loop() -> crate::Result<()> {
                         // instance is asked to stop with its own token, so this
                         // never terminates an unrelated process.
                         match service::request_shutdown() {
-                            Ok(true) => println!("Service stopped."),
-                            Ok(false) => println!("Service not running."),
-                            Err(error) => eprintln!("ERROR: {error}"),
+                            Ok(true) => return Ok(()),
+                            Ok(false) => {
+                                // Nothing was running, so there is nothing left
+                                // to control. Leaving is correct here.
+                                return Ok(());
+                            }
+                            Err(error) => {
+                                // A failed shutdown must NOT close the tray.
+                                // Doing so would abandon a live service with no
+                                // way to reach it, and the user would have to
+                                // find and kill the process by hand.
+                                notify(
+                                    "VibDock — Could not stop the service",
+                                    &format!(
+                                        "{error}\n\nThe tray stays open so the service remains \
+                                         reachable. Close it again to retry."
+                                    ),
+                                    MB_ICONWARNING,
+                                );
+                            }
                         }
-                        return Ok(());
                     }
                     _ => {}
                 }
