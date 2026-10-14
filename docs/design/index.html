@@ -338,13 +338,17 @@ function startBindingStatusPoll(){
   async function tick(){
     if(!serviceToken){bindingPollStarted=false;return;}
     if(!document.hidden){
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),5000);
       try{
-        const response=await api('/api/config');
+        const response=await api('/api/config',{signal:controller.signal});
         if(!response.ok)throw new Error('服务未确认状态');
         renderBindingStatus(await readJson(response));
       }catch{
         $('sbStatus').textContent='运行状态未知 · 无法读取服务';
         $('sbStatus').dataset.state='unknown';
+      }finally{
+        clearTimeout(timeout);
       }
     }
     setTimeout(tick,1000);
