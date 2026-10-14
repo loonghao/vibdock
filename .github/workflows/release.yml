@@ -39,13 +39,14 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            executable: vibdock.exe
+            cli: vibdock.exe
+            launcher: vibdock-launcher.exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            executable: vibdock
+            cli: vibdock
           - os: macos-latest
             target: aarch64-apple-darwin
-            executable: vibdock
+            cli: vibdock
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions:
@@ -68,24 +69,17 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
           RELEASE_TARGET: ${{ matrix.target }}
-          EXECUTABLE: ${{ matrix.executable }}
+          CLI_EXECUTABLE: ${{ matrix.cli }}
+          LAUNCHER_EXECUTABLE: ${{ matrix.launcher }}
         run: |
-          $package = "vibdock-$env:RELEASE_TAG-$env:RELEASE_TARGET"
-          New-Item -ItemType Directory -Path $package | Out-Null
-          Copy-Item "target/$env:RELEASE_TARGET/release/$env:EXECUTABLE" "$package/"
-          Copy-Item README.md "$package/"
-          if ($IsWindows) {
-            $archive = "$package.zip"
-            Compress-Archive -Path "$package/*" -DestinationPath $archive
-          } else {
-            $archive = "$package.tar.gz"
-            tar -czf $archive -C $package .
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          $digest = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          # Force a single LF terminator so `sha256sum -c` accepts the sidecar on
-          # every platform; Set-Content would emit CRLF on the Windows runner.
-          "$digest  $archive`n" | Set-Content "$archive.sha256" -Encoding ascii -NoNewline
+          # Windows target packages vibdock.exe + vibdock-launcher.exe + README.md,
+          # fails on any missing artifact, and verifies the console/GUI subsystems.
+          # Unix targets package the CLI entry only; the launcher is Windows-only.
+          ./scripts/package-release.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -Target $env:RELEASE_TARGET `
+            -CliExecutable $env:CLI_EXECUTABLE `
+            -LauncherExecutable $env:LAUNCHER_EXECUTABLE
       - name: Upload binaries
         shell: pwsh
         env:
