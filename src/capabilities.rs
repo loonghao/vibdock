@@ -5,6 +5,12 @@
 //! the environment was inspected but no live state was confirmed; only
 //! [`Support::Verified`] may be reported as working. This distinction keeps
 //! shortcut dispatch from being presented as confirmed platform state.
+//!
+//! [`Support::Unknown`] is the level for capabilities that were never inspected.
+//! A probe that reports from documentation alone must use it: not finding a
+//! documented API does not establish that the capability is absent. Only an
+//! inspection that looked and found nothing may report
+//! [`Support::Unsupported`].
 
 use std::collections::BTreeMap;
 
@@ -17,6 +23,7 @@ pub enum Capability {
     AudioIdentity,
     InputMute,
     AppMute,
+    PlaybackSessionMute,
 }
 
 impl Capability {
@@ -29,17 +36,19 @@ impl Capability {
             Self::AudioIdentity => "audio_identity",
             Self::InputMute => "input_mute",
             Self::AppMute => "app_mute",
+            Self::PlaybackSessionMute => "playback_session_mute",
         }
     }
 
     /// All capabilities, for enumeration in reports.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Show,
         Self::StartVoice,
         Self::EndVoice,
         Self::AudioIdentity,
         Self::InputMute,
         Self::AppMute,
+        Self::PlaybackSessionMute,
     ];
 }
 
@@ -48,10 +57,13 @@ impl Capability {
 pub enum Support {
     /// Observed live on the installed client; safe to report as working.
     Verified,
-    /// Environment inspected, no live confirmation. Dispatch is not success.
+    /// Inspected, no live confirmation. Dispatch is not success.
     Unverified,
     /// Inspected and confirmed absent.
+    #[allow(dead_code, reason = "available to adapters that do inspect")]
     Unsupported,
+    /// Not inspected. Absence of documentation is not proof of absence.
+    Unknown,
 }
 
 impl Support {
@@ -60,6 +72,7 @@ impl Support {
             Self::Verified => "verified",
             Self::Unverified => "unverified",
             Self::Unsupported => "unsupported",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -101,6 +114,11 @@ impl Report {
         self.findings.iter().any(|f| f.support != Support::Verified)
     }
 
+    /// True when at least one finding was never inspected.
+    pub fn has_unknown(&self) -> bool {
+        self.findings.iter().any(|f| f.support == Support::Unknown)
+    }
+
     /// Render as `name=level` pairs, stable and easy to diff.
     pub fn summary(&self) -> BTreeMap<String, &'static str> {
         self.findings
@@ -126,7 +144,7 @@ pub fn report_all() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!("{}", report.integration);
         for finding in &report.findings {
             println!(
-                "  {:<15} {:<12} {}",
+                "  {:<22} {:<12} {}",
                 finding.capability.as_str(),
                 finding.support.as_str(),
                 finding.detail
@@ -146,7 +164,14 @@ pub fn report_all() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("  verified: {}", verified.join(", "));
         }
         if report.has_unverified() {
-            println!("  note: unverified entries require installed-client evidence");
+            println!(
+                "  note: no entry is verified; these declarations are documentation-derived, not an inspection of the installed client"
+            );
+        }
+        if report.has_unknown() {
+            println!(
+                "  note: unknown entries were never inspected; they are not claims of absence"
+            );
         }
         let summary: Vec<_> = report
             .summary()
@@ -171,6 +196,7 @@ mod tests {
             let support = match capability {
                 Capability::Show => Support::Verified,
                 Capability::AudioIdentity => Support::Unverified,
+                Capability::PlaybackSessionMute => Support::Unknown,
                 _ => Support::Unsupported,
             };
             Finding {
@@ -194,7 +220,21 @@ mod tests {
         let summary = report.summary();
         assert_eq!(summary["show"], "verified");
         assert_eq!(summary["start_voice"], "unsupported");
+        assert_eq!(summary["playback_session_mute"], "unknown");
         assert_eq!(summary.len(), Capability::ALL.len());
+    }
+
+    #[test]
+    fn unknown_is_distinct_from_unsupported() {
+        let report = inspect(&Stub);
+        let unknown = report
+            .findings
+            .iter()
+            .filter(|f| f.support == Support::Unknown)
+            .count();
+        assert_eq!(unknown, 1);
+        assert!(report.has_unknown());
+        assert_ne!(Support::Unknown.as_str(), Support::Unsupported.as_str());
     }
 
     #[test]
