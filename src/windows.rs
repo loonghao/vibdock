@@ -32,7 +32,10 @@ impl HotkeyCode {
     /// reading of the evidence we have — see [`Key`] — since autorepeat is the
     /// keyboard driver's own behaviour and not proof of a button still being
     /// held.
-    pub fn from_hotkey(hotkey: &Hotkey) -> HotkeyCode {
+    ///
+    /// Returns `None` when the key has no virtual-key code on the active
+    /// keyboard layout, so a caller cannot register an unmappable binding.
+    pub fn from_hotkey(hotkey: &Hotkey) -> Option<HotkeyCode> {
         let mut modifiers = HOT_KEY_MODIFIERS(0);
         for modifier in hotkey.modifiers() {
             modifiers |= match modifier {
@@ -42,10 +45,10 @@ impl HotkeyCode {
             };
         }
         modifiers |= MOD_NOREPEAT;
-        HotkeyCode {
+        Some(HotkeyCode {
             modifiers,
-            virtual_key: virtual_key(hotkey.key()),
-        }
+            virtual_key: virtual_key(hotkey.key())?,
+        })
     }
 }
 
@@ -53,27 +56,31 @@ impl HotkeyCode {
 ///
 /// Character keys use the active Windows keyboard layout. Unicode scalar
 /// values are not virtual-key codes; unsupported characters fail registration.
-fn virtual_key(key: Key) -> u32 {
+///
+/// A character the active layout cannot produce has no virtual-key code at
+/// all, so it is reported as `None` rather than falling back to a sentinel
+/// value that could be mistaken for a real key.
+fn virtual_key(key: Key) -> Option<u32> {
     match key {
         // VK_F1 is 0x70 and the function keys are contiguous through VK_F24.
-        Key::Function(number) => 0x6F + u32::from(number),
-        Key::Character(character) => character_key(character)
-            .map(|mapping| u32::from(mapping as u8))
-            .unwrap_or(u32::MAX),
-        Key::Escape => u32::from(VK_ESCAPE.0),
-        Key::Delete => u32::from(VK_DELETE.0),
-        Key::Insert => u32::from(VK_INSERT.0),
-        Key::Home => u32::from(VK_HOME.0),
-        Key::End => u32::from(VK_END.0),
-        Key::PageUp => u32::from(VK_PRIOR.0),
-        Key::PageDown => u32::from(VK_NEXT.0),
-        Key::Up => u32::from(VK_UP.0),
-        Key::Down => u32::from(VK_DOWN.0),
-        Key::Left => u32::from(VK_LEFT.0),
-        Key::Right => u32::from(VK_RIGHT.0),
-        Key::Enter => u32::from(VK_RETURN.0),
-        Key::Tab => u32::from(VK_TAB.0),
-        Key::Backspace => u32::from(VK_BACK.0),
+        Key::Function(number) => Some(0x6F + u32::from(number)),
+        Key::Character(character) => {
+            character_key(character).map(|mapping| u32::from(mapping as u8))
+        }
+        Key::Escape => Some(u32::from(VK_ESCAPE.0)),
+        Key::Delete => Some(u32::from(VK_DELETE.0)),
+        Key::Insert => Some(u32::from(VK_INSERT.0)),
+        Key::Home => Some(u32::from(VK_HOME.0)),
+        Key::End => Some(u32::from(VK_END.0)),
+        Key::PageUp => Some(u32::from(VK_PRIOR.0)),
+        Key::PageDown => Some(u32::from(VK_NEXT.0)),
+        Key::Up => Some(u32::from(VK_UP.0)),
+        Key::Down => Some(u32::from(VK_DOWN.0)),
+        Key::Left => Some(u32::from(VK_LEFT.0)),
+        Key::Right => Some(u32::from(VK_RIGHT.0)),
+        Key::Enter => Some(u32::from(VK_RETURN.0)),
+        Key::Tab => Some(u32::from(VK_TAB.0)),
+        Key::Backspace => Some(u32::from(VK_BACK.0)),
     }
 }
 
@@ -132,7 +139,8 @@ impl RegisteredHotkey {
                 }
             }
         }
-        let code = HotkeyCode::from_hotkey(hotkey);
+        let code = HotkeyCode::from_hotkey(hotkey)
+            .ok_or("The character is unavailable on the active keyboard layout.")?;
         unsafe { RegisterHotKey(None, id, code.modifiers, code.virtual_key) }
             .map_err(registration_error)?;
         Ok(RegisteredHotkey {
@@ -381,8 +389,36 @@ mod tests {
     }
 
     #[test]
+    fn owned_thread_queue_preserves_each_event_without_replay() {
+        std::thread::spawn(|| {
+            let mut message = MSG::default();
+            // Create only this isolated thread's queue. No keyboard input is
+            // injected and no application window or audio endpoint is used.
+            unsafe {
+                let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+            }
+            let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+            for _ in 0..3 {
+                unsafe {
+                    PostThreadMessageW(
+                        thread,
+                        WM_HOTKEY,
+                        windows::Win32::Foundation::WPARAM(3018),
+                        windows::Win32::Foundation::LPARAM(0),
+                    )
+                    .unwrap();
+                }
+            }
+            assert_eq!(poll_hotkey(3018), 3);
+            assert_eq!(poll_hotkey(3018), 0, "Removed messages must never replay");
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
     fn modifiers_translate_to_win32_bits() {
-        let code = HotkeyCode::from_hotkey(&hotkey("Ctrl + Alt + Shift + F9"));
+        let code = HotkeyCode::from_hotkey(&hotkey("Ctrl + Alt + Shift + F9")).unwrap();
         assert!(code.modifiers.0 & MOD_CONTROL.0 != 0, "Ctrl must be set");
         assert!(code.modifiers.0 & MOD_ALT.0 != 0, "Alt must be set");
         assert!(code.modifiers.0 & MOD_SHIFT.0 != 0, "Shift must be set");
@@ -397,7 +433,7 @@ mod tests {
     fn a_subset_of_modifiers_leaves_the_others_clear() {
         // Registering fewer modifiers than the user recorded would hijack
         // ordinary keystrokes, so the mask must match exactly.
-        let code = HotkeyCode::from_hotkey(&hotkey("Ctrl + A"));
+        let code = HotkeyCode::from_hotkey(&hotkey("Ctrl + A")).unwrap();
         assert!(code.modifiers.0 & MOD_CONTROL.0 != 0);
         assert_eq!(
             code.modifiers.0 & MOD_ALT.0,
@@ -409,23 +445,29 @@ mod tests {
 
     #[test]
     fn virtual_keys_match_the_documented_win32_values() {
-        assert_eq!(virtual_key(Key::Function(9)), u32::from(VK_F9.0));
-        assert_eq!(virtual_key(Key::Function(1)), u32::from(VK_F1.0));
-        assert_eq!(virtual_key(Key::Function(24)), u32::from(VK_F24.0));
+        assert_eq!(virtual_key(Key::Function(9)), Some(u32::from(VK_F9.0)));
+        assert_eq!(virtual_key(Key::Function(1)), Some(u32::from(VK_F1.0)));
+        assert_eq!(virtual_key(Key::Function(24)), Some(u32::from(VK_F24.0)));
         // Printable keys are their own uppercase code point, so a recorded
         // digit row key matches the key the user actually presses.
-        assert_eq!(virtual_key(Key::Character('A')), 0x41);
-        assert_eq!(virtual_key(Key::Character('1')), 0x31);
+        assert_eq!(virtual_key(Key::Character('A')), Some(0x41));
+        assert_eq!(virtual_key(Key::Character('1')), Some(0x31));
         assert_eq!(
             virtual_key(Key::Character('/')),
-            character_key('/')
-                .map(|value| u32::from(value as u8))
-                .unwrap_or(u32::MAX)
+            character_key('/').map(|value| u32::from(value as u8))
         );
-        assert_eq!(virtual_key(Key::Character('😀')), u32::MAX);
-        assert_eq!(virtual_key(Key::Escape), u32::from(VK_ESCAPE.0));
-        assert_eq!(virtual_key(Key::Enter), u32::from(VK_RETURN.0));
-        assert_eq!(virtual_key(Key::Up), u32::from(VK_UP.0));
+        assert_eq!(virtual_key(Key::Escape), Some(u32::from(VK_ESCAPE.0)));
+        assert_eq!(virtual_key(Key::Enter), Some(u32::from(VK_RETURN.0)));
+        assert_eq!(virtual_key(Key::Up), Some(u32::from(VK_UP.0)));
+    }
+
+    #[test]
+    fn an_unmappable_character_has_no_virtual_key() {
+        // No sentinel value may stand in for a real key: a character the
+        // active layout cannot produce must be reported as absent, so a
+        // caller cannot register it as an unrelated key.
+        assert_eq!(virtual_key(Key::Character('😀')), None);
+        assert!(HotkeyCode::from_hotkey(&hotkey("Ctrl + 😀")).is_none());
     }
 
     #[test]
@@ -434,7 +476,7 @@ mod tests {
         // few the fixtures happen to use.
         for number in 1..=24 {
             let key = virtual_key(Key::Function(number));
-            assert_eq!(key, u32::from(VK_F1.0) + u32::from(number) - 1);
+            assert_eq!(key, Some(u32::from(VK_F1.0) + u32::from(number) - 1));
         }
     }
 
