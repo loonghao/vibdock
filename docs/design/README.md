@@ -38,3 +38,17 @@ Adapters declare actions, scope, prerequisites, and state-query capability. CLI,
 ## Prototype limits
 
 All device/application data is mock data. Save means page memory only. No audio, global capture, desktop overlay, app detection, plugin loading, or authenticated control API is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS.
+
+## Resident-service lifecycle requirement
+
+The product version must start by double-clicking the executable, launch one local service, and open its configuration page. Closing the browser does not stop the service. A Windows notification-area icon provides Open configuration, status, and Exit. A separate small floating status indicator may be optional; it is not a replacement for a discoverable Exit control.
+
+Repeated launches must discover and reuse the existing service instead of starting a second listener. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port. The current CLI preview does not implement this lifecycle yet.
+
+## Delivery priorities
+
+P0: persist and test bindings; authenticated local configuration and agent actions; resident service lifecycle; Windows hardware capture and device-state readback; WeChat Input shortcut integration; Codex/Mini capability verification and integration.
+
+P1: application output mute with meeting isolation, non-focus-stealing feedback, WorkBuddy integration, extensible adapter contracts and Agent CLI/API/MCP.
+
+P2: Slack/Tencent Meeting scenarios, more hardware/platform adapters, and genuinely supported macOS/Linux audio backends. Cross-platform build success is not platform audio acceptance.
