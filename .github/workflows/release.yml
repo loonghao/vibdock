@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  binaries:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            executable: vibdock.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            executable: vibdock
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            executable: vibdock
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      # GITHUB_TOKEN-created tags do not trigger another workflow: publish here.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets --target ${{ matrix.target }} -- -D warnings
+      - run: cargo test --locked --all-targets --target ${{ matrix.target }}
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package and checksum
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          $package = "vibdock-$env:RELEASE_TAG-$env:RELEASE_TARGET"
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item "target/$env:RELEASE_TARGET/release/$env:EXECUTABLE" "$package/"
+          Copy-Item README.md "$package/"
+          if ($IsWindows) {
+            $archive = "$package.zip"
+            Compress-Archive -Path "$package/*" -DestinationPath $archive
+          } else {
+            $archive = "$package.tar.gz"
+            tar -czf $archive -C $package .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $digest = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  $archive" | Set-Content "$archive.sha256" -Encoding ascii
+      - name: Upload binaries
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          $package = "vibdock-$env:RELEASE_TAG-$env:RELEASE_TARGET"
+          $archive = if ($IsWindows) { "$package.zip" } else { "$package.tar.gz" }
+          gh release upload "$env:RELEASE_TAG" $archive "$archive.sha256" --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
