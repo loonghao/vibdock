@@ -54,9 +54,25 @@ Request bodies are bounded: an oversized or non-UTF-8 body is answered with
 413 rather than read in full. If the OS entropy source fails, the service
 refuses to start instead of minting a weaker token.
 
-`service-stop` reports whether a service is running. Stopping the process
-itself is performed by the tray Exit item or by terminating the service
-process; the cross-process shutdown signal ships with the launcher entry.
+`service-stop` performs a real shutdown: it asks the running service to stop
+over the loopback API using the recorded token, and waits for the port to be
+released. Only the instance that can prove it holds that token is stopped, so
+an unrelated process on the same port is never terminated by name. The service
+clears its instance marker as it exits.
+
+## Tray entry (Windows)
+
+`tray` runs a notification icon with **Open configuration**, **Status**, and
+**Exit**, sharing the same service core as the console CLI:
+
+```powershell
+.ibdock.exe tray
+```
+
+The tray owns no business logic: Open launches the service's own bound URL,
+Status reports whether a service is answering, and Exit performs the same
+authenticated shutdown as `service-stop`. Repeated launches reuse the running
+instance rather than starting a second one.
 
 Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
 tests, so they do not disturb a service already on the default one.
@@ -84,7 +100,7 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
-The control API authenticates callers and validates browser origins. The `serve` preview is read-only, loopback-only, and rejects unexpected Host headers. `service-start` exposes authenticated `/api` configuration and action endpoints; audio control is not wired to them yet. A sent shortcut must not be reported as a verified application state change.
+The control API authenticates callers and validates browser origins. The `serve` preview is read-only, loopback-only, and rejects unexpected Host headers. `service-start` exposes authenticated `/api` configuration and action endpoints, including real microphone status, mute, unmute, and toggle through the Windows audio adapter. A sent shortcut must not be reported as a verified application state change.
 
 See [the interaction specification](docs/design/README.md) and [the clickable design source](docs/design/index.html).
 
@@ -107,8 +123,8 @@ With the default GitHub token, bot-created release PRs do not automatically trig
 
 ### Launch behavior planned for the product
 
-Double-click to start one resident local service and open the Web settings. Close the page to keep hardware/agent connections alive; use the tray menu to reopen settings or exit. Repeated launches reuse the running instance. This lifecycle is planned, not implemented in the current CLI preview.
+Double-click to start one resident local service and open the Web settings. Close the page to keep hardware/agent connections alive; use the tray menu to reopen settings or exit. Repeated launches reuse the running instance. The CLI, the tray entry, and the authenticated shutdown that backs the tray Exit item are implemented; a packaged double-click launcher executable is not published yet.
 
 WeChat Input and Codex/Mini are the first integration priorities. WorkBuddy and meeting-friendly per-application audio controls follow; Slack and Tencent Meeting scenarios remain integration-specific acceptance work.
 
-The latest product launch design uses a thin Windows launcher/tray executable alongside the console CLI, both sharing one Rust core/service. Current preview downloads still contain only the CLI.
+The latest product launch design uses a thin Windows launcher/tray executable alongside the console CLI, both sharing one Rust core/service. The `tray` command implements the tray entry and shares the service core with the CLI; current preview downloads still contain only the CLI.
