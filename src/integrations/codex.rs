@@ -5,11 +5,16 @@
 //! environment was examined.
 //!
 //! Evidence basis: the ChatGPT voice documentation describes a user-configurable
-//! voice chat hotkey under Settings > Voice, and distinguishes live voice
-//! conversation from dictation. It documents no external mute API and no
-//! dedicated mute shortcut. Absence from the documentation is not proof that a
-//! control is absent, so such capabilities are reported as
-//! [`Support::Unknown`], never as [`Support::Unsupported`].
+//! voice chat hotkey under Settings > Voice, a manual "Stop voice chat" control,
+//! and distinguishes live voice conversation from dictation. It documents no
+//! external mute API and no dedicated mute shortcut. Absence from the
+//! documentation is not proof that a control is absent, so such capabilities are
+//! reported as [`Support::Unknown`], never as [`Support::Unsupported`].
+//!
+//! Grade axis, applied uniformly: a capability the documentation describes but
+//! no live client confirmed is [`Support::Unverified`]; one the documentation
+//! does not describe at all is [`Support::Unknown`]. No entry here implies an
+//! installed client was inspected.
 //!
 //! Scope is kept separated from the planned Windows application-playback-session
 //! adapter: muting Codex output through the OS audio session is a different
@@ -40,23 +45,23 @@ impl Probe for Codex {
             ),
             Capability::EndVoice => (
                 Support::Unknown,
-                "Documented as live voice conversation distinct from dictation. End-of-call control is undocumented, not disproven.".to_string(),
+                format!("{SOURCE} documents a manual UI stop only: \"Select Stop voice chat when you finish.\" It documents no configurable hotkey and no external API for ending a call, so external automation of voice end remains unproven rather than disproven. {NOT_INSPECTED}."),
             ),
             Capability::AudioIdentity => (
                 Support::Unknown,
-                "Target audio identity requires live readback from the installed client. No public API is documented.".to_string(),
+                format!("Target audio identity requires live readback from the installed client. No public API is documented. {NOT_INSPECTED}."),
             ),
             Capability::InputMute => (
                 Support::Unknown,
-                "Microphone input mute is handled by the device endpoint rather than by this integration. Codex-side input mute is undocumented, not disproven.".to_string(),
+                format!("Microphone input mute is handled by the device endpoint rather than by this integration. Codex-side input mute is undocumented, not disproven. {NOT_INSPECTED}."),
             ),
             Capability::AppMute => (
                 Support::Unknown,
-                format!("{SOURCE} documents no external mute API and no dedicated mute shortcut. Undocumented is not absent; a Codex-native output mute remains unverified rather than unsupported."),
+                format!("{SOURCE} documents no external mute API and no dedicated mute shortcut. Undocumented is not absent; a Codex-native output mute remains unverified rather than unsupported. {NOT_INSPECTED}."),
             ),
             Capability::PlaybackSessionMute => (
                 Support::Unknown,
-                "Windows application-playback-session mute is a separate planned adapter, out of scope for this integration. Not conflated with any Codex-native mute control.".to_string(),
+                format!("Windows application-playback-session mute is a separate planned adapter, out of scope for this integration. Not conflated with any Codex-native mute control. {NOT_INSPECTED}."),
             ),
         };
         Finding {
@@ -97,12 +102,10 @@ mod tests {
                 .iter()
                 .find(|f| f.capability == capability)
                 .unwrap();
-            assert_ne!(
-                finding.support,
-                Support::Unsupported,
-                "{} is undocumented, not inspected and disproven",
-                capability.as_str()
-            );
+            // Pin the exact grade: Unknown, and neither of the two it could
+            // drift into. Unsupported would claim an inspection that disproved
+            // the capability; Unverified would claim the documentation
+            // describes a mute control, which it does not.
             assert_eq!(
                 finding.support,
                 Support::Unknown,
@@ -110,6 +113,55 @@ mod tests {
                 capability.as_str()
             );
         }
+    }
+
+    #[test]
+    fn end_voice_matches_the_source_it_cites() {
+        let report = inspect(&Codex);
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| f.capability == Capability::EndVoice)
+            .unwrap();
+        assert_eq!(
+            finding.support,
+            Support::Unknown,
+            "the Unknown grade must be scoped to external automation"
+        );
+        // The source documents a manual UI stop, so the detail must admit it
+        // exists while scoping the Unknown grade to external automation.
+        assert!(
+            finding.detail.contains("Stop voice chat"),
+            "must acknowledge the documented manual UI stop"
+        );
+        assert!(
+            finding.detail.contains("no external API"),
+            "must scope the Unknown grade to external automation"
+        );
+        assert!(
+            !finding
+                .detail
+                .contains("End-of-call control is undocumented"),
+            "contradicted by the cited source"
+        );
+    }
+
+    #[test]
+    fn documented_capabilities_are_not_graded_unknown() {
+        let report = inspect(&Codex);
+        // StartVoice is described by the documentation, so it may not sit at
+        // Unknown. This pins the documented -> at least Unverified half of the
+        // grade axis; unknown_is_distinct_from_unsupported pins the other half.
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| f.capability == Capability::StartVoice)
+            .unwrap();
+        assert_ne!(
+            finding.support,
+            Support::Unknown,
+            "start_voice is documented, so it cannot be graded as having no evidence"
+        );
     }
 
     #[test]

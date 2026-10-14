@@ -1,13 +1,18 @@
 //! Capability probing and declarations for platform integrations.
 //!
 //! Integrations are described by [`Capability`] values and resolved at runtime
-//! by [`Probe`] implementations. A probe returning [`Support::Unverified`] means
-//! the environment was inspected but no live state was confirmed; only
-//! [`Support::Verified`] may be reported as working. This distinction keeps
-//! shortcut dispatch from being presented as confirmed platform state.
+//! by [`Probe`] implementations. Only [`Support::Verified`] may be reported as
+//! working; this keeps shortcut dispatch from being presented as confirmed
+//! platform state.
 //!
-//! [`Support::Unknown`] is the level for capabilities that were never inspected.
-//! A probe that reports from documentation alone must use it: not finding a
+//! [`Support::Unverified`] means the capability is known to exist — it is
+//! documented or otherwise declared — but no live state confirmed it. The
+//! evidence for existence does not have to come from an inspection; a probe
+//! that works purely from published documentation uses this level for what the
+//! documentation describes.
+//!
+//! [`Support::Unknown`] is the level for capabilities with no evidence either
+//! way. A probe reporting from documentation alone must use it: not finding a
 //! documented API does not establish that the capability is absent. Only an
 //! inspection that looked and found nothing may report
 //! [`Support::Unsupported`].
@@ -110,6 +115,11 @@ impl Report {
     }
 
     /// True when at least one finding is not verified.
+    ///
+    /// Named for the condition it reports, not for the grade it is most often
+    /// confused with: a report holding a mix of verified and unresolved entries
+    /// returns true here as well.
+    #[allow(dead_code, reason = "part of the report contract for consumers")]
     pub fn has_unverified(&self) -> bool {
         self.findings.iter().any(|f| f.support != Support::Verified)
     }
@@ -163,7 +173,7 @@ pub fn report_all() -> std::result::Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("  verified: {}", verified.join(", "));
         }
-        if report.has_unverified() {
+        if verified.is_empty() {
             println!(
                 "  note: no entry is verified; these declarations are documentation-derived, not an inspection of the installed client"
             );
@@ -243,5 +253,35 @@ mod tests {
         for capability in Capability::ALL {
             assert!(seen.insert(capability.as_str()));
         }
+    }
+
+    /// A report that mixes grades has both a non-empty verified list and
+    /// unverified entries. The report printer must key its "nothing is
+    /// verified" note off the verified list, not off `has_unverified`, or a
+    /// mixed report contradicts itself.
+    #[test]
+    fn mixed_report_has_both_verified_and_unverified() {
+        struct Mixed;
+        impl Probe for Mixed {
+            fn integration(&self) -> &'static str {
+                "mixed"
+            }
+            fn probe(&self, capability: Capability) -> Finding {
+                let support = if capability == Capability::Show {
+                    Support::Verified
+                } else {
+                    Support::Unknown
+                };
+                Finding {
+                    capability,
+                    support,
+                    detail: "mixed".to_string(),
+                }
+            }
+        }
+        let report = inspect(&Mixed);
+        assert_eq!(report.verified(), vec![Capability::Show]);
+        assert!(report.has_unverified());
+        assert!(report.has_unknown());
     }
 }
