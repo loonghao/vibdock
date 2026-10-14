@@ -239,6 +239,7 @@ enum WriteOutcome {
     /// non-success: reporting 200 here would tell the client a change was saved
     /// that the next restart will not see.
     PersistFailed(String),
+    ActivationFailed(String),
 }
 
 /// True when the bound hotkey was pressed since the last check.
@@ -405,7 +406,7 @@ fn commit_live_patch_with_save(
     let candidate = activate_hotkey(&merged, binding);
     if let Activation::Failed(error) = candidate {
         *activation = activate_hotkey(state, binding);
-        return WriteOutcome::PersistFailed(format!("Shortcut activation failed: {error}"));
+        return WriteOutcome::ActivationFailed(error);
     }
     match save(&merged) {
         Ok(()) => {
@@ -732,6 +733,15 @@ fn accept_loop(
                     mime = "text/plain; charset=utf-8";
                     payload = message.into();
                 }
+                WriteOutcome::ActivationFailed(error) => {
+                    code = 409;
+                    mime = "application/json";
+                    payload = serde_json::json!({
+                        "error": "hotkey_activation_failed",
+                        "message": error,
+                        "binding": serde_json::from_str::<serde_json::Value>(&binding_status(state, &activation)).unwrap(),
+                    }).to_string();
+                }
                 WriteOutcome::PersistFailed(error) => {
                     // Reporting success here would promise a save that never
                     // happened; the client would restart into the old values.
@@ -841,7 +851,9 @@ mod tests {
             &mut binding,
             &mut activation,
         );
-        assert!(matches!(outcome, WriteOutcome::PersistFailed(_)));
+        assert!(
+            matches!(outcome, WriteOutcome::ActivationFailed(message) if message.contains("already registered"))
+        );
         assert!(activation.is_armed());
         assert!(binding.is_some());
         let previous = state.hotkey_binding().unwrap().unwrap();
@@ -994,6 +1006,10 @@ mod tests {
                     code = 400;
                     mime = "text/plain; charset=utf-8";
                     payload = message.into();
+                }
+                WriteOutcome::ActivationFailed(error) => {
+                    code = 409;
+                    payload = error;
                 }
                 WriteOutcome::PersistFailed(error) => {
                     code = 500;
