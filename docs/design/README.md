@@ -43,7 +43,9 @@ Bindings are saved to the browser's own `localStorage` under `vibdock.design.bin
 
 ## Interaction behavior
 
-Setup follows the three guided steps shown above: capture a key, choose a target and action, then test and save. The step indicator reflects which step is active and which are already satisfied.
+Setup follows the three guided steps shown above: capture a key, choose a target and action, then test and save. The step indicator marks a step satisfied only after the user actually performs it — choosing an action is not credited merely because the selector shows a default — and flags one step as active at a time.
+
+Switching to a different key while a draft is unsaved asks for confirmation before discarding it, so an entered shortcut is never lost silently. The same draft can also be dropped explicitly with the discard button, which appears only while the editor differs from what is saved.
 
 Because the mock cannot identify a physical device, capture still reports that the source device is unconfirmed rather than inventing one. Saving a shortcut already assigned to another key opens an explicit replace-versus-recapture choice instead of silently overwriting it; replacing removes the older binding. Saving with no shortcut is blocked with an inline field error, and the status line renders failures in the error style rather than the success style.
 
