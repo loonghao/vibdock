@@ -12,7 +12,7 @@ Use a 14px body, 17px panel headings, 27px page heading, 8px spacing rhythm, res
 
 ## Views
 
-1. Bindings: device preview on the left, trigger/target/action editor on the right. Quick setup starts bounded key capture.
+1. Bindings: device preview on the left, trigger/target/action editor on the right, with a saved-binding list beside the device. Quick setup starts bounded key capture. Select a key from either the device outline or the list.
 2. Audio: distinguish hardware input, hardware output, and application playback sessions. Persist device identity; never silently fall back to another microphone.
 3. Integrations: separately show installed detection, connection, available actions, and verified state. Planned integrations remain visibly unavailable.
 4. Feedback: preview a corner notification and optional breathing border, including failures.
@@ -37,7 +37,21 @@ Adapters declare actions, scope, prerequisites, and state-query capability. CLI,
 
 ## Prototype limits
 
-All device/application data is mock data. Save means page memory only. No audio, global capture, desktop overlay, app detection, plugin loading, or authenticated control API is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS.
+All device/application data is mock data. No audio, global capture, desktop overlay, app detection, plugin loading, or authenticated control API is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS; the page probes `/health` to show whether that service is running, and the embedded server's CSP permits same-origin requests for that probe while leaving every other directive locked down.
+
+Bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`, so they survive a reload or reopen in the same browser. This is still a design artifact, not backend persistence: it is per-browser, is not shared with the resident service, and is not a device configuration. The page states this wherever a save succeeds, and reports an explicit error when the browser refuses to write. The header badge and the banner distinguish three situations: service running in design-preview mode, service running with audio control, and no service reachable.
+
+## Interaction behavior
+
+Setup follows the three guided steps shown above: capture a key, choose a target and action, then test and save. The step indicator reflects which step is active and which are already satisfied.
+
+Because the mock cannot identify a physical device, capture still reports that the source device is unconfirmed rather than inventing one. Saving a shortcut already assigned to another key opens an explicit replace-versus-recapture choice instead of silently overwriting it; replacing removes the older binding. Saving with no shortcut is blocked with an inline field error, and the status line renders failures in the error style rather than the success style.
+
+The scope note under the action selector always states what a control affects. Device input mute warns that every application using that microphone is affected, while application output mute states that meeting and system master output are not.
+
+## Feedback states
+
+The feedback view previews each result state separately: trigger received, action pending, verified success, dispatched without verification, and failure. The status line and toast carry text for every state, so a state is never conveyed by color alone. The breathing border remains opt-in and follows the reduced-motion preference.
 
 ## Resident-service lifecycle requirement
 

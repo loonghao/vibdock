@@ -4,7 +4,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Windows microphone controls work today. The Web configuration screen is an interactive design prototype, not a live control panel. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting integrations are planned, not implemented. VibDock is independent of these vendors.
+**Early preview:** Windows microphone controls work today. The Web configuration screen is an interactive design prototype, not a live control panel: it guides a binding from key capture through test and save, persists bindings in the browser's local storage, and reports service, conflict, and failure states, but it does not execute real actions. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting integrations are planned, not implemented. VibDock is independent of these vendors.
 
 ## Download and run
 
@@ -20,7 +20,7 @@ Release archives contain one Rust executable and this README. No Node.js, Python
 .\vibdock.exe serve
 ```
 
-Open http://127.0.0.1:43128 to explore the design. The preview uses mock data, keeps changes only in page memory, and never controls audio. Close the terminal or press Ctrl+C to stop the preview server. The current `serve` and `listen` commands are separate processes.
+Open http://127.0.0.1:43128 to explore the design. The preview uses mock data, never controls audio, and keeps bindings in the browser's own local storage so they survive a reload — they are not written to any backend or device configuration. Close the terminal or press Ctrl+C to stop the preview server. The current `serve` and `listen` commands are separate processes.
 
 ## Control a microphone on Windows
 
