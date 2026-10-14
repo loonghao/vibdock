@@ -4,7 +4,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Windows microphone controls work today. The Web configuration screen is an interactive design prototype, not a live control panel. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting integrations are planned, not implemented. VibDock is independent of these vendors.
+**Early preview:** Windows microphone commands and authenticated Web configuration are implemented. Service mode reads capture devices, persists one device/shortcut pair, and exposes device actions; design-preview mode uses mock data and browser-local drafts. Global activation of saved shortcuts and native hardware/tray acceptance remain pending. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting integrations are planned. VibDock is independent of these vendors.
 
 ## Download and run
 
@@ -20,7 +20,7 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 .\vibdock.exe serve
 ```
 
-Open http://127.0.0.1:43128 to explore the design. The preview uses mock data, keeps changes only in page memory, and never controls audio. Close the terminal or press Ctrl+C to stop the preview server. The current `serve` and `listen` commands are separate processes.
+Open http://127.0.0.1:43128 to explore the design. The preview uses mock data, never controls audio, and keeps bindings in the browser's own local storage so they survive a reload — they are not written to any backend or device configuration. Close the terminal or press Ctrl+C to stop the preview server. The current `serve` and `listen` commands are separate processes.
 
 ## Resident service
 
@@ -61,8 +61,8 @@ clear the fragment immediately and redeem it at `POST /api/bootstrap` with
 60 seconds and cannot be reused. Sessions expire after eight hours or a service
 restart; they permit configuration and device actions, but not service shutdown,
 instance identity, or issuing more codes. Pending codes and sessions are bounded.
-Frontend consumption is being integrated separately; the existing preview does
-not yet complete this automatic authorization flow.
+The service-mode page consumes the code automatically and clears the fragment
+before redemption. Reopen the page from the tray when a code or session expires.
 
 `service-stop` performs a real shutdown: it asks the running service to stop
 over the loopback API using the recorded token, and waits for the port to be
@@ -87,8 +87,8 @@ authenticated shutdown as `service-stop`. Repeated launches reuse the running
 instance rather than starting a second one. The service is a separate process:
 closing the browser or terminating the launcher leaves it running. Tray Exit
 requests an authenticated shutdown; a shutdown error keeps the tray available.
-Native tray interaction still requires desktop acceptance. The page remains a
-design preview until its separate backend integration is delivered.
+Native tray interaction still requires desktop acceptance. Service mode provides
+authenticated configuration; `serve` keeps the separate read-only design preview.
 
 Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
 tests, so they do not disturb a service already on the default one.

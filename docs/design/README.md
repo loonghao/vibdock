@@ -12,7 +12,7 @@ Use a 14px body, 17px panel headings, 27px page heading, 8px spacing rhythm, res
 
 ## Views
 
-1. Bindings: device preview on the left, trigger/target/action editor on the right. Quick setup starts bounded key capture.
+1. Bindings: device preview on the left, trigger/target/action editor on the right, with a saved-binding list beside the device. Quick setup starts bounded key capture. Select a key from either the device outline or the list.
 2. Audio: distinguish hardware input, hardware output, and application playback sessions. Persist device identity; never silently fall back to another microphone.
 3. Integrations: separately show installed detection, connection, available actions, and verified state. Planned integrations remain visibly unavailable.
 4. Feedback: preview a corner notification and optional breathing border, including failures.
@@ -33,11 +33,46 @@ Distinguish trigger received, action pending, verified success, shortcut dispatc
 
 ## Agent and plugin direction
 
-Adapters declare actions, scope, prerequisites, and state-query capability. CLI, future authenticated loopback HTTP API, and MCP share the same execution contracts. Detection is not connection, connection is not action success. Do not expose arbitrary command execution through a Web binding endpoint.
+Adapters declare actions, scope, prerequisites, and state-query capability. CLI and authenticated loopback HTTP share execution contracts; MCP remains planned. Detection is not connection, connection is not action success. Do not expose arbitrary command execution through a Web binding endpoint.
 
 ## Prototype limits
 
-All device/application data is mock data. Save means page memory only. No audio, global capture, desktop overlay, app detection, or plugin loading is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS.
+Design-preview mode uses mock devices and browser-local drafts. Authenticated service mode can read real Windows capture devices and persist configuration. Platform integrations and global hotkey activation remain pending.
+
+Bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`, so they survive a reload or reopen in the same browser. This is a draft, not the authoritative configuration: it is per-browser and is not shared with the resident service.
+
+## Service mode versus design-preview mode
+
+The page runs in one of two modes, reported by `GET /health` and shown in the header badge and banner.
+
+In **design-preview mode** (`audio_control: false`, no token published) the service is read-only. The page keeps its previous behaviour: devices and applications are mock data, actions only preview feedback, and saves go no further than the browser draft. No authorization is offered because there is nothing to authorize against.
+
+In **service mode** (`audio_control: true`) the backend exposes an authenticated API. The page then:
+
+- accepts a one-use bootstrap code when the launcher opens the page with one, exchanges it for a scoped session token, and erases the code from the address bar so it cannot be replayed from a shared link. The session token is held in memory only — never in `localStorage`, never in the URL, never logged — and is sent as `X-Vibdock-Token` on each request. The bootstrap endpoint is service-owned;
+- falls back to a manual token paste **only while that endpoint does not exist**, labelled in the UI as a temporary route rather than the finished flow;
+- verifies any token against `GET /api/config` before treating the session as authorized, and reports an invalid token as such;
+- loads real capture devices from `POST /api/actions/devices` and requires one to be selected before saving;
+- writes configuration with `POST /api/config` and updates the page draft **only after the backend confirms the write**, so a failed save never replaces what is actually configured;
+- calls `POST /api/actions/{status,mute,unmute,toggle}` for the test action and distinguishes a verified outcome (the service read back a real mute state) from a request that was accepted but not verifiable.
+
+Only the microphone device is offered as a target; Codex, WorkBuddy, and WeChat Input remain labelled unsupported and cannot be selected, so a selection never implies integration support that does not exist. Global hotkey and hardware-origin claims are likewise not made: browser key capture is not global registration, and the page says so.
+
+The backend stores exactly one binding — a device plus a hotkey — and the page represents it that way, in its own section, rather than attributing it to whichever hardware button happens to be selected. Per-key bindings are not a backend capability; the hardware buttons in the device view select which draft is being edited and remain explicitly a draft concept until the service grows per-key configuration.
+
+## Interaction behavior
+
+Setup follows the three guided steps shown above: capture a key, choose a target and action, then test and save. The step indicator marks a step satisfied only after the user actually performs it — choosing an action is not credited merely because the selector shows a default — and flags one step as active at a time.
+
+Switching to a different key while a draft is unsaved asks for confirmation before discarding it, so an entered shortcut is never lost silently. The same draft can also be dropped explicitly with the discard button, which appears only while the editor differs from what is saved.
+
+Because the mock cannot identify a physical device, capture still reports that the source device is unconfirmed rather than inventing one. Saving a shortcut already assigned to another key opens an explicit replace-versus-recapture choice instead of silently overwriting it; replacing removes the older binding. Saving with no shortcut is blocked with an inline field error, and the status line renders failures in the error style rather than the success style.
+
+The scope note under the action selector always states what a control affects. Device input mute warns that every application using that microphone is affected, while application output mute states that meeting and system master output are not.
+
+## Feedback states
+
+The feedback view previews each result state separately: trigger received, action pending, verified success, dispatched without verification, and failure. The status line and toast carry text for every state, so a state is never conveyed by color alone. The breathing border remains opt-in and follows the reduced-motion preference.
 
 ## Service API contract
 
@@ -54,13 +89,12 @@ All device/application data is mock data. Save means page memory only. No audio,
 
 The `serve` preview remains read-only and unauthenticated: it serves the page and reports `design-preview` mode.
 
+
 ## Resident-service lifecycle requirement
 
 The product version must start by double-clicking the executable, launch one local service, and open its configuration page. Closing the browser does not stop the service. A Windows notification-area icon provides Open configuration, status, and Exit. A separate small floating status indicator may be optional; it is not a replacement for a discoverable Exit control.
 
-Repeated launches must discover and reuse the existing service instead of starting a second listener. That reuse check is implemented: the published instance record is only a candidate, and the listener on that port must answer an authenticated `GET /instance` challenge with the recorded token before it is trusted. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port.
-
-Remaining lifecycle work: a packaged double-click launcher executable, and wiring the saved hotkey so the resident service registers and unregisters the real global shortcut. The `tray` command implements the notification-area entry with Open configuration, Status, and Exit; `service-stop` and the tray Exit item both perform a real authenticated shutdown; single-instance reuse and persisted configuration are implemented; and the API exposes real microphone devices/status/mute/unmute/toggle actions through the shared adapter. Microphone mute is kept distinct from application voice or output state, and no action reports platform state it did not read back.
+Repeated launches must discover and reuse the existing service instead of starting a second listener. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port. The current CLI preview does not implement this lifecycle yet.
 
 ## Delivery priorities
 
