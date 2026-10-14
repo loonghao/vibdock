@@ -474,7 +474,7 @@ fn route(
             (
                 200,
                 "application/json",
-                format!("{{\"mode\":\"{mode}\",\"audio_control\":{token_configured}}}"),
+                serde_json::json!({"mode": mode, "audio_control": token_configured && cfg!(windows)}).to_string(),
             )
         }
         (Method::Get, "/instance") => {
@@ -1116,6 +1116,13 @@ mod tests {
         )
         .1
         .contains("design-preview"));
+    }
+
+    #[test]
+    fn health_reports_platform_audio_support() {
+        let (_, body) = call(&Method::Get, "/health", &host(), None, true, "", true);
+        let health: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(health["audio_control"], cfg!(windows));
     }
 
     #[test]

@@ -141,7 +141,7 @@ document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{sto
 document.querySelectorAll('.hardware [data-key]').forEach(button=>button.onclick=()=>selectKey(button.dataset.key));
 $('target').onchange=()=>{actionChosen=true;refresh();};$('action').onchange=()=>{actionChosen=true;scope();markDirty();};
 $('record').onclick=()=>{if(recording){stopRecord();say('已取消录入。','idle');return}recording=true;$('record').textContent='取消录入';$('record').setAttribute('aria-pressed','true');say('请在本页按下组合键；Esc 取消，10 秒后超时。','idle');timer=setTimeout(()=>{stopRecord();say('未收到按键。可以先在 Ulanzi Studio 设置独立快捷键。','error')},10000)};
-document.addEventListener('keydown',e=>{if(!recording)return;if(e.key==='Escape'){e.preventDefault();stopRecord();say('已取消录入。','idle');return}if(['Control','Alt','Shift','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');if(e.metaKey)parts.push('Win');parts.push(e.key===' '?'Space':e.key.length===1?e.key.toUpperCase():e.key);$('shortcut').value=parts.join(' + ');$('shortcutError').textContent='';$('shortcut').setAttribute('aria-invalid','false');stopRecord();say('已识别组合键；网页无法确认来源设备。','idle');markDirty();});
+document.addEventListener('keydown',e=>{if(!recording)return;if(e.key==='Escape'){e.preventDefault();stopRecord();say('已取消录入。','idle');return}if(['Control','Alt','Shift','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');if(e.metaKey)parts.push('Win');parts.push(e.key===' '?'Space':e.key==='+'?'Plus':e.key.length===1?e.key.toUpperCase():e.key);$('shortcut').value=parts.join(' + ');$('shortcutError').textContent='';$('shortcut').setAttribute('aria-invalid','false');stopRecord();say('已识别组合键；网页无法确认来源设备。','idle');markDirty();});
 $('save').onclick=saveBinding;
 $('revert').onclick=()=>{loadEditor();say('已放弃未保存的修改。','idle');};
 $('conflictCancel').onclick=()=>{conflict=null;showEditor();say('请改用其他组合键，或选择别的按键。','idle');$('record').focus();};
@@ -318,7 +318,7 @@ function renderBindingStatus(config){
   if(!action||!Number.isSafeInteger(action.sequence)||action.sequence<0)return;
   const fresh=lastActionSequence!==null&&action.sequence>lastActionSequence;
   lastActionSequence=action.sequence;
-  if(action.sequence===0)return;
+  if(action.sequence===0||config.hotkey_live!==true)return;
   if(action.error){
     status.textContent='上次按键执行失败：'+action.error;status.dataset.state='error';
     if(fresh)say(status.textContent,'error');
