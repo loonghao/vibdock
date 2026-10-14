@@ -71,3 +71,15 @@ P1: application output mute with meeting isolation, non-focus-stealing feedback,
 P2: Slack/Tencent Meeting scenarios, more hardware/platform adapters, and genuinely supported macOS/Linux audio backends. Cross-platform build success is not platform audio acceptance.
 
 Latest launch decision: use two thin Windows entry executables (a double-click launcher/tray application and a console CLI) backed by the same Rust core and one resident service. This supersedes the earlier single-entry launch proposal; it does not duplicate business logic. The current preview still ships only the CLI executable.
+
+### Resident hotkey action feedback (Windows source)
+
+Authenticated `GET /api/config` includes `hotkey_live` (the service currently holds a Windows registration), `activation_error`, and `last_action`:
+
+```json
+{"sequence":0,"state":null,"error":null}
+```
+
+The sequence starts at zero for each service instance and advances after each handled hotkey action. A successful audio readback sets `state` to `LIVE` or `MUTED`; failure clears `state` and sets `error`. Registration and saving alone do not create a successful action. Each queued press is handled separately; Windows `MOD_NOREPEAT` suppresses held-key repeats. This status is a completed action result, not a continuous meter of changes made by other applications. Clients must reset their event cursor on service restart.
+
+The native adapter remains Windows-only. Physical Ulanzi identity, hold-to-talk, desktop overlay, and application-specific voice controls require separate implementation and host acceptance.
