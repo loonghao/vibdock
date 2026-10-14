@@ -77,7 +77,10 @@ async function loadDevices(){
   try{
     const response=await api('/api/actions/devices',{method:'POST',body:''});
     const body=await response.text();
-    if(!response.ok)throw new Error(serviceError(response,body));
+    if(!response.ok){
+    if(response.status===409){try{const failure=JSON.parse(body);if(failure.binding)renderBindingStatus(failure.binding);}catch{}}
+    throw new Error(serviceError(response,body));
+  }
     const data=JSON.parse(body);
     const devices=Array.isArray(data&&data.devices)?data.devices:[];
     if(!devices.length){
@@ -214,6 +217,8 @@ function serviceError(response,body){
   if(response.status===405)return '服务处于只读设计稿模式，不能保存配置。';
   if(response.status===413)return '请求体过大或不是合法 UTF-8。';
   if(response.status===502&&body)return '动作执行失败：'+body.replace(/^Action failed:\s*/,'');
+  if(response.status===409&&body){try{return '快捷键未生效：'+JSON.parse(body).message;}catch{return '快捷键注册失败，请换一个组合键。';}}
+  if(response.status===500)return '配置写入失败，原配置保留。';
   if(response.status===404)return '服务没有这个接口。';
   return '服务返回 '+response.status+'。';
 }
@@ -349,7 +354,10 @@ function startBindingStatusPoll(){
 async function saveToService(patch){
   const response=await api('/api/config',{method:'POST',body:JSON.stringify(patch)});
   const body=await response.text();
-  if(!response.ok)throw new Error(serviceError(response,body));
+  if(!response.ok){
+    if(response.status===409){try{const failure=JSON.parse(body);if(failure.binding)renderBindingStatus(failure.binding);}catch{}}
+    throw new Error(serviceError(response,body));
+  }
   // A successful POST returns the committed config body.
   const committed=JSON.parse(body);
   if(committed&&typeof committed==='object')serviceConfig=committed;
