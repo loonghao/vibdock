@@ -7,6 +7,8 @@
 
 use std::{error::Error, fmt};
 mod browser_auth;
+mod capabilities;
+mod integrations;
 
 pub mod service;
 #[cfg(windows)]
@@ -33,6 +35,7 @@ pub enum Action {
     Unmute,
     Toggle,
     Listen,
+    Capabilities,
 }
 
 impl fmt::Display for Action {
@@ -50,6 +53,7 @@ impl fmt::Display for Action {
             Action::Unmute => "unmute",
             Action::Toggle => "toggle",
             Action::Listen => "listen",
+            Action::Capabilities => "capabilities",
         };
         f.write_str(name)
     }
@@ -57,7 +61,7 @@ impl fmt::Display for Action {
 
 /// Usage text for the console entry point.
 pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|service-status|tray|help>
-       vibdock devices
+       vibdock <devices|capabilities>
        vibdock <status|mute|unmute|toggle|listen> --device <endpoint-id>";
 
 /// Parses command-line arguments into an [`Action`].
@@ -75,12 +79,14 @@ pub fn parse(args: &[String]) -> Result<Action> {
         Some("unmute") => Action::Unmute,
         Some("toggle") => Action::Toggle,
         Some("listen") => Action::Listen,
+        Some("capabilities") => Action::Capabilities,
         _ => return Err(format!("{USAGE}\nRun `vibdock help` for details.").into()),
     };
     let rest = &args[1..];
     if matches!(
         action,
         Action::Serve
+            | Action::Capabilities
             | Action::Devices
             | Action::ServiceStart
             | Action::ServiceStop
@@ -122,6 +128,7 @@ pub fn help() {
     println!("  service-stop     Shut down the running service (authenticated)");
     println!("  tray             Run the Windows tray entry (Windows only)");
     println!("  devices          List active microphone endpoints and their IDs");
+    println!("  capabilities     Report documented integration capabilities");
     println!("  status|mute|unmute|toggle   Read or change one microphone's mute state");
     println!("  listen           Print state and toggle it on Ctrl+Alt+Shift+F9");
     println!("  help             Show this message");
@@ -255,6 +262,7 @@ pub fn configuration_url() -> Result<String> {
 /// Runs one action through the core. Both executables call this.
 pub fn run_action(action: Action, args: &[String]) -> Result<()> {
     match action {
+        Action::Capabilities => capabilities::report_all(),
         Action::Help => {
             help();
             Ok(())
@@ -369,6 +377,11 @@ mod tests {
 
     #[test]
     fn accepts_service_commands() {
+        assert_eq!(
+            parse(&args(&["capabilities"])).unwrap(),
+            Action::Capabilities
+        );
+        assert!(parse(&args(&["capabilities", "--device", "id"])).is_err());
         assert_eq!(
             parse(&args(&["service-start"])).unwrap(),
             Action::ServiceStart

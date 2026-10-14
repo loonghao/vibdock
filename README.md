@@ -109,6 +109,10 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 
 ## Product direction
 
+`vibdock capabilities` reports documentation-derived integration declarations.
+Installed-client verification is pending; the report labels those capabilities
+as unknown or unverified rather than claiming a working application connection.
+
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color.
