@@ -381,6 +381,34 @@ mod tests {
     }
 
     #[test]
+    fn owned_thread_queue_preserves_each_event_without_replay() {
+        std::thread::spawn(|| {
+            let mut message = MSG::default();
+            // Create only this isolated thread's queue. No keyboard input is
+            // injected and no application window or audio endpoint is used.
+            unsafe {
+                let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+            }
+            let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+            for _ in 0..3 {
+                unsafe {
+                    PostThreadMessageW(
+                        thread,
+                        WM_HOTKEY,
+                        windows::Win32::Foundation::WPARAM(3018),
+                        windows::Win32::Foundation::LPARAM(0),
+                    )
+                    .unwrap();
+                }
+            }
+            assert_eq!(poll_hotkey(3018), 3);
+            assert_eq!(poll_hotkey(3018), 0, "Removed messages must never replay");
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
     fn modifiers_translate_to_win32_bits() {
         let code = HotkeyCode::from_hotkey(&hotkey("Ctrl + Alt + Shift + F9"));
         assert!(code.modifiers.0 & MOD_CONTROL.0 != 0, "Ctrl must be set");
