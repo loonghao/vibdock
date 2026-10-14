@@ -417,6 +417,42 @@ mod tests {
     }
 
     #[test]
+    fn queued_events_for_another_hotkey_id_are_not_counted() {
+        // Counting every queued WM_HOTKEY regardless of the id would fire the
+        // toggle for a binding this thread does not own, so the filter must
+        // discriminate. This asserts the negative case the multi-event test
+        // cannot see: it posts only messages whose id differs.
+        std::thread::spawn(|| {
+            let mut message = MSG::default();
+            unsafe {
+                let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+            }
+            let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+            for id in [4101, 4102, 4103] {
+                unsafe {
+                    PostThreadMessageW(
+                        thread,
+                        WM_HOTKEY,
+                        windows::Win32::Foundation::WPARAM(id),
+                        windows::Win32::Foundation::LPARAM(0),
+                    )
+                    .unwrap();
+                }
+            }
+            assert_eq!(
+                poll_hotkey(4100),
+                0,
+                "a message for a different hotkey id must not be counted"
+            );
+            // The queue was still drained, so a foreign binding cannot
+            // starve this one by filling the queue.
+            assert_eq!(poll_hotkey(4100), 0);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
     fn modifiers_translate_to_win32_bits() {
         let code = HotkeyCode::from_hotkey(&hotkey("Ctrl + Alt + Shift + F9")).unwrap();
         assert!(code.modifiers.0 & MOD_CONTROL.0 != 0, "Ctrl must be set");
