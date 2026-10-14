@@ -507,6 +507,40 @@ mod tests {
     }
 
     #[test]
+    fn the_only_structural_rejection_is_a_non_bmp_character() {
+        // The rejection boundary is mappability, not membership in ASCII.
+        // `character_key` applies exactly one structural gate — the u16 the
+        // layout lookup takes — and then defers to the layout. Narrowing it
+        // to ASCII would reject characters a supported layout can produce.
+        //
+        // A non-BMP scalar cannot be narrowed to u16, so it never reaches
+        // the lookup and is the one case rejected without asking the layout.
+        assert!(
+            u16::try_from(u32::from('😀')).is_err(),
+            "a non-BMP character cannot reach the layout lookup"
+        );
+        assert_eq!(character_key('😀'), None);
+        // Every BMP character, ASCII or not, does reach the lookup: the
+        // answer then depends on the layout alone.
+        for character in ['A', '/', 'é', 'ü', '中'] {
+            assert!(
+                u16::try_from(u32::from(character)).is_ok(),
+                "{character} must reach the layout lookup rather than be refused upfront"
+            );
+            // Whether or not this layout maps it, no sentinel stands in:
+            // the result is a real virtual key or an explicit absence.
+            match character_key(character) {
+                Some(mapping) => assert_ne!(
+                    u32::from(mapping as u8),
+                    u32::MAX,
+                    "{character} must not resolve to the sentinel virtual key"
+                ),
+                None => assert_eq!(virtual_key(Key::Character(character)), None),
+            }
+        }
+    }
+
+    #[test]
     fn function_keys_are_contiguous_from_f1() {
         // The whole F1..F24 range must land on real virtual keys, not just the
         // few the fixtures happen to use.
