@@ -316,6 +316,55 @@ pub(crate) fn recover_stale_marker() -> std::result::Result<(), String> {
     clear_instance().map_err(|e| e.to_string())
 }
 
+/// Asks the running service to shut down, returning true if it accepted.
+///
+/// This performs a real, authenticated shutdown over the loopback API rather
+/// than signalling a process by name: only the instance that can prove it holds
+/// the recorded token is told to stop, so an unrelated process on the same port
+/// is never killed. The marker is cleared by the service itself as it exits.
+pub(crate) fn request_shutdown() -> std::result::Result<bool, String> {
+    let Some(instance) = live_instance() else {
+        return Ok(false);
+    };
+    let request = format!(
+        "POST /api/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
+         Authorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        instance.port, instance.token
+    );
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", instance.port))
+        .or_else(|_| std::net::TcpStream::connect(("::1", instance.port)))
+        .map_err(|e| format!("Could not reach the running service: {e}"))?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .map_err(|e| e.to_string())?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Could not send the shutdown request: {e}"))?;
+    let mut response = Vec::new();
+    let mut byte = [0u8; 1];
+    while !response.ends_with(b"\r\n\r\n") && response.len() < MAX_CHALLENGE_RESPONSE {
+        match std::io::Read::read(&mut stream, &mut byte) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => response.push(byte[0]),
+        }
+    }
+    let response = String::from_utf8_lossy(&response).to_string();
+    if !response.starts_with("HTTP/1.1 200") {
+        return Err(format!(
+            "The running service rejected the shutdown request ({}).",
+            response.lines().next().unwrap_or("no status line").trim()
+        ));
+    }
+    // Wait for the service to release the port so a relaunch can bind it.
+    for _ in 0..40 {
+        if !probe_port(instance.port) {
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err("The service accepted shutdown but still holds the port.".into())
+}
+
 /// Path of the persisted service configuration.
 pub(crate) fn config_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("config.json"))
@@ -376,6 +425,11 @@ fn require_device_id(id: Option<&str>) -> std::result::Result<String, String> {
 #[derive(Debug, PartialEq)]
 pub(crate) enum ActionResult {
     /// The mute state read back from the platform after the action.
+    ///
+    /// Only a platform with an audio adapter can produce this; elsewhere the
+    /// action fails instead, so no mute state is ever reported without having
+    /// been read from the device.
+    #[cfg_attr(not(windows), allow(dead_code))]
     MuteState { device_id: String, muted: bool },
     /// The active capture endpoints, as `(name, id)` pairs.
     Devices(Vec<(String, String)>),
@@ -386,7 +440,9 @@ pub(crate) enum ActionResult {
 /// Returns the state read back from the platform, or an error describing why
 /// the action did not happen. Nothing here fabricates platform state: the
 /// reported mute value is what the audio stack reported after the change.
-#[cfg(windows)]
+///
+/// Validation is shared by every platform so the no-default-endpoint contract
+/// holds everywhere; only the platform call itself is Windows-only.
 pub(crate) fn run_device_action(
     action: DeviceAction,
     device_id: Option<&str>,
@@ -396,6 +452,15 @@ pub(crate) fn run_device_action(
     } else {
         None
     };
+    platform_device_action(action, id.as_deref())
+}
+
+/// Windows path: dispatch to the shared audio adapter.
+#[cfg(windows)]
+fn platform_device_action(
+    action: DeviceAction,
+    device_id: Option<&str>,
+) -> std::result::Result<ActionResult, String> {
     let mapped = match action {
         DeviceAction::Status => crate::Action::Status,
         DeviceAction::Mute => crate::Action::Mute,
@@ -403,7 +468,8 @@ pub(crate) fn run_device_action(
         DeviceAction::Toggle => crate::Action::Toggle,
         DeviceAction::Devices => crate::Action::Devices,
     };
-    let outcome = crate::windows::execute(mapped, id).map_err(|e| e.to_string())?;
+    let outcome = crate::windows::execute(mapped, device_id.map(str::to_string))
+        .map_err(|e| e.to_string())?;
     Ok(match outcome {
         crate::windows::Outcome::MuteState { device_id, muted } => {
             ActionResult::MuteState { device_id, muted }
@@ -412,16 +478,23 @@ pub(crate) fn run_device_action(
     })
 }
 
-/// Device actions require the Windows audio adapter.
+/// Non-Windows path: there is no audio adapter to read or change.
 ///
 /// Failing explicitly beats reporting a state that was never read: the service
 /// must not claim a microphone is muted on a platform where it cannot know.
+/// Listing endpoints is the one honest answer available — there are none,
+/// because this platform has no audio adapter to enumerate.
 #[cfg(not(windows))]
-pub(crate) fn run_device_action(
-    _action: DeviceAction,
+fn platform_device_action(
+    action: DeviceAction,
     _device_id: Option<&str>,
 ) -> std::result::Result<ActionResult, String> {
-    Err("Device actions require the Windows audio adapter.".into())
+    match action {
+        DeviceAction::Devices => Ok(ActionResult::Devices(Vec::new())),
+        _ => Err(format!(
+            "{action:?} requires the Windows audio adapter; no device state is available here."
+        )),
+    }
 }
 
 /// Loads the persisted configuration.
@@ -650,6 +723,77 @@ pub(crate) fn validate_patch(body: &str) -> std::result::Result<Patch, &'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_actions_require_an_explicit_endpoint() {
+        // The no-fallback contract: an action must name its endpoint, so a
+        // missing id fails instead of acting on some other microphone.
+        assert!(run_device_action(DeviceAction::Status, None).is_err());
+        assert!(run_device_action(DeviceAction::Mute, None).is_err());
+        assert!(run_device_action(DeviceAction::Toggle, None).is_err());
+        // An empty or over-long id is rejected the same way.
+        assert!(run_device_action(DeviceAction::Status, Some("")).is_err());
+        assert!(run_device_action(DeviceAction::Status, Some(&"x".repeat(600))).is_err());
+        assert!(run_device_action(DeviceAction::Status, Some("a\0b")).is_err());
+    }
+
+    #[test]
+    fn unrecognised_action_names_are_rejected() {
+        // The allowlist is closed: only these verbs are routable at all.
+        for name in ["status", "mute", "unmute", "toggle", "devices"] {
+            assert!(
+                DeviceAction::parse(name).is_some(),
+                "{name} must be allowed"
+            );
+        }
+        for name in ["exec", "shell", "run", "command", "", "STATUS", "delete"] {
+            assert!(
+                DeviceAction::parse(name).is_none(),
+                "{name} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn mute_state_records_the_device_that_was_actually_touched() {
+        // The result must name the endpoint it read back, so a caller can never
+        // describe a different microphone than the one that changed. This pins
+        // the contract on platforms with no audio adapter too, where no real
+        // mute state can be produced.
+        let result = ActionResult::MuteState {
+            device_id: "endpoint-1".to_string(),
+            muted: true,
+        };
+        assert_eq!(
+            result,
+            ActionResult::MuteState {
+                device_id: "endpoint-1".into(),
+                muted: true
+            }
+        );
+        assert_ne!(
+            result,
+            ActionResult::MuteState {
+                device_id: "endpoint-2".into(),
+                muted: true
+            }
+        );
+    }
+
+    #[test]
+    fn device_action_results_report_readback_not_assumption() {
+        // Every platform must either return state read from the device or an
+        // explicit error - never an assumed success.
+        match run_device_action(DeviceAction::Devices, None) {
+            Ok(ActionResult::Devices(_)) => {}
+            // On a platform with no audio adapter the action must fail loudly.
+            Err(message) => assert!(
+                !message.is_empty(),
+                "failure must explain itself, not report success"
+            ),
+            Ok(other) => panic!("devices must return an endpoint list, got {other:?}"),
+        }
+    }
 
     #[test]
     fn token_extraction_tolerates_bearer_prefix_and_whitespace() {

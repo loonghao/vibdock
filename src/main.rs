@@ -114,16 +114,20 @@ fn run() -> Result<()> {
             return Ok(());
         }
         Action::ServiceStop => {
-            // The stop contract is defined here; the cross-process shutdown
-            // signal ships with the launcher/tray entry that owns the
-            // service lifetime on Windows.
-            if service::live_instance().is_none() {
-                eprintln!("Service not running.");
-                return Err("No running service to stop.".into());
+            // Real, authenticated shutdown: only the instance holding the
+            // recorded token is told to stop, and we wait for it to release
+            // the port so a relaunch can bind it again.
+            match service::request_shutdown() {
+                Ok(true) => {
+                    println!("Service stopped.");
+                    return Ok(());
+                }
+                Ok(false) => {
+                    eprintln!("Service not running.");
+                    return Err("No running service to stop.".into());
+                }
+                Err(message) => return Err(message.into()),
             }
-            return Err(
-                "service-stop requires the resident service process; stop it from the tray Exit item or by terminating that process.".into(),
-            );
         }
         _ => {}
     }

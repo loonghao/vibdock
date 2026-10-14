@@ -27,6 +27,9 @@ const MAX_BODY: usize = 8192;
 /// persist before answering. Replaced with committed JSON or an error message.
 const COMMIT_SENTINEL: &str = "\u{0}vibdock-commit-config";
 
+/// Body returned by `/api/shutdown`, telling the accept loop to stop serving.
+const SHUTDOWN_SENTINEL: &str = "\u{0}vibdock-shutdown";
+
 /// Outcome of a routed request: status, content type, body, and whether the
 /// client may cache it.
 type Routed = (u16, &'static str, String);
@@ -209,6 +212,16 @@ fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Route
             }
             (200, "application/json", "{\"alive\":true}".into())
         }
+        (Method::Post, "/api/shutdown") => {
+            if !request.authorized {
+                return unauthorized();
+            }
+            // Authenticated shutdown: the caller proved it holds this
+            // instance's token, so it is this instance's owner asking it to
+            // stop. The sentinel tells the accept loop to break out, release
+            // the listener, and clear the instance marker.
+            (200, "application/json", SHUTDOWN_SENTINEL.to_string())
+        }
         (Method::Get, "/api/config") => {
             if !request.authorized {
                 return unauthorized();
@@ -390,12 +403,24 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
                 }
             }
         }
+        let is_shutdown = payload == SHUTDOWN_SENTINEL;
+        if is_shutdown {
+            payload = "{\"stopping\":true}".to_string();
+            mime = "application/json";
+        }
         let response = with_headers(
             Response::from_data(payload.as_bytes()).with_status_code(StatusCode(code)),
         )
         .with_header(Header::from_bytes("Content-Type", mime).unwrap());
         if let Err(error) = request.respond(response) {
             eprintln!("Response failed: {error}");
+        }
+        // Answer first, then stop: the caller gets proof the shutdown was
+        // accepted by the instance that owns the token. Returning here lets
+        // `serve` drop the listener and clear the instance marker, so a later
+        // launch does not see a stale record for a port nobody holds.
+        if is_shutdown {
+            return Ok(());
         }
     }
     Ok(())
