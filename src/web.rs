@@ -345,6 +345,18 @@ fn commit_live_patch(
     binding: &mut Option<Binding>,
     activation: &mut Activation,
 ) -> WriteOutcome {
+    commit_live_patch_with_save(state, body, binding, activation, |config| {
+        service::save_config(config).map_err(|error| error.to_string())
+    })
+}
+
+fn commit_live_patch_with_save(
+    state: &Config,
+    body: &str,
+    binding: &mut Option<Binding>,
+    activation: &mut Activation,
+    save: impl FnOnce(&Config) -> std::result::Result<(), String>,
+) -> WriteOutcome {
     let patch = match service::validate_patch(body) {
         Ok(patch) => patch,
         Err(message) => return WriteOutcome::Rejected(message),
@@ -355,7 +367,7 @@ fn commit_live_patch(
         *activation = activate_hotkey(state, binding);
         return WriteOutcome::PersistFailed(format!("Shortcut activation failed: {error}"));
     }
-    match service::save_config(&merged) {
+    match save(&merged) {
         Ok(()) => {
             *activation = candidate;
             WriteOutcome::Committed(merged)
@@ -794,6 +806,39 @@ mod tests {
         assert!(crate::windows::RegisteredHotkey::register(&previous, 2032).is_err());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn failed_persistence_restores_the_previous_registration() {
+        let state = Config {
+            device_id: Some("isolated-endpoint-no-audio".into()),
+            hotkey: Some("Ctrl+Alt+Shift+F23".into()),
+        };
+        let mut binding = None;
+        let mut activation = activate_hotkey(&state, &mut binding);
+        assert!(activation.is_armed());
+        let outcome = commit_live_patch_with_save(
+            &state,
+            r#"{"hotkey":"Ctrl+Alt+Shift+F24"}"#,
+            &mut binding,
+            &mut activation,
+            |candidate| {
+                assert_eq!(candidate.hotkey.as_deref(), Some("Ctrl+Alt+Shift+F24"));
+                let chord = candidate.hotkey_binding().unwrap().unwrap();
+                assert!(crate::windows::RegisteredHotkey::register(&chord, 2040).is_err());
+                Err("simulated disk failure".into())
+            },
+        );
+        assert!(
+            matches!(outcome, WriteOutcome::PersistFailed(error) if error == "simulated disk failure")
+        );
+        assert!(activation.is_armed());
+        let previous = state.hotkey_binding().unwrap().unwrap();
+        assert!(crate::windows::RegisteredHotkey::register(&previous, 2041).is_err());
+        let rejected = crate::hotkey::Hotkey::parse("Ctrl+Alt+Shift+F24").unwrap();
+        assert!(crate::windows::RegisteredHotkey::register(&rejected, 2042).is_ok());
+        assert_eq!(state.hotkey.as_deref(), Some("Ctrl+Alt+Shift+F23"));
+    }
+
     #[test]
     fn browser_code_redemption_preserves_origin_and_replay_protection() {
         let mut auth = crate::browser_auth::BrowserAuth::default();
@@ -826,8 +871,8 @@ mod tests {
     /// Builds a request and routes it, returning the status code and body.
     ///
     /// Mirrors what `accept_loop` does after routing: a `/api/config` write is
-    /// committed through `commit_patch`, so these tests exercise the same
-    /// merge-and-persist path the server runs rather than a bare route call.
+    /// committed through `commit_patch`. These tests cover route validation
+    /// and persistence only; live registration rollback is tested separately.
     fn call(
         method: &Method,
         path: &str,
