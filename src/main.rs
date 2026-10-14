@@ -1,6 +1,8 @@
 use std::{env, error::Error};
 
 mod service;
+#[cfg(windows)]
+mod tray;
 mod web;
 #[cfg(windows)]
 mod windows;
@@ -12,6 +14,7 @@ enum Action {
     ServiceStart,
     ServiceStop,
     ServiceStatus,
+    Tray,
     Help,
     Devices,
     Status,
@@ -21,7 +24,7 @@ enum Action {
     Listen,
 }
 
-const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|service-status|help>
+const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|service-status|tray|help>
        vibdock devices
        vibdock <status|mute|unmute|toggle|listen> --device <endpoint-id>";
 
@@ -31,6 +34,7 @@ fn parse(args: &[String]) -> Result<Action> {
         Some("service-start") => Action::ServiceStart,
         Some("service-stop") => Action::ServiceStop,
         Some("service-status") => Action::ServiceStatus,
+        Some("tray") => Action::Tray,
         Some("help") | Some("--help") | Some("-h") => Action::Help,
         Some("devices") => Action::Devices,
         Some("status") => Action::Status,
@@ -48,6 +52,7 @@ fn parse(args: &[String]) -> Result<Action> {
             | Action::ServiceStart
             | Action::ServiceStop
             | Action::ServiceStatus
+            | Action::Tray
             | Action::Help
     ) && !rest.is_empty()
     {
@@ -81,7 +86,10 @@ fn help() {
     );
     println!("  service-start    Run the resident authenticated service on the same address");
     println!("  service-status   Report whether a resident service is listening");
-    println!("  service-stop     Ask the resident service to shut down");
+    println!(
+        "  service-stop     Shut down the running service (authenticated)
+  tray             Run the Windows tray entry (Windows only)"
+    );
     println!("  devices          List active microphone endpoints and their IDs");
     println!("  status|mute|unmute|toggle   Read or change one microphone's mute state");
     println!("  listen           Print state and toggle it on Ctrl+Alt+Shift+F9");
@@ -158,6 +166,9 @@ fn run() -> Result<()> {
     }
     #[cfg(windows)]
     {
+        if action == Action::Tray {
+            return tray::run();
+        }
         let device = args.get(2).cloned();
         windows::run(action, device)
     }
@@ -202,6 +213,13 @@ mod tests {
         assert!(parse(&args(&["devices", "extra"])).is_err());
         assert!(parse(&args(&["serve", "--device", "id"])).is_err());
         assert_eq!(parse(&args(&["serve"])).unwrap(), Action::Serve);
+    }
+
+    #[test]
+    fn accepts_tray_entry() {
+        assert_eq!(parse(&args(&["tray"])).unwrap(), Action::Tray);
+        // The tray takes no arguments of its own.
+        assert!(parse(&args(&["tray", "--device", "id"])).is_err());
     }
 
     #[test]
