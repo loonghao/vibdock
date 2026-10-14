@@ -4,17 +4,34 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Windows microphone commands and authenticated Web configuration are implemented. Service mode reads capture devices, persists one device/shortcut pair, and exposes device actions; design-preview mode uses mock data and browser-local drafts. Global activation of saved shortcuts and native hardware/tray acceptance remain pending. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting integrations are planned. VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Pending source changes add authenticated Web configuration, a resident Windows shortcut binding, two executable entry points, and dual-entry packaging. These changes have local integration evidence but are not a new published release. Physical Ulanzi buttons and native launcher/tray interaction still need acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting controls remain planned; VibDock is independent of these vendors.
 
 ## Download and run
 
-Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); packaging both is pending. No Node.js, Python, or separate Web server is required.
+Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); the pending release pipeline packages both and checks their executable subsystems. No Node.js, Python, or separate Web server is required.
 
-| Platform | Current capability |
-| --- | --- |
-| Windows x64 | Microphone enumeration, mute/status commands, global mute hotkey, embedded design preview |
-| Linux x64 | Embedded design preview only |
-| macOS Apple silicon | Embedded design preview only |
+| Platform | Published v0.1.0 | Pending source |
+| --- | --- | --- |
+| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, launcher/tray, dual-entry archive |
+| Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
+| macOS Apple silicon | Design preview | Local configuration service; audio and global shortcuts unsupported |
+
+## Configure a hardware shortcut (pending Windows source)
+
+This workflow requires a build containing both `vibdock.exe` and `vibdock-launcher.exe`; the published v0.1.0 download does not contain the launcher.
+
+1. Extract both executables into the same directory. Start `vibdock-launcher.exe` to open the local configuration page. Native double-click and tray interaction are implemented but still await desktop acceptance.
+2. Select the intended microphone from the service's device list. In the binding editor, record a combination such as **Ctrl+Alt+Shift+F9** and save it.
+3. Check the separate **background binding** row. “Registered” means Windows accepted the shortcut; it does not mean an audio action already ran. A conflict leaves the previous configuration and registration in place.
+4. In Ulanzi Studio, map the desired button to that exact keyboard combination using its shortcut action. Physical-device identification is not inferred from a mapped keyboard event.
+5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
+6. Close the browser to leave the service running. Reopen configuration from the tray; use **Exit** or `vibdock.exe service-stop` to stop the service.
+
+Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input, per-application playback mute, and voice-session start/stop are separate planned controls.
+
+The status page uses bounded, serial polling. When the service cannot answer, it shows unknown rather than preserving a successful state. “Last action” is a readback after a shortcut action, not continuous tracking of changes made by other applications. A service restart clears action history and requires a fresh browser session.
+
+## Explore the design preview
 
 ```powershell
 .\vibdock.exe serve
@@ -38,9 +55,13 @@ records it with the bound port in `%LOCALAPPDATA%\VibDock\service.json`. Reads
 and writes under `/api` require that token via `Authorization: Bearer <token>`
 or the `X-VibDock-Token` header. Requests are rejected unless the `Host` header
 is the bound loopback address and any `Origin` header is that same loopback
-origin. `/api/config` accepts `device_id` and `hotkey` as plain strings under
-512 bytes and persists them to `config.json`; no shell or arbitrary-command
-endpoint exists.
+origin. `/api/config` validates `device_id` and `hotkey`, then registers the shortcut
+before persisting to `config.json`. Missing patch fields retain their previous
+values; explicit null clears a field. Hotkeys require a modifier and a supported
+key. Character keys use the active Windows keyboard layout; required symbol
+modifiers must be included. Registration errors return 409 with the actual
+reason and rollback state; disk-write errors return 500. No shell or
+arbitrary-command endpoint exists.
 
 Repeated `service-start` invocations reuse the running instance instead of
 binding a second listener. The published record is treated only as a candidate:
@@ -106,6 +127,14 @@ Choose the microphone by its displayed name and full ID. In Ulanzi Studio, map t
 Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. Exit codes are zero on success and nonzero on error. Exiting does not restore or change the microphone state.
 
 **Device mute affects every app using that microphone.** It is different from muting one agent's input or output. The agent must use the selected microphone for this control to affect its audio. Hold-to-talk and device-specific button recognition are not implemented.
+
+## Troubleshooting
+
+- **Shortcut is occupied:** choose another combination, or stop the other `listen`/service instance holding it. A failed edit preserves the previous saved binding.
+- **Microphone disappeared:** reconnect the configured endpoint and check its identity. VibDock does not silently switch to another microphone.
+- **Page is unauthorized after restart:** reopen configuration from the launcher or tray to obtain a fresh one-use browser code. Never share the service token or bootstrap URL.
+- **State is unknown:** check that the service is running. The page resumes polling after a timeout; reopening it renews authorization when needed.
+- **Another application owns the port:** resolve that conflict or explicitly choose a different `VIBDOCK_PORT`. Startup will not terminate the other application or silently select another port.
 
 ## Product direction
 
