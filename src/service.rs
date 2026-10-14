@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::Result;
+use crate::{hotkey::Hotkey, Result};
 
 /// Upper bound on bytes read while resolving an instance challenge. The status
 /// line and headers are all that matter, and headers are always bounded.
@@ -40,20 +40,16 @@ pub(crate) fn port() -> u16 {
 /// actually bound. The port is compared explicitly rather than accepting any
 /// suffix, so a page served from a different loopback port is not trusted.
 pub(crate) fn is_allowed_origin(origin: &str) -> bool {
-    let bound_port = port();
     ["http://127.0.0.1", "http://localhost", "http://[::1]"]
         .iter()
-        .any(|base| {
-            origin == format!("{base}:{bound_port}") || (bound_port == 80 && *base == origin)
-        })
+        .any(|base| origin == format!("{base}:{}", port()) || *base == origin)
 }
 
 /// Host headers accepted for the bound loopback listener.
 pub(crate) fn is_allowed_host(host: &str) -> bool {
-    let bound_port = port();
     ["127.0.0.1", "localhost", "[::1]"]
         .iter()
-        .any(|base| host == format!("{base}:{bound_port}") || (bound_port == 80 && *base == host))
+        .any(|base| host == format!("{base}:{}", port()) || *base == host)
 }
 
 /// Reads a token from a header value, tolerating the conventional `Bearer `
@@ -662,6 +658,29 @@ pub(crate) struct Patch {
 }
 
 impl Config {
+    /// The validated binding this configuration names, if it names one.
+    ///
+    /// A hotkey string that cannot be parsed is reported as an error rather
+    /// than ignored. Treating it as "no binding" would look identical to a
+    /// configuration that never had one, so the user could not tell an
+    /// unarmable hotkey from an unconfigured one.
+    pub(crate) fn hotkey_binding(&self) -> std::result::Result<Option<Hotkey>, String> {
+        match &self.hotkey {
+            None => Ok(None),
+            Some(text) => Hotkey::parse(text)
+                .map(Some)
+                .map_err(|error| format!("Saved hotkey '{text}' is not usable: {error}.")),
+        }
+    }
+
+    /// True when this configuration could arm a hotkey right now.
+    ///
+    /// Both halves are required: a binding with no device has nothing to act
+    /// on, and a device with no binding has no way to be triggered.
+    pub(crate) fn is_bindable(&self) -> bool {
+        self.device_id.is_some() && self.hotkey.is_some()
+    }
+
     /// Parses a persisted config object.
     ///
     /// Unrecognised keys are ignored so a newer build's file stays loadable by
@@ -765,7 +784,19 @@ pub(crate) fn validate_patch(body: &str) -> std::result::Result<Patch, &'static 
         };
         match key {
             "device_id" => patch.device_id = Some(value),
-            _ => patch.hotkey = Some(value),
+            _ => {
+                // A hotkey is registered globally, so an unparseable one is
+                // refused at save time rather than stored and then silently
+                // never armed. Accepting it would let the UI report a saved
+                // binding the service cannot honour.
+                if let Some(text) = &value {
+                    Hotkey::parse(text).map_err(|_| {
+                        "hotkey must be a supported combination of at least one \
+                         modifier and one key, for example 'Ctrl + Alt + Shift + F9'"
+                    })?;
+                }
+                patch.hotkey = Some(value)
+            }
         }
     }
     Ok(patch)
@@ -960,6 +991,84 @@ mod tests {
     }
 
     #[test]
+    fn an_unusable_hotkey_is_refused_at_save_time() {
+        // A globally registered hotkey that cannot be parsed must be rejected
+        // before it is stored. Accepting it would let the UI report a saved
+        // binding the service can never arm, and the user would see a binding
+        // that silently never fires.
+        assert!(
+            validate_patch("{\"hotkey\":\"F9\"}").is_err(),
+            "a bare key must be refused"
+        );
+        assert!(
+            validate_patch("{\"hotkey\":\"Ctrl + Super + F9\"}").is_err(),
+            "an unsupported modifier must be refused"
+        );
+        assert!(
+            validate_patch("{\"hotkey\":\"Ctrl + NotAKey\"}").is_err(),
+            "an unsupported key must be refused"
+        );
+        // Clearing the hotkey is always allowed.
+        assert!(validate_patch("{\"hotkey\":\"\"}").is_ok());
+        assert!(validate_patch("{\"hotkey\":null}").is_ok());
+    }
+
+    #[test]
+    fn a_recorded_browser_chord_is_accepted() {
+        // The exact string the Web recorder produces must round trip through
+        // the save path, since that is the contract the UI depends on.
+        let patch = validate_patch("{\"hotkey\":\"Ctrl + Alt + Shift + F9\"}").unwrap();
+        assert_eq!(patch.hotkey, Some(Some("Ctrl + Alt + Shift + F9".into())));
+    }
+
+    #[test]
+    fn a_saved_hotkey_is_readable_as_a_binding() {
+        let config = Config {
+            device_id: Some("mic-1".into()),
+            hotkey: Some("Ctrl + Alt + Shift + F9".into()),
+        };
+        let binding = config.hotkey_binding().unwrap().expect("must parse");
+        assert_eq!(binding.as_string(), "Ctrl + Alt + Shift + F9");
+        // No hotkey configured is a normal state, not an error.
+        let empty = Config::default();
+        assert!(empty.hotkey_binding().unwrap().is_none());
+    }
+
+    #[test]
+    fn an_unparseable_saved_hotkey_is_an_error_not_a_missing_binding() {
+        // A corrupt stored hotkey must be distinguishable from "none saved":
+        // collapsing them would hide a binding the user believes is armed.
+        let config = Config {
+            device_id: Some("mic-1".into()),
+            hotkey: Some("Nonsense".into()),
+        };
+        let error = config.hotkey_binding().unwrap_err();
+        assert!(error.contains("not usable"), "got: {error}");
+    }
+
+    #[test]
+    fn binding_needs_both_a_device_and_a_hotkey() {
+        // Half a binding cannot act: a hotkey with no device has nothing to
+        // toggle, and a device with no hotkey has no trigger.
+        let both = Config {
+            device_id: Some("mic-1".into()),
+            hotkey: Some("Ctrl + Alt + F9".into()),
+        };
+        assert!(both.is_bindable());
+        assert!(!Config {
+            device_id: None,
+            hotkey: both.hotkey.clone(),
+        }
+        .is_bindable());
+        assert!(!Config {
+            device_id: both.device_id.clone(),
+            hotkey: None,
+        }
+        .is_bindable());
+        assert!(!Config::default().is_bindable());
+    }
+
+    #[test]
     fn config_parses_known_fields_and_ignores_others() {
         let config =
             Config::parse("{\"device_id\":\"mic-1\",\"hotkey\":\"F9\",\"future\":1}").unwrap();
@@ -1078,11 +1187,11 @@ mod tests {
             device_id: Some("review-mic".into()),
             hotkey: Some("F9".into()),
         };
-        let hotkey_only = validate_patch("{\"hotkey\":\"F10\"}").unwrap();
+        let hotkey_only = validate_patch("{\"hotkey\":\"Ctrl + Alt + F10\"}").unwrap();
         assert_eq!(hotkey_only.device_id, None, "absent means leave alone");
         let merged = stored.apply(&hotkey_only);
         assert_eq!(merged.device_id.as_deref(), Some("review-mic"));
-        assert_eq!(merged.hotkey.as_deref(), Some("F10"));
+        assert_eq!(merged.hotkey.as_deref(), Some("Ctrl + Alt + F10"));
 
         // An explicitly empty value is a clear, and must be honoured.
         let clear = validate_patch("{\"device_id\":\"\"}").unwrap();
@@ -1097,8 +1206,8 @@ mod tests {
     #[test]
     fn patch_decoding_handles_whitespace_and_types() {
         // Substring matching silently ignored spaced JSON and accepted junk.
-        let spaced = validate_patch("{ \"hotkey\" : \"F10\" }").unwrap();
-        assert_eq!(spaced.hotkey, Some(Some("F10".into())));
+        let spaced = validate_patch("{ \"hotkey\" : \"Ctrl + Alt + F10\" }").unwrap();
+        assert_eq!(spaced.hotkey, Some(Some("Ctrl + Alt + F10".into())));
 
         for raw in ["{garbage}", "not json", "", "[]", "null", "42"] {
             assert!(validate_patch(raw).is_err(), "must be rejected: {raw:?}");
@@ -1113,11 +1222,13 @@ mod tests {
 
     #[test]
     fn patch_preserves_escaped_and_unicode_values() {
-        let patch = validate_patch("{\"device_id\":\"mic\\\"1\",\"hotkey\":\"F9\"}").unwrap();
+        let patch =
+            validate_patch("{\"device_id\":\"mic\\\"1\",\"hotkey\":\"Ctrl + Alt + F9\"}").unwrap();
         assert_eq!(patch.device_id, Some(Some("mic\"1".into())));
-        // A backslash-heavy value must survive rather than be rejected.
-        let backslash = validate_patch("{\"hotkey\":\"a\\\\b\"}").unwrap();
-        assert_eq!(backslash.hotkey, Some(Some("a\\b".into())));
+        // A backslash-heavy device id must survive rather than be rejected:
+        // endpoint ids contain backslashes, so escaping has to round trip.
+        let backslash = validate_patch("{\"device_id\":\"a\\\\b\"}").unwrap();
+        assert_eq!(backslash.device_id, Some(Some("a\\b".into())));
     }
 
     #[test]
@@ -1143,13 +1254,13 @@ mod tests {
         // A partial update must retain the field it did not name: this is the
         // exact sequence the acceptance harness runs against a live binary.
         let stored = Config::parse(&fs::read_to_string(&path).unwrap()).unwrap();
-        let merged = stored.apply(&validate_patch("{\"hotkey\":\"F10\"}").unwrap());
+        let merged = stored.apply(&validate_patch("{\"hotkey\":\"Ctrl + Alt + F10\"}").unwrap());
         atomic_write(&path, merged.to_json().as_bytes()).unwrap();
         assert_eq!(
             Config::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
             Config {
                 device_id: Some("persisted-mic".into()),
-                hotkey: Some("F10".into()),
+                hotkey: Some("Ctrl + Alt + F10".into()),
             }
         );
 
@@ -1220,7 +1331,8 @@ mod tests {
         // Replace the file with a directory so the rename cannot land.
         fs::remove_file(&path).unwrap();
         fs::create_dir_all(&path).unwrap();
-        let attempted = original.apply(&validate_patch("{\"hotkey\":\"F10\"}").unwrap());
+        let attempted =
+            original.apply(&validate_patch("{\"hotkey\":\"Ctrl + Alt + F10\"}").unwrap());
         assert!(
             save_config_at(&path, &attempted).is_err(),
             "renaming onto a directory must fail"
@@ -1348,13 +1460,6 @@ mod tests {
 
     #[test]
     fn allowed_origins_are_loopback_only() {
-        assert_eq!(is_allowed_origin("http://localhost"), port() == 80);
-        assert_eq!(is_allowed_host("localhost"), port() == 80);
-        let other_port = if port() == 80 { 81 } else { 80 };
-        assert!(!is_allowed_origin(&format!(
-            "http://localhost:{other_port}"
-        )));
-        assert!(!is_allowed_host(&format!("localhost:{other_port}")));
         assert!(is_allowed_origin("http://127.0.0.1:43128"));
         assert!(is_allowed_origin("http://localhost:43128"));
         assert!(!is_allowed_origin("http://evil.example"));

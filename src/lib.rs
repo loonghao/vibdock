@@ -10,6 +10,7 @@ mod browser_auth;
 mod capabilities;
 mod integrations;
 
+pub mod hotkey;
 pub mod service;
 #[cfg(windows)]
 pub mod tray;

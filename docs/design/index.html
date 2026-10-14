@@ -8,7 +8,7 @@
 <div class="auth" id="authRow" hidden><label for="token">本机服务令牌</label><div class="capture"><input id="token" type="password" placeholder="粘贴服务状态文件中的令牌" autocomplete="off" spellcheck="false"><button id="authorize">授权</button></div><small><b>临时手工方式，不是最终流程。</b>最终由启动入口以一次性引导码打开本页并自动换取会话令牌，无需复制粘贴。令牌只保留在本页内存中，不写入浏览器存储。</small><p class="field-error" id="authError" role="alert"></p></div>
 <section class="view" id="bindings"><div class="intro"><div><h1>按一下，把动作连起来。</h1><small>从设备上的一个按键开始，不需要记住命令。</small></div><button id="setup">快速配置</button></div><div class="steps" id="steps"><span data-step="1" data-active="true">01 录入按键</span><span data-step="2">02 选择动作</span><span data-step="3">03 测试并保存</span></div>
 <div class="workspace"><div class="device-area"><div class="panel-title"><h2>Ulanzi Vibe Key</h2><span class="tag" id="deviceTag">设备示意 · 未连接</span></div><div class="device-stage"><div class="hardware"><small>VIBE KEY</small><div class="grille"></div><button class="dial" data-key="旋钮按下" aria-label="选择旋钮按下">↻</button><button class="key selected" data-key="语音键" aria-label="选择语音键">♩</button><button class="key" data-key="确认键" aria-label="选择确认键">✓</button><button class="key" data-key="取消键" aria-label="选择取消键">×</button></div><div class="bindings" id="bindings-list"></div></div>
-<div class="svcbind" id="svcBind"><h2>后台保存的绑定</h2><p id="sbEmpty" class="muted">服务中还没有保存任何绑定。</p><div id="sbSet" hidden><div class="row"><span class="muted">麦克风</span><kbd id="sbDevice"></kbd></div><div class="row"><span class="muted">快捷键</span><kbd id="sbHotkey"></kbd></div><p class="muted">后台目前只保存一组「设备 + 快捷键」，不按硬件按键分别存储。上面的设备按键仅用于选择要编辑哪个草稿。</p></div></div>
+<div class="svcbind" id="svcBind"><h2>后台保存的绑定</h2><p id="sbStatus" role="status" aria-live="polite" class="muted">尚未读取运行状态。</p><p id="sbEmpty" class="muted">服务中还没有保存任何绑定。</p><div id="sbSet" hidden><div class="row"><span class="muted">麦克风</span><kbd id="sbDevice"></kbd></div><div class="row"><span class="muted">快捷键</span><kbd id="sbHotkey"></kbd></div><p class="muted">后台目前只保存一组「设备 + 快捷键」，不按硬件按键分别存储。上面的设备按键仅用于选择要编辑哪个草稿。</p></div></div>
 <div class="hint">点击左侧按键或右侧列表选择配置。演示数据无法确认物理设备来源，真实来源需后台识别。</div></div>
 <div class="editor"><span class="tag" id="selectedKey">语音键</span><h2 style="margin-top:18px">这个按键要做什么？</h2>
 <div id="editor-body">
@@ -272,6 +272,7 @@ async function authorizeWith(token){
     if(!response.ok){serviceToken=null;$('authError').textContent=serviceError(response,'');return false;}
     serviceConfig=await readJson(response);
     applyServiceConfig();
+    startBindingStatusPoll();
     $('authRow').hidden=true;$('token').value='';
     $('conn').dataset.state='live';
     $('conn').textContent='服务运行中 · 已授权';
@@ -303,7 +304,47 @@ function applyServiceConfig(){
   }else{
     $('sbEmpty').hidden=false;$('sbSet').hidden=true;
   }
+  renderBindingStatus(config);
   renderBindings();loadEditor();
+}
+let bindingPollStarted=false;
+let lastActionSequence=null;
+function renderBindingStatus(config){
+  const status=$('sbStatus');
+  if(config.hotkey_live===true){status.textContent='快捷键已注册 · 等待按键';status.dataset.state='live';}
+  else if(config.activation_error){status.textContent='快捷键未生效：'+config.activation_error;status.dataset.state='error';}
+  else{status.textContent='配置已读取 · 快捷键运行状态尚未确认';status.dataset.state='unknown';}
+  const action=config.last_action;
+  if(!action||!Number.isSafeInteger(action.sequence)||action.sequence<0)return;
+  const fresh=lastActionSequence!==null&&action.sequence>lastActionSequence;
+  lastActionSequence=action.sequence;
+  if(action.sequence===0)return;
+  if(action.error){
+    status.textContent='上次按键执行失败：'+action.error;status.dataset.state='error';
+    if(fresh)say(status.textContent,'error');
+  }else if(action.state==='LIVE'||action.state==='MUTED'){
+    status.textContent='上次按键结果：'+(action.state==='LIVE'?'麦克风已开启':'麦克风已静音');
+    if(fresh)say(status.textContent,'ok');
+  }
+}
+function startBindingStatusPoll(){
+  if(bindingPollStarted)return;
+  bindingPollStarted=true;
+  async function tick(){
+    if(!serviceToken){bindingPollStarted=false;return;}
+    if(!document.hidden){
+      try{
+        const response=await api('/api/config');
+        if(!response.ok)throw new Error('服务未确认状态');
+        renderBindingStatus(await readJson(response));
+      }catch{
+        $('sbStatus').textContent='运行状态未知 · 无法读取服务';
+        $('sbStatus').dataset.state='unknown';
+      }
+    }
+    setTimeout(tick,1000);
+  }
+  setTimeout(tick,1000);
 }
 async function saveToService(patch){
   const response=await api('/api/config',{method:'POST',body:JSON.stringify(patch)});
