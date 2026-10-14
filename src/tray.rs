@@ -208,7 +208,13 @@ fn show_menu(window: HWND) -> Option<u32> {
 /// `VIBDOCK_PORT` values, and opening the wrong one would show a page that
 /// does not control the running service.
 fn open_configuration() {
-    let url = crate::configuration_url();
+    let url = match crate::configuration_url() {
+        Ok(url) => url,
+        Err(error) => {
+            notify("VibDock", &error.to_string(), MB_ICONERROR);
+            return;
+        }
+    };
     let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
     unsafe {
         // SW_SHOWNORMAL; the result is advisory and the service stays up either

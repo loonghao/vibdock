@@ -175,33 +175,40 @@ fn commit_patch(state: &Config, body: &str) -> WriteOutcome {
 /// `state` is the live configuration snapshot; `token_configured` reports
 /// whether this instance published a write token. A service without a token
 /// stays read-only, preserving the previous design-preview behaviour.
-fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Routed {
-    let method = request.method;
-    let path = request.path;
+fn validate_request(request: &Request<'_>, token_configured: bool) -> Option<Routed> {
     if !request.host.is_some_and(service::is_allowed_host) {
-        return (403, "text/plain; charset=utf-8", "Invalid host".into());
+        return Some((403, "text/plain; charset=utf-8", "Invalid host".into()));
     }
     if let Some(origin) = request.origin {
         if !service::is_allowed_origin(origin) {
-            return (403, "text/plain; charset=utf-8", "Invalid origin".into());
+            return Some((403, "text/plain; charset=utf-8", "Invalid origin".into()));
         }
     }
-    if !token_configured && method != &Method::Get {
-        return (
+    if !token_configured && request.method != &Method::Get {
+        return Some((
             405,
             "text/plain; charset=utf-8",
             "Read-only design preview".into(),
-        );
+        ));
     }
     // Checked before any body parsing, but after host/origin validation: an
     // oversized or undecodable body is a client error, never a crash.
     if request.body_rejected {
-        return (
+        return Some((
             413,
             "text/plain; charset=utf-8",
             "Request body is too large or not valid UTF-8.".into(),
-        );
+        ));
     }
+    None
+}
+
+fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    let method = request.method;
+    let path = request.path;
     match (method, path) {
         (Method::Get, "/") => (200, "text/html; charset=utf-8", PAGE.to_string()),
         (Method::Get, "/health") => {
@@ -358,6 +365,7 @@ fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
 
 /// Serves requests until the listener stops, tracking config mutations.
 fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> Result<()> {
+    let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     for mut request in server.incoming_requests() {
         let owned: Vec<(String, String)> = request
             .headers()
@@ -375,7 +383,11 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
             .collect();
         let host = find_header(&headers, "host");
         let origin = find_header(&headers, "origin");
-        let authorized = service::authorized(&headers, token.as_deref());
+        let administrator = service::authorized(&headers, token.as_deref());
+        let browser_scope =
+            request.url() == "/api/config" || request.url().starts_with("/api/actions/");
+        let authorized = administrator
+            || (browser_scope && browser_auth.accepts(service::request_token(&headers)));
         let mut body = String::new();
         let mut body_rejected = false;
         if request.method() == &Method::Post {
@@ -388,19 +400,27 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
             }
         }
         let is_config_write = request.method() == &Method::Post && request.url() == "/api/config";
-        let (mut code, mut mime, mut payload) = route(
-            &Request {
-                method: request.method(),
-                path: request.url(),
-                host,
-                origin,
-                authorized,
-                body: &body,
-                body_rejected,
-            },
-            state,
-            token.is_some(),
-        );
+        let routed_request = Request {
+            method: request.method(),
+            path: request.url(),
+            host,
+            origin,
+            authorized,
+            body: &body,
+            body_rejected,
+        };
+        let bootstrap = request.method() == &Method::Post
+            && matches!(request.url(), "/api/bootstrap" | "/api/bootstrap/new");
+        let (mut code, mut mime, mut payload) = if bootstrap {
+            bootstrap_route(
+                &routed_request,
+                &mut browser_auth,
+                administrator,
+                token.is_some(),
+            )
+        } else {
+            route(&routed_request, state, token.is_some())
+        };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
             match commit_patch(state, &body) {
                 WriteOutcome::Committed(committed) => {
@@ -447,6 +467,48 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
         }
     }
     Ok(())
+}
+
+fn bootstrap_route(
+    request: &Request<'_>,
+    auth: &mut crate::browser_auth::BrowserAuth,
+    administrator: bool,
+    enabled: bool,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, enabled) {
+        return rejection;
+    }
+    let result = if request.path == "/api/bootstrap/new" {
+        if !administrator {
+            return (401, "text/plain", "Unauthorized".into());
+        }
+        auth.mint()
+            .map(|code| Some(serde_json::json!({"code": code})))
+    } else {
+        let body = serde_json::from_str::<serde_json::Value>(request.body).ok();
+        let Some(code) = body
+            .as_ref()
+            .and_then(|body| body.get("code"))
+            .and_then(|code| code.as_str())
+        else {
+            return (400, "text/plain", "Expected a bootstrap code".into());
+        };
+        auth.redeem(code)
+            .map(|token| token.map(|token| serde_json::json!({"token": token})))
+    };
+    match result {
+        Ok(Some(body)) => (200, "application/json", body.to_string()),
+        Ok(None) => (
+            401,
+            "text/plain",
+            "Invalid or expired bootstrap code".into(),
+        ),
+        Err(_) => (
+            503,
+            "text/plain",
+            "Browser authorization unavailable".into(),
+        ),
+    }
 }
 
 /// Case-insensitive header lookup over the collected header list.

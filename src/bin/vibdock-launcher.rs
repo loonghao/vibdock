@@ -44,7 +44,7 @@ fn run() -> Result<()> {
         // startup; this process only waits for a service to prove itself.
         start_detached_service()?;
         wait_for_service()?;
-        let url = vibdock::configuration_url();
+        let url = vibdock::configuration_url()?;
         open_url(&url);
         tray::run()
     }

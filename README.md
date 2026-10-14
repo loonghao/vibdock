@@ -54,6 +54,16 @@ Request bodies are bounded: an oversized or non-UTF-8 body is answered with
 413 rather than read in full. If the OS entropy source fails, the service
 refuses to start instead of minting a weaker token.
 
+The desktop launcher requests a one-use browser code through the authenticated
+`POST /api/bootstrap/new` endpoint and opens it in a URL fragment. The page must
+clear the fragment immediately and redeem it at `POST /api/bootstrap` with
+`{"code":"..."}` to receive an in-memory session token. Codes expire after
+60 seconds and cannot be reused. Sessions expire after eight hours or a service
+restart; they permit configuration and device actions, but not service shutdown,
+instance identity, or issuing more codes. Pending codes and sessions are bounded.
+Frontend consumption is being integrated separately; the existing preview does
+not yet complete this automatic authorization flow.
+
 `service-stop` performs a real shutdown: it asks the running service to stop
 over the loopback API using the recorded token, and waits for the port to be
 released. Only the instance that can prove it holds that token is stopped, so

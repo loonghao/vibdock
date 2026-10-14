@@ -6,6 +6,7 @@
 //! so the console CLI and the Windows launcher cannot drift apart.
 
 use std::{error::Error, fmt};
+mod browser_auth;
 
 pub mod service;
 #[cfg(windows)]
@@ -242,11 +243,13 @@ pub fn new_instance() -> Result<service::Instance> {
 /// Taken from the live instance when there is one, so a launcher whose port
 /// differs from the resident service's still opens the right URL. Falls back to
 /// this process's own address only when no instance is answering yet.
-pub fn configuration_url() -> String {
-    match service::live_instance() {
-        Some(instance) => format!("http://127.0.0.1:{}/", instance.port),
-        None => format!("http://{}/", web::address()),
-    }
+pub fn configuration_url() -> Result<String> {
+    let instance = service::live_instance().ok_or("No authenticated service is running")?;
+    let code = service::browser_code(&instance)?;
+    Ok(format!(
+        "http://127.0.0.1:{}/#bootstrap={code}",
+        instance.port
+    ))
 }
 
 /// Runs one action through the core. Both executables call this.

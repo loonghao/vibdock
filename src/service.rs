@@ -285,6 +285,35 @@ fn challenge(port: u16, token: &str) -> Option<bool> {
     Some(response.starts_with("HTTP/1.1 200"))
 }
 
+/// Creates a one-use browser handoff without exposing the service bearer.
+pub(crate) fn browser_code(instance: &Instance) -> Result<String> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], instance.port)),
+        std::time::Duration::from_millis(150),
+    )?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
+    write!(stream, "POST /api/bootstrap/new HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", instance.port, instance.token)?;
+    let mut response = String::new();
+    stream.take(8192).read_to_string(&mut response)?;
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or("Invalid authorization response")?;
+    if !head.starts_with("HTTP/1.1 200 ") {
+        return Err("Could not authorize the configuration page".into());
+    }
+    let value: serde_json::Value = serde_json::from_str(body)?;
+    let code = value
+        .get("code")
+        .and_then(|value| value.as_str())
+        .ok_or("Missing browser code")?;
+    if code.len() != 64 || !code.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Invalid browser code".into());
+    }
+    Ok(code.to_owned())
+}
+
 /// True when something is accepting TCP connections on this loopback port.
 ///
 /// Only used to detect that a port is occupied by a foreign process, never as
@@ -1269,6 +1298,48 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         assert!(probe_port(port));
         drop(listener);
+    }
+
+    #[test]
+    fn browser_handoff_client_authenticates_and_rejects_invalid_codes() {
+        use std::io::{Read, Write};
+        for (code, accepted) in [("a".repeat(64), true), ("#invalid".into(), false)] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let expected = code.clone();
+            let worker = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    assert_eq!(stream.read(&mut byte).unwrap(), 1);
+                    request.push(byte[0]);
+                    assert!(request.len() < 8192);
+                }
+                let request = String::from_utf8(request).unwrap();
+                assert!(request.starts_with("POST /api/bootstrap/new "));
+                assert!(request.contains("Authorization: Bearer fixture-admin\r\n"));
+                let body = serde_json::json!({"code": expected}).to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            });
+            let result = browser_code(&Instance {
+                port,
+                token: "fixture-admin".into(),
+            });
+            assert_eq!(result.is_ok(), accepted);
+            if accepted {
+                assert_eq!(result.unwrap(), code);
+            }
+            worker.join().unwrap();
+        }
     }
 
     #[test]
