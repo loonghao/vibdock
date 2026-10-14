@@ -148,6 +148,7 @@ fn os_entropy(output: &mut [u8; 32]) -> std::result::Result<(), String> {
     }
     #[cfg(not(windows))]
     {
+        use std::io::Read as _;
         fs::File::open("/dev/urandom")
             .and_then(|mut file| file.read_exact(output))
             .map_err(|e| format!("System entropy source failed: {e}"))
