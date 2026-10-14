@@ -135,19 +135,17 @@ impl Drop for RegisteredHotkey {
 ///
 /// Only messages matching `id` are treated as the binding; everything else is
 /// dispatched normally, so the thread does not accumulate a stuck queue.
-pub(crate) fn poll_hotkey(id: i32) -> bool {
+pub(crate) fn poll_hotkey(id: i32) -> usize {
     let mut message = MSG::default();
-    let mut fired = false;
+    let mut fired = 0;
     unsafe {
         // PM_REMOVE takes each message out of the queue rather than peeking,
         // so one press is consumed exactly once and never re-delivered.
         while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
             if message.message == WM_HOTKEY && message.wParam.0 == id as usize {
-                // One press toggles once. Setting a flag rather than
-                // accumulating a count is deliberate: the evidence we have is
-                // that a press happened, not how many autorepeats the driver
-                // generated while a button was held.
-                fired = true;
+                // MOD_NOREPEAT suppresses held-key repeats. Preserve each
+                // queued press, including distinct presses between polls.
+                fired += 1;
                 continue;
             }
             let _ = TranslateMessage(&message);

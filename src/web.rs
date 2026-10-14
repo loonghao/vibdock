@@ -246,14 +246,18 @@ enum WriteOutcome {
 /// Non-Windows platforms have no binding to poll, so this is always false
 /// there — matching the fact that no hotkey can be armed on them either.
 #[cfg(windows)]
-fn fired_since_last_poll(binding: &Option<Binding>) -> bool {
-    binding.is_some() && crate::windows::poll_hotkey(BINDING_HOTKEY_ID)
+fn fired_since_last_poll(binding: &Option<Binding>) -> usize {
+    if binding.is_some() {
+        crate::windows::poll_hotkey(BINDING_HOTKEY_ID)
+    } else {
+        0
+    }
 }
 
 /// Placeholder for platforms with no global hotkey to poll.
 #[cfg(not(windows))]
-fn fired_since_last_poll(_binding: &Option<Binding>) -> bool {
-    false
+fn fired_since_last_poll(_binding: &Option<Binding>) -> usize {
+    0
 }
 
 /// Performs the action the armed binding is configured for.
@@ -333,6 +337,42 @@ fn commit_patch(state: &Config, body: &str) -> WriteOutcome {
                 Err(error) => WriteOutcome::PersistFailed(error.to_string()),
             }
         }
+    }
+}
+
+/// Last completed hardware action, scoped to this service instance. A sequence
+/// change is an event; registration alone never produces a successful action.
+#[derive(Default)]
+struct ActionFeedback {
+    sequence: u64,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+impl ActionFeedback {
+    fn record(&mut self, result: std::result::Result<String, String>) {
+        self.sequence = self.sequence.saturating_add(1);
+        match result {
+            Ok(state) => {
+                self.state = Some(state);
+                self.error = None;
+            }
+            Err(error) => {
+                self.state = None;
+                self.error = Some(error);
+            }
+        }
+    }
+
+    fn enrich(&self, payload: &str) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(payload).expect("configuration responses are generated JSON");
+        value["last_action"] = serde_json::json!({
+            "sequence": self.sequence,
+            "state": self.state,
+            "error": self.error,
+        });
+        value.to_string()
     }
 }
 
@@ -604,18 +644,17 @@ fn accept_loop(
     mut activation: Activation,
 ) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
+    let mut feedback = ActionFeedback::default();
     loop {
         // Deliver any hotkey press that arrived since the last request. A
         // Win32 binding only reaches us through this thread's message queue,
         // so without this drain a registered binding could never fire.
-        if fired_since_last_poll(binding) {
-            if let Err(error) = run_bound_action(state) {
-                // A failed toggle must not look like success. It also must not
-                // disarm the binding: the configuration is still the user's
-                // saved choice, and the next press may well succeed once the
-                // microphone is reconnected.
+        for _ in 0..fired_since_last_poll(binding) {
+            let result = run_bound_action(state);
+            if let Err(error) = &result {
                 eprintln!("ERROR: the bound action failed: {error}");
             }
+            feedback.record(result);
         }
         let Some(mut request) = server.recv_timeout(std::time::Duration::from_millis(20))? else {
             continue;
@@ -703,6 +742,9 @@ fn accept_loop(
                         "Failed to persist configuration; the stored values are unchanged.".into();
                 }
             }
+        }
+        if code == 200 && request.url() == "/api/config" {
+            payload = feedback.enrich(&payload);
         }
         let is_shutdown = payload == SHUTDOWN_SENTINEL;
         if is_shutdown {
@@ -837,6 +879,25 @@ mod tests {
         let rejected = crate::hotkey::Hotkey::parse("Ctrl+Alt+Shift+F24").unwrap();
         assert!(crate::windows::RegisteredHotkey::register(&rejected, 2042).is_ok());
         assert_eq!(state.hotkey.as_deref(), Some("Ctrl+Alt+Shift+F23"));
+    }
+
+    #[test]
+    fn action_feedback_distinguishes_registration_events_and_failures() {
+        let mut feedback = ActionFeedback::default();
+        let initial: serde_json::Value = serde_json::from_str(&feedback.enrich("{}")).unwrap();
+        assert_eq!(initial["last_action"]["sequence"], 0);
+        assert!(initial["last_action"]["state"].is_null());
+        feedback.record(Ok("MUTED".into()));
+        feedback.record(Ok("LIVE".into()));
+        assert_eq!(feedback.sequence, 2);
+        assert_eq!(feedback.state.as_deref(), Some("LIVE"));
+        feedback.record(Err("endpoint disconnected".into()));
+        let failed: serde_json::Value = serde_json::from_str(&feedback.enrich("{}")).unwrap();
+        assert_eq!(failed["last_action"]["sequence"], 3);
+        assert!(failed["last_action"]["state"].is_null());
+        assert_eq!(failed["last_action"]["error"], "endpoint disconnected");
+        feedback.record(Ok("MUTED".into()));
+        assert!(feedback.error.is_none());
     }
 
     #[test]
