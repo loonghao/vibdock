@@ -43,12 +43,14 @@ All device/application data is mock data. Save means page memory only. No audio,
 
 `service-start` runs the authenticated service. It binds loopback only, generates a bearer token per launch, and records it with the bound port in the service state file.
 
-- Authentication: `Authorization: Bearer <token>`, or `X-VibDock-Token`. Compared in constant time; a missing or wrong token yields 401.
+- Authentication: `Authorization: Bearer <token>`, or `X-VibDock-Token`. Compared in constant time; a missing or wrong token yields 401. The token comes from the OS entropy source, and entropy failure fails closed rather than falling back to a weaker generator.
 - Host and origin: the `Host` header must be the bound loopback address and any `Origin` must be the same loopback origin, otherwise 403.
-- `GET /api/config` and `POST /api/config` read and patch `device_id` and `hotkey`. Values are plain strings under 512 bytes; a malformed patch yields 400.
+- `GET /api/config` and `POST /api/config` read and patch `device_id` and `hotkey`. Values are plain strings under 512 bytes; a malformed patch yields 400. Writes are persisted atomically and reloaded on the next start, so a restart keeps the saved device and hotkey.
+- Request bodies are bounded: an oversized or non-UTF-8 body yields 413 and is never parsed or truncated at an arbitrary byte offset.
 - No arbitrary command or shell endpoint is exposed. `/api/actions/echo` exists only to prove the authenticated action path.
-- Single instance: a second launch reuses the running service. The published record is checked against a live connection first, so a service killed without cleanup does not block the next launch.
+- Single instance: a second launch reuses the running service only after the listener on that port answers an authenticated `GET /instance` challenge with the recorded token. TCP reachability alone is not accepted, so an unrelated process that inherits the port is not mistaken for our service. A stale marker is recovered only after proving no owner answers; if an unrelated process holds the port, startup fails loudly and leaves the marker in place.
 - `service-status` reports whether a service is listening; `service-stop` reports status and defers process shutdown to the tray Exit item or the service process.
+- `VIBDOCK_PORT` overrides the bound loopback port so acceptance runs can use a private port instead of disturbing a service on the default one.
 
 The `serve` preview remains read-only and unauthenticated: it serves the page and reports `design-preview` mode.
 
@@ -56,9 +58,9 @@ The `serve` preview remains read-only and unauthenticated: it serves the page an
 
 The product version must start by double-clicking the executable, launch one local service, and open its configuration page. Closing the browser does not stop the service. A Windows notification-area icon provides Open configuration, status, and Exit. A separate small floating status indicator may be optional; it is not a replacement for a discoverable Exit control.
 
-Repeated launches must discover and reuse the existing service instead of starting a second listener. That reuse check is implemented: the published instance record is verified against a live connection before it is trusted. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port.
+Repeated launches must discover and reuse the existing service instead of starting a second listener. That reuse check is implemented: the published instance record is only a candidate, and the listener on that port must answer an authenticated `GET /instance` challenge with the recorded token before it is trusted. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port.
 
-Remaining lifecycle work: the double-click launcher/tray executable, the tray Open configuration / status / Exit menu, and the cross-process shutdown signal behind `service-stop`. The CLI entry implements start, status reporting, and single-instance reuse today.
+Remaining lifecycle work: the double-click launcher/tray executable, the tray Open configuration / status / Exit menu, and the cross-process shutdown signal behind `service-stop`. The CLI entry implements start, status reporting, single-instance reuse, and persisted configuration today. The API exposes only an echo action, so user-selected microphone and shortcut actions are not wired through it yet.
 
 ## Delivery priorities
 

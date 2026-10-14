@@ -33,22 +33,33 @@ configuration and action endpoints:
 .\vibdock.exe service-stop
 ```
 
-The service generates a bearer token at startup and records it with the bound
-port in `%LOCALAPPDATA%\VibDock\service.json`. Reads and writes under `/api`
-require that token via `Authorization: Bearer <token>` or the `X-VibDock-Token`
-header. Requests are rejected unless the `Host` header is the bound loopback
-address and any `Origin` header is that same loopback origin. `/api/config`
-accepts `device_id` and `hotkey` as plain strings under 512 bytes; no shell or
-arbitrary-command endpoint exists.
+The service generates a bearer token at startup from the OS entropy source and
+records it with the bound port in `%LOCALAPPDATA%\VibDock\service.json`. Reads
+and writes under `/api` require that token via `Authorization: Bearer <token>`
+or the `X-VibDock-Token` header. Requests are rejected unless the `Host` header
+is the bound loopback address and any `Origin` header is that same loopback
+origin. `/api/config` accepts `device_id` and `hotkey` as plain strings under
+512 bytes and persists them to `config.json`; no shell or arbitrary-command
+endpoint exists.
 
 Repeated `service-start` invocations reuse the running instance instead of
-binding a second listener. The published record is verified against a live
-connection before it is trusted, so a service that was killed without cleanup
-does not block the next launch.
+binding a second listener. The published record is treated only as a candidate:
+before it is trusted, the service on that port must answer an authenticated
+`GET /instance` challenge with the recorded token. A stale marker left by a
+killed service is recovered only after proving no owner answers; if an
+unrelated process holds the port, startup fails with an error and leaves the
+marker alone rather than silently falling back to it.
+
+Request bodies are bounded: an oversized or non-UTF-8 body is answered with
+413 rather than read in full. If the OS entropy source fails, the service
+refuses to start instead of minting a weaker token.
 
 `service-stop` reports whether a service is running. Stopping the process
 itself is performed by the tray Exit item or by terminating the service
 process; the cross-process shutdown signal ships with the launcher entry.
+
+Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
+tests, so they do not disturb a service already on the default one.
 
 ## Control a microphone on Windows
 

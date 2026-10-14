@@ -75,7 +75,10 @@ fn help() {
     println!("{USAGE}");
     println!();
     println!("Commands:");
-    println!("  serve            Run the read-only design preview on http://127.0.0.1:43128");
+    println!(
+        "  serve            Run the read-only design preview on http://127.0.0.1:{}",
+        service::port()
+    );
     println!("  service-start    Run the resident authenticated service on the same address");
     println!("  service-status   Report whether a resident service is listening");
     println!("  service-stop     Ask the resident service to shut down");
@@ -135,8 +138,16 @@ fn run() -> Result<()> {
             );
             return Ok(());
         }
+        // Nothing proved itself the owner, but a stale marker may still be
+        // occupying the port in the sense that it misdescribes reality. Recover
+        // it only after proving no valid owner answers, and only when the
+        // marker is the one this task would have written.
+        if let Err(message) = service::recover_stale_marker() {
+            // Returned, not also printed: main already reports errors once.
+            return Err(message.into());
+        }
         let instance = service::Instance {
-            port: 43128,
+            port: service::port(),
             token: service::generate_token()?,
         };
         return web::serve(Some(instance));
