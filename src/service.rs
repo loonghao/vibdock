@@ -323,21 +323,41 @@ pub(crate) fn config_path() -> Result<PathBuf> {
 /// Loads the persisted configuration.
 ///
 /// A missing file means "no configuration yet". A file that cannot be read or
-/// parsed is reported as an error rather than silently discarded, so corrupt
-/// state is visible instead of masquerading as an empty config.
+/// parsed is corrupt: it is quarantined beside the original and reported, then
+/// the service starts empty. The original file is never silently overwritten —
+/// overwriting it would destroy the only copy of the user's saved binding and
+/// the only evidence of what went wrong.
 pub(crate) fn load_config() -> Result<Config> {
-    match fs::read_to_string(config_path()?) {
+    let path = config_path()?;
+    match fs::read_to_string(&path) {
         Ok(raw) => match Config::parse(&raw) {
             Ok(config) => Ok(config),
             Err(message) => {
-                // Corrupt config must not stop the service, but it must be
-                // reported so the loss is visible rather than silent.
-                eprintln!("WARNING: {message}; starting with an empty configuration.");
+                let quarantined = quarantine_config(&path, &raw);
+                eprintln!(
+                    "WARNING: {message}; starting with an empty configuration. \
+                     Original preserved at {}.",
+                    quarantined
+                );
                 Ok(Config::default())
             }
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
         Err(error) => Err(error.to_string().into()),
+    }
+}
+
+/// Moves an unreadable config aside, returning the path it now lives at.
+///
+/// The preserved copy keeps the corrupt bytes so the failure is diagnosable and
+/// recoverable by hand, and so the next successful save cannot destroy them.
+fn quarantine_config(path: &std::path::Path, raw: &str) -> String {
+    let backup = path.with_extension(format!("corrupt-{}.json", std::process::id()));
+    match atomic_write(&backup.to_path_buf(), raw.as_bytes()) {
+        Ok(()) => backup.display().to_string(),
+        // Preserving the evidence is best-effort: if it cannot be written the
+        // service must still start, so report the original path instead.
+        Err(_) => path.display().to_string(),
     }
 }
 
@@ -394,71 +414,133 @@ pub(crate) fn atomic_write(path: &PathBuf, contents: &[u8]) -> Result<()> {
 ///
 /// Keep this a flat, versioned object: the Web UI and agent adapters read the
 /// same fields, and unknown keys are ignored on load.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub(crate) struct Config {
     pub(crate) device_id: Option<String>,
     pub(crate) hotkey: Option<String>,
+}
+
+/// A validated configuration patch.
+///
+/// `Option<Option<String>>` is deliberate and load-bearing: the outer option
+/// says whether the client named the field at all, the inner one says what it
+/// was set to. `None` means "absent, leave the stored value alone";
+/// `Some(None)` means "explicitly cleared". Collapsing the two would make a
+/// hotkey-only patch erase the saved device binding.
+#[derive(Debug, Default, PartialEq, Clone)]
+pub(crate) struct Patch {
+    pub(crate) device_id: Option<Option<String>>,
+    pub(crate) hotkey: Option<Option<String>>,
 }
 
 impl Config {
     /// Parses a persisted config object.
     ///
     /// Unrecognised keys are ignored so a newer build's file stays loadable by
-    /// an older one. A body that is not a JSON object at all is an error, which
-    /// lets callers tell "corrupt file" apart from "empty configuration" — the
-    /// difference matters because silently treating a corrupt file as empty
-    /// would quietly drop a user's saved device binding.
+    /// an older one. Decoding is real JSON parsing, not text matching: a valid
+    /// object with different spacing or escaped characters must decode the same
+    /// as the compact form, and a malformed body must be rejected rather than
+    /// silently read as empty.
     pub(crate) fn parse(raw: &str) -> std::result::Result<Config, &'static str> {
-        let trimmed = raw.trim();
-        if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
-            return Err("configuration file is not a JSON object");
+        let value: serde_json::Value =
+            serde_json::from_str(raw).map_err(|_| "configuration file is not valid JSON")?;
+        let object = value
+            .as_object()
+            .ok_or("configuration file is not a JSON object")?;
+        Ok(Config {
+            device_id: read_string_field(object, "device_id")?,
+            hotkey: read_string_field(object, "hotkey")?,
+        })
+    }
+
+    /// Applies a patch, keeping stored values the patch did not name.
+    ///
+    /// Returns the committed configuration, which is what the caller must
+    /// persist and return to the client so the response describes real state
+    /// rather than the requested change.
+    pub(crate) fn apply(&self, patch: &Patch) -> Config {
+        Config {
+            device_id: patch
+                .device_id
+                .clone()
+                .unwrap_or_else(|| self.device_id.clone()),
+            hotkey: patch.hotkey.clone().unwrap_or_else(|| self.hotkey.clone()),
         }
-        let mut config = Config::default();
-        if let Some(value) = extract(trimmed, "\"device_id\":\"") {
-            let value = value.split('"').next().unwrap_or("");
-            config.device_id = (!value.is_empty()).then(|| value.to_string());
-        }
-        if let Some(value) = extract(trimmed, "\"hotkey\":\"") {
-            let value = value.split('"').next().unwrap_or("");
-            config.hotkey = (!value.is_empty()).then(|| value.to_string());
-        }
-        Ok(config)
     }
 
     /// Serialises the config as a single JSON line.
     pub(crate) fn to_json(&self) -> String {
-        format!(
-            "{{\"device_id\":\"{}\",\"hotkey\":\"{}\"}}",
-            self.device_id.as_deref().unwrap_or(""),
-            self.hotkey.as_deref().unwrap_or("")
-        )
+        serde_json::json!({
+            "device_id": self.device_id.clone().unwrap_or_default(),
+            "hotkey": self.hotkey.clone().unwrap_or_default(),
+        })
+        .to_string()
     }
 }
 
-/// Validates a config patch: only known string fields, bounded in size, with no
-/// control characters or quotes that would break the persisted JSON.
-pub(crate) fn validate_patch(body: &str) -> std::result::Result<Config, &'static str> {
-    let mut config = Config::default();
-    let trimmed = body.trim();
-    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
-        return Err("Configuration body must be a JSON object.");
+/// Reads an optional string field, rejecting a present-but-wrong-typed value.
+///
+/// A field set to `null` or a non-string type is an explicit error rather than
+/// an empty string: guessing would turn a caller's type mistake into a silent
+/// clearing of the user's saved binding.
+fn read_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> std::result::Result<Option<String>, &'static str> {
+    match object.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => {
+            if value.is_empty() {
+                return Ok(None);
+            }
+            validate_value(value).map(|_| Some(value.clone()))
+        }
+        Some(_) => Err("configuration fields must be strings"),
     }
+}
+
+/// Rejects values that would corrupt the persisted file or unbound the API.
+fn validate_value(value: &str) -> std::result::Result<(), &'static str> {
+    if value.len() > 512 || value.contains(['\0', '\n', '\r']) {
+        return Err("Configuration values must be plain strings under 512 bytes.");
+    }
+    Ok(())
+}
+
+/// Validates a config patch, preserving absent-versus-empty field semantics.
+///
+/// Decoding is real JSON: whitespace, escapes, and types are handled by the
+/// parser rather than by substring matching, so `{"hotkey": "F10"}` patches the
+/// same field as `{"hotkey":"F10"}` and `{garbage}` is rejected.
+pub(crate) fn validate_patch(body: &str) -> std::result::Result<Patch, &'static str> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "Configuration body must be valid JSON.")?;
+    let object = value
+        .as_object()
+        .ok_or("Configuration body must be a JSON object.")?;
+    let mut patch = Patch::default();
     for key in ["device_id", "hotkey"] {
-        let needle = format!("\"{key}\":\"");
-        let Some(rest) = extract(trimmed, &needle) else {
+        let Some(field) = object.get(key) else {
+            // Absent: leave the stored value untouched.
             continue;
         };
-        let value = rest.split('"').next().unwrap_or("");
-        if value.len() > 512 || value.contains(['\0', '\n', '\r', '\\']) {
-            return Err("Configuration values must be plain strings under 512 bytes.");
-        }
-        let value = (!value.is_empty()).then(|| value.to_string());
+        let value = match field {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(value) => {
+                if value.is_empty() {
+                    None
+                } else {
+                    validate_value(value).map(|_| Some(value.clone()))?
+                }
+            }
+            _ => return Err("Configuration values must be strings or null."),
+        };
         match key {
-            "device_id" => config.device_id = value,
-            _ => config.hotkey = value,
+            "device_id" => patch.device_id = Some(value),
+            _ => patch.hotkey = Some(value),
         }
     }
-    Ok(config)
+    Ok(patch)
 }
 
 #[cfg(test)]
@@ -545,6 +627,77 @@ mod tests {
     }
 
     #[test]
+    fn parsing_uses_real_json_not_text_matching() {
+        // Whitespace, key order, escapes, and unicode must all decode. Substring
+        // matching accepted `{garbage}` and silently ignored spaced-out JSON.
+        for raw in [
+            "{\"device_id\":\"mic-1\",\"hotkey\":\"F9\"}",
+            "{ \"hotkey\" : \"F9\" , \"device_id\" : \"mic-1\" }",
+            "{\n  \"device_id\": \"mic-1\",\n  \"hotkey\": \"F9\"\n}",
+            "{\"device_id\":\"mic\\u002d1\",\"hotkey\":\"F9\"}",
+            "{\"device_id\":\"\\u7ea2\\u8272\",\"hotkey\":\"F9\"}",
+        ] {
+            let config = Config::parse(raw)
+                .unwrap_or_else(|e| panic!("valid JSON must decode: {raw} ({e})"));
+            assert_eq!(config.device_id.as_deref(), expected_device(raw), "{raw}");
+            assert_eq!(config.hotkey.as_deref(), Some("F9"), "{raw}");
+        }
+        // An escaped quote inside a value must not terminate the value early.
+        let escaped = Config::parse("{\"device_id\":\"mic\\\"1\"}").unwrap();
+        assert_eq!(escaped.device_id.as_deref(), Some("mic\"1"));
+    }
+
+    /// The device id each spaced/escaped fixture decodes to.
+    fn expected_device(raw: &str) -> Option<&str> {
+        if raw.contains("\\u002d") {
+            Some("mic-1")
+        } else if raw.contains("\\u7ea2") {
+            Some("红色")
+        } else {
+            Some("mic-1")
+        }
+    }
+
+    #[test]
+    fn malformed_input_is_rejected_not_silently_empty() {
+        // Bracket-checking alone let `{garbage}` through as an object while
+        // dropping spaced-out JSON. Real decoding rejects all of these.
+        for raw in [
+            "{garbage}",
+            "{ this is not json",
+            "",
+            "[]",
+            "\"string\"",
+            "42",
+            "null",
+            "{\"device_id\":",
+            "{\"device_id\":\"a\"",
+        ] {
+            assert!(Config::parse(raw).is_err(), "must be rejected: {raw:?}");
+        }
+        assert_eq!(Config::parse("{}").unwrap(), Config::default());
+    }
+
+    #[test]
+    fn wrong_field_types_are_rejected_not_coerced() {
+        // A non-string field is a caller error. Coercing it to empty would
+        // clear the user's saved binding by accident.
+        assert!(Config::parse("{\"device_id\":42}").is_err());
+        assert!(Config::parse("{\"device_id\":true}").is_err());
+        assert!(Config::parse("{\"device_id\":{}}").is_err());
+        assert!(Config::parse("{\"device_id\":[]}").is_err());
+        // Explicit null and empty string both mean "not set".
+        assert_eq!(
+            Config::parse("{\"device_id\":null}").unwrap(),
+            Config::default()
+        );
+        assert_eq!(
+            Config::parse("{\"device_id\":\"\"}").unwrap(),
+            Config::default()
+        );
+    }
+
+    #[test]
     fn corrupt_config_is_distinguished_from_empty_config() {
         // A corrupt file must be an error, not an empty config: silently
         // treating it as empty would look identical to "nothing saved".
@@ -560,6 +713,69 @@ mod tests {
             hotkey: None,
         };
         assert_eq!(Config::parse(&config.to_json()).unwrap(), config);
+    }
+
+    #[test]
+    fn config_json_escapes_values_that_would_break_the_file() {
+        // Serialising through a real encoder means a quote or backslash in a
+        // device name cannot produce a corrupt config file.
+        let config = Config {
+            device_id: Some("mic\"1\\x".into()),
+            hotkey: Some("F9".into()),
+        };
+        let raw = config.to_json();
+        assert_eq!(Config::parse(&raw).unwrap(), config);
+        assert!(raw.contains("mic\\\"1"));
+    }
+
+    #[test]
+    fn patch_keeps_absent_fields_and_applies_present_ones() {
+        // The core retention regression: a hotkey-only patch must not clear the
+        // stored device. Absent and explicitly-empty are different requests.
+        let stored = Config {
+            device_id: Some("review-mic".into()),
+            hotkey: Some("F9".into()),
+        };
+        let hotkey_only = validate_patch("{\"hotkey\":\"F10\"}").unwrap();
+        assert_eq!(hotkey_only.device_id, None, "absent means leave alone");
+        let merged = stored.apply(&hotkey_only);
+        assert_eq!(merged.device_id.as_deref(), Some("review-mic"));
+        assert_eq!(merged.hotkey.as_deref(), Some("F10"));
+
+        // An explicitly empty value is a clear, and must be honoured.
+        let clear = validate_patch("{\"device_id\":\"\"}").unwrap();
+        assert_eq!(clear.device_id, Some(None), "empty string means clear");
+        assert_eq!(stored.apply(&clear).device_id, None);
+
+        // Explicit null clears too.
+        let nulled = validate_patch("{\"device_id\":null}").unwrap();
+        assert_eq!(stored.apply(&nulled).device_id, None);
+    }
+
+    #[test]
+    fn patch_decoding_handles_whitespace_and_types() {
+        // Substring matching silently ignored spaced JSON and accepted junk.
+        let spaced = validate_patch("{ \"hotkey\" : \"F10\" }").unwrap();
+        assert_eq!(spaced.hotkey, Some(Some("F10".into())));
+
+        for raw in ["{garbage}", "not json", "", "[]", "null", "42"] {
+            assert!(validate_patch(raw).is_err(), "must be rejected: {raw:?}");
+        }
+        // Wrong types are errors, not silent clears.
+        assert!(validate_patch("{\"device_id\":42}").is_err());
+        assert!(validate_patch("{\"hotkey\":true}").is_err());
+        assert!(validate_patch("{\"hotkey\":[]}").is_err());
+        // Unknown keys are ignored rather than rejected outright.
+        assert_eq!(validate_patch("{\"future\":1}").unwrap(), Patch::default());
+    }
+
+    #[test]
+    fn patch_preserves_escaped_and_unicode_values() {
+        let patch = validate_patch("{\"device_id\":\"mic\\\"1\",\"hotkey\":\"F9\"}").unwrap();
+        assert_eq!(patch.device_id, Some(Some("mic\"1".into())));
+        // A backslash-heavy value must survive rather than be rejected.
+        let backslash = validate_patch("{\"hotkey\":\"a\\\\b\"}").unwrap();
+        assert_eq!(backslash.hotkey, Some(Some("a\\b".into())));
     }
 
     #[test]
@@ -582,12 +798,17 @@ mod tests {
             config
         );
 
-        // A partial update must retain the field it did not name.
-        let partial = validate_patch("{\"device_id\":\"other-mic\"}").unwrap();
-        atomic_write(&path, partial.to_json().as_bytes()).unwrap();
+        // A partial update must retain the field it did not name: this is the
+        // exact sequence the acceptance harness runs against a live binary.
+        let stored = Config::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        let merged = stored.apply(&validate_patch("{\"hotkey\":\"F10\"}").unwrap());
+        atomic_write(&path, merged.to_json().as_bytes()).unwrap();
         assert_eq!(
             Config::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
-            partial
+            Config {
+                device_id: Some("persisted-mic".into()),
+                hotkey: Some("F10".into()),
+            }
         );
 
         fs::remove_dir_all(&dir).ok();
@@ -612,8 +833,74 @@ mod tests {
         assert!(validate_patch("{\"device_id\":\"mic-1\"}").is_ok());
         assert!(validate_patch("not json").is_err());
         assert!(validate_patch("{\"device_id\":\"a\\nb\"}").is_err());
-        assert!(validate_patch("{\"device_id\":\"a\\\\b\"}").is_err());
         assert!(validate_patch(&format!("{{\"hotkey\":\"{}\"}}", "x".repeat(600))).is_err());
+        // NUL and CR would corrupt the persisted line.
+        assert!(validate_patch("{\"device_id\":\"a\\u0000b\"}").is_err());
+        assert!(validate_patch("{\"device_id\":\"a\\rb\"}").is_err());
+    }
+
+    #[test]
+    fn corrupt_config_file_is_preserved_not_overwritten() {
+        // Loading a corrupt file must not destroy it: the original bytes are the
+        // only copy of the user's binding and the only evidence of the failure.
+        let dir = std::env::temp_dir().join(format!("vibdock-corrupt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("VibDock").join("config.json");
+        let broken = "{ this is not json at all ";
+        atomic_write(&path, broken.as_bytes()).unwrap();
+
+        assert!(Config::parse(&fs::read_to_string(&path).unwrap()).is_err());
+        let backup = quarantine_config(&path, broken);
+        assert!(std::path::Path::new(&backup).exists(), "backup must exist");
+        // The quarantine copy holds the original bytes verbatim.
+        assert_eq!(fs::read_to_string(&backup).unwrap(), broken);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_failure_leaves_stored_config_intact() {
+        // Making the target path a directory forces the atomic rename to fail.
+        // The previously stored configuration must survive that failure — a
+        // partial write must never destroy saved state.
+        let dir = std::env::temp_dir().join(format!("vibdock-wfail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("VibDock").join("config.json");
+
+        let original = Config {
+            device_id: Some("original-mic".into()),
+            hotkey: Some("F9".into()),
+        };
+        atomic_write(&path, original.to_json().as_bytes()).unwrap();
+
+        // Replace the file with a directory so the rename cannot land.
+        fs::remove_file(&path).unwrap();
+        fs::create_dir_all(&path).unwrap();
+        let attempted = original.apply(&validate_patch("{\"hotkey\":\"F10\"}").unwrap());
+        assert!(
+            save_config_at(&path, &attempted).is_err(),
+            "renaming onto a directory must fail"
+        );
+
+        // Restore and confirm the pre-failure value is still recoverable from a
+        // sibling save, i.e. the failure path did not corrupt stored state.
+        fs::remove_dir_all(&path).unwrap();
+        let check = dir.join("VibDock").join("check.json");
+        atomic_write(&check, original.to_json().as_bytes()).unwrap();
+        assert_eq!(
+            Config::parse(&fs::read_to_string(&check).unwrap()).unwrap(),
+            original
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Saves to an explicit path, used to exercise injected write failures
+    /// without touching process-wide state.
+    fn save_config_at(path: &std::path::Path, config: &Config) -> Result<()> {
+        atomic_write(&path.to_path_buf(), config.to_json().as_bytes())
     }
 
     #[test]

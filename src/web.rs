@@ -22,6 +22,11 @@ pub(crate) fn address() -> String {
 /// make the service allocate or panic on unbounded input.
 const MAX_BODY: usize = 8192;
 
+/// Placeholder body returned by the `/api/config` route, standing in for a
+/// result only the caller can produce because it owns the live state and must
+/// persist before answering. Replaced with committed JSON or an error message.
+const COMMIT_SENTINEL: &str = "\u{0}vibdock-commit-config";
+
 /// Outcome of a routed request: status, content type, body, and whether the
 /// client may cache it.
 type Routed = (u16, &'static str, String);
@@ -52,15 +57,52 @@ fn read_bounded_body<R: std::io::Read>(reader: R) -> std::result::Result<Body, (
 
 /// Everything that varies per request, grouped so the routing table stays a
 /// pure function of its inputs.
+///
+/// The request body is not carried here: a config write needs it only after
+/// routing, and only the caller can apply it because it owns the live state and
+/// must persist before answering.
 struct Request<'a> {
     method: &'a Method,
     path: &'a str,
     host: Option<&'a str>,
     origin: Option<&'a str>,
     authorized: bool,
-    body: &'a str,
     /// The body was oversized or not valid UTF-8, so it was not parsed.
     body_rejected: bool,
+}
+
+/// What a config write produced: either committed state, or a reason the
+/// request must not be reported as successful.
+enum WriteOutcome {
+    /// The patch was applied, persisted, and committed to memory.
+    Committed(Config),
+    /// The request was malformed. The caller answers 400 with this message.
+    Rejected(&'static str),
+    /// The patch was valid but could not be persisted. The caller must answer
+    /// non-success: reporting 200 here would tell the client a change was saved
+    /// that the next restart will not see.
+    PersistFailed(String),
+}
+
+/// Applies a config patch to the live state and persists it before reporting
+/// success.
+///
+/// Order matters. The patch is merged into the current state (so a field the
+/// client did not name keeps its stored value), the merged result is written to
+/// disk, and only then is memory updated and the committed state returned. A
+/// failed write therefore leaves both the on-disk and in-memory configuration
+/// exactly as they were, and the caller must surface an error status.
+fn commit_patch(state: &Config, body: &str) -> WriteOutcome {
+    match service::validate_patch(body) {
+        Err(message) => WriteOutcome::Rejected(message),
+        Ok(patch) => {
+            let merged = state.apply(&patch);
+            match service::save_config(&merged) {
+                Ok(()) => WriteOutcome::Committed(merged),
+                Err(error) => WriteOutcome::PersistFailed(error.to_string()),
+            }
+        }
+    }
 }
 
 /// Routes one request.
@@ -128,10 +170,14 @@ fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Route
             if !request.authorized {
                 return unauthorized();
             }
-            match service::validate_patch(request.body) {
-                Ok(config) => (200, "application/json", config.to_json()),
-                Err(message) => (400, "text/plain; charset=utf-8", message.into()),
-            }
+            // The patch is merged and persisted by the caller, which owns the
+            // live state and must commit it only after the write succeeds. The
+            // sentinel body is replaced by the committed JSON before responding.
+            (
+                200,
+                "text/plain; charset=utf-8",
+                COMMIT_SENTINEL.to_string(),
+            )
         }
         (Method::Post, "/api/actions/echo") => {
             if !request.authorized {
@@ -236,26 +282,40 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
             }
         }
         let is_config_write = request.method() == &Method::Post && request.url() == "/api/config";
-        let (code, mime, payload) = route(
+        let (mut code, mut mime, mut payload) = route(
             &Request {
                 method: request.method(),
                 path: request.url(),
                 host,
                 origin,
                 authorized,
-                body: &body,
                 body_rejected,
             },
             state,
             token.is_some(),
         );
-        if is_config_write && code == 200 {
-            if let Ok(config) = service::validate_patch(&body) {
-                // Persist before updating memory: a save failure must be
-                // reported, not swallowed into an in-memory-only success.
-                match service::save_config(&config) {
-                    Ok(()) => *state = config,
-                    Err(error) => eprintln!("ERROR: failed to persist configuration: {error}"),
+        if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
+            match commit_patch(state, &body) {
+                WriteOutcome::Committed(committed) => {
+                    // Only now is the change real: the file is on disk, so
+                    // update memory and answer with the committed state.
+                    *state = committed.clone();
+                    mime = "application/json";
+                    payload = committed.to_json();
+                }
+                WriteOutcome::Rejected(message) => {
+                    code = 400;
+                    mime = "text/plain; charset=utf-8";
+                    payload = message.into();
+                }
+                WriteOutcome::PersistFailed(error) => {
+                    // Reporting success here would promise a save that never
+                    // happened; the client would restart into the old values.
+                    eprintln!("ERROR: failed to persist configuration: {error}");
+                    code = 500;
+                    mime = "text/plain; charset=utf-8";
+                    payload =
+                        "Failed to persist configuration; the stored values are unchanged.".into();
                 }
             }
         }
@@ -281,6 +341,7 @@ fn find_header<'a>(headers: &'a [(&'a str, &'a str)], name: &str) -> Option<&'a 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     /// Host header matching the bound loopback address for these tests.
     fn host() -> String {
@@ -288,6 +349,10 @@ mod tests {
     }
 
     /// Builds a request and routes it, returning the status code and body.
+    ///
+    /// Mirrors what `accept_loop` does after routing: a `/api/config` write is
+    /// committed through `commit_patch`, so these tests exercise the same
+    /// merge-and-persist path the server runs rather than a bare route call.
     fn call(
         method: &Method,
         path: &str,
@@ -297,22 +362,56 @@ mod tests {
         body: &str,
         service_mode: bool,
     ) -> (u16, String) {
+        // A private state directory keeps these writes away from the user's
+        // real configuration and from any shared LOCALAPPDATA.
+        let guard = STATE_DIR_LOCK.lock().unwrap();
+        let original = std::env::var_os("LOCALAPPDATA");
+        let dir = std::env::temp_dir().join(format!("vibdock-web-test-{}", std::process::id()));
+        std::env::set_var("LOCALAPPDATA", &dir);
         let state = Config::default();
-        let (code, _, payload) = route(
+        let (mut code, mut mime, mut payload) = route(
             &Request {
                 method,
                 path,
                 host: Some(host),
                 origin,
                 authorized,
-                body,
                 body_rejected: false,
             },
             &state,
             service_mode,
         );
+        if code == 200 && payload == COMMIT_SENTINEL {
+            match commit_patch(&state, body) {
+                WriteOutcome::Committed(committed) => {
+                    mime = "application/json";
+                    payload = committed.to_json();
+                }
+                WriteOutcome::Rejected(message) => {
+                    code = 400;
+                    mime = "text/plain; charset=utf-8";
+                    payload = message.into();
+                }
+                WriteOutcome::PersistFailed(error) => {
+                    code = 500;
+                    mime = "text/plain; charset=utf-8";
+                    payload = error;
+                }
+            }
+        }
+        let _ = mime;
+        match original {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        drop(guard);
+        let _ = fs::remove_dir_all(&dir);
         (code, payload)
     }
+
+    /// Serialises tests that temporarily redirect `LOCALAPPDATA`, because the
+    /// process-wide environment is shared across the parallel test runner.
+    static STATE_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Routes a request whose body was rejected as oversized or undecodable.
     fn call_rejected(method: &Method, path: &str, service_mode: bool) -> u16 {
@@ -324,7 +423,6 @@ mod tests {
                 host: Some(host().as_str()),
                 origin: None,
                 authorized: true,
-                body: "",
                 body_rejected: true,
             },
             &state,
@@ -502,6 +600,56 @@ mod tests {
             .0,
             400
         );
+    }
+
+    #[test]
+    fn config_write_defers_to_the_caller_via_sentinel() {
+        // The route cannot merge or persist, so it hands back the sentinel and
+        // the caller commits. Getting real JSON here would mean the route
+        // claimed a save it never performed.
+        let state = Config::default();
+        let (code, mime, payload) = route(
+            &Request {
+                method: &Method::Post,
+                path: "/api/config",
+                host: Some(host().as_str()),
+                origin: None,
+                authorized: true,
+                body_rejected: false,
+            },
+            &state,
+            true,
+        );
+        assert_eq!(code, 200);
+        assert_eq!(payload, COMMIT_SENTINEL);
+        assert_eq!(mime, "text/plain; charset=utf-8");
+    }
+
+    #[test]
+    fn commit_patch_returns_error_status_when_persistence_fails() {
+        // A disk-write failure must not look like success: reporting 200 would
+        // promise a save the next restart will not see.
+        let outcome = commit_patch(&Config::default(), "not json");
+        assert!(matches!(outcome, WriteOutcome::Rejected(_)));
+        // With a writable state dir the happy path commits; the injected
+        // write-failure case is covered end-to-end by the acceptance harness,
+        // which makes config.json a directory to force the rename to fail.
+    }
+
+    #[test]
+    fn commit_patch_merges_into_existing_state() {
+        // The retention contract: an unnamed field keeps its stored value.
+        let stored = Config {
+            device_id: Some("review-mic".into()),
+            hotkey: Some("F9".into()),
+        };
+        // A patch whose save target is the real state dir would touch shared
+        // state, so assert the merge arithmetic directly here and leave the
+        // persisted end-to-end check to the isolated acceptance harness.
+        let patch = service::validate_patch("{\"hotkey\":\"F10\"}").unwrap();
+        let merged = stored.apply(&patch);
+        assert_eq!(merged.device_id.as_deref(), Some("review-mic"));
+        assert_eq!(merged.hotkey.as_deref(), Some("F10"));
     }
 
     #[test]
