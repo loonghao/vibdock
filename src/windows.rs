@@ -55,6 +55,37 @@ unsafe fn device_id(device: &IMMDevice) -> Result<String> {
 }
 
 unsafe fn apply(manager: &IMMDeviceEnumerator, id: &str, action: &Action) -> Result<()> {
+    let Outcome::MuteState { muted, .. } = perform(manager, id, action)? else {
+        return Err("Expected a mute state for this action.".into());
+    };
+    println!("{}: {}", if muted { "MUTED" } else { "LIVE" }, id);
+    Ok(())
+}
+
+/// The observable result of a device action.
+///
+/// `muted` is read back from the platform after the change, never assumed from
+/// the request. Reporting the device that was actually touched keeps the caller
+/// from describing a different endpoint than the one that changed.
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) enum Outcome {
+    /// The mute state read back after acting on one named endpoint.
+    MuteState { device_id: String, muted: bool },
+    /// The active capture endpoints, as `(name, id)` pairs.
+    Devices(Vec<(String, String)>),
+}
+
+/// Runs one device action and returns the state read back from the platform.
+///
+/// This is the single executor shared by the CLI and the service: both paths
+/// must apply the same readback and error contracts. The readback check is the
+/// point — a requested mute that the platform did not apply is an error, not a
+/// silently assumed success.
+pub(crate) unsafe fn perform(
+    manager: &IMMDeviceEnumerator,
+    id: &str,
+    action: &Action,
+) -> Result<Outcome> {
     let volume = endpoint(manager, id)?;
     let before = volume.GetMute()?.as_bool();
     let desired = match action {
@@ -70,8 +101,41 @@ unsafe fn apply(manager: &IMMDeviceEnumerator, id: &str, action: &Action) -> Res
     if desired.is_some_and(|wanted| wanted != actual) {
         return Err("Microphone mute readback did not match requested state.".into());
     }
-    println!("{}: {}", if actual { "MUTED" } else { "LIVE" }, id);
-    Ok(())
+    Ok(Outcome::MuteState {
+        device_id: id.to_string(),
+        muted: actual,
+    })
+}
+
+/// Lists active capture endpoints as `(name, id)` pairs.
+pub(crate) unsafe fn capture_devices(
+    manager: &IMMDeviceEnumerator,
+) -> Result<Vec<(String, String)>> {
+    let devices = manager.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)?;
+    let mut found = Vec::new();
+    for i in 0..devices.GetCount()? {
+        let device = devices.Item(i)?;
+        found.push((device_name(&device)?, device_id(&device)?));
+    }
+    Ok(found)
+}
+
+/// Executes one action against the platform audio stack.
+///
+/// Shared by both entry points so the CLI and the service cannot drift. The
+/// device id is always explicit: there is no default or fallback endpoint, so
+/// an action can never be applied to a microphone the caller did not name.
+pub(crate) fn execute(action: Action, id: Option<String>) -> Result<Outcome> {
+    unsafe {
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        let _com = Com;
+        let manager: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        if action == Action::Devices {
+            return Ok(Outcome::Devices(capture_devices(&manager)?));
+        }
+        let id = id.ok_or("Specify a microphone endpoint with --device <endpoint-id>.")?;
+        perform(&manager, &id, &action)
+    }
 }
 
 struct Hotkey;
@@ -89,10 +153,8 @@ pub(crate) fn run(action: Action, id: Option<String>) -> Result<()> {
         let _com = Com;
         let manager: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         if action == Action::Devices {
-            let devices = manager.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)?;
-            for i in 0..devices.GetCount()? {
-                let device = devices.Item(i)?;
-                println!("{}\n  {}", device_name(&device)?, device_id(&device)?);
+            for (name, id) in capture_devices(&manager)? {
+                println!("{name}\n  {id}");
             }
             return Ok(());
         }

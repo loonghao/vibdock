@@ -321,6 +321,109 @@ pub(crate) fn config_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("config.json"))
 }
 
+/// An action the service may perform on the user's behalf.
+///
+/// The set is closed on purpose: only these verbs can be requested through the
+/// API, and none of them executes a command. Anything else is rejected before
+/// reaching the platform adapter.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum DeviceAction {
+    /// Read the microphone's current mute state.
+    Status,
+    /// Mute the microphone.
+    Mute,
+    /// Unmute the microphone.
+    Unmute,
+    /// Flip the microphone's mute state.
+    Toggle,
+    /// List active capture endpoints.
+    Devices,
+}
+
+impl DeviceAction {
+    /// Parses an action name from a request, rejecting anything unrecognised.
+    pub(crate) fn parse(name: &str) -> Option<DeviceAction> {
+        match name {
+            "status" => Some(DeviceAction::Status),
+            "mute" => Some(DeviceAction::Mute),
+            "unmute" => Some(DeviceAction::Unmute),
+            "toggle" => Some(DeviceAction::Toggle),
+            "devices" => Some(DeviceAction::Devices),
+            _ => None,
+        }
+    }
+
+    /// True when this action needs a specific endpoint id to act on.
+    pub(crate) fn needs_device(self) -> bool {
+        !matches!(self, DeviceAction::Devices)
+    }
+}
+
+/// Rejects a device id that is absent, empty, or not a plain identifier.
+///
+/// An action must always name its endpoint: there is no default microphone, so
+/// a missing or malformed id fails rather than silently acting on some other
+/// device the user did not choose.
+fn require_device_id(id: Option<&str>) -> std::result::Result<String, String> {
+    let id = id.ok_or("A device endpoint id is required for this action.")?;
+    if id.is_empty() || id.contains('\0') || id.len() > 512 {
+        return Err("A device endpoint id is required for this action.".into());
+    }
+    Ok(id.to_string())
+}
+
+/// The result of a device action, as reported back to an API caller.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ActionResult {
+    /// The mute state read back from the platform after the action.
+    MuteState { device_id: String, muted: bool },
+    /// The active capture endpoints, as `(name, id)` pairs.
+    Devices(Vec<(String, String)>),
+}
+
+/// Runs a device action through the shared platform executor.
+///
+/// Returns the state read back from the platform, or an error describing why
+/// the action did not happen. Nothing here fabricates platform state: the
+/// reported mute value is what the audio stack reported after the change.
+#[cfg(windows)]
+pub(crate) fn run_device_action(
+    action: DeviceAction,
+    device_id: Option<&str>,
+) -> std::result::Result<ActionResult, String> {
+    let id = if action.needs_device() {
+        Some(require_device_id(device_id)?)
+    } else {
+        None
+    };
+    let mapped = match action {
+        DeviceAction::Status => crate::Action::Status,
+        DeviceAction::Mute => crate::Action::Mute,
+        DeviceAction::Unmute => crate::Action::Unmute,
+        DeviceAction::Toggle => crate::Action::Toggle,
+        DeviceAction::Devices => crate::Action::Devices,
+    };
+    let outcome = crate::windows::execute(mapped, id).map_err(|e| e.to_string())?;
+    Ok(match outcome {
+        crate::windows::Outcome::MuteState { device_id, muted } => {
+            ActionResult::MuteState { device_id, muted }
+        }
+        crate::windows::Outcome::Devices(devices) => ActionResult::Devices(devices),
+    })
+}
+
+/// Device actions require the Windows audio adapter.
+///
+/// Failing explicitly beats reporting a state that was never read: the service
+/// must not claim a microphone is muted on a platform where it cannot know.
+#[cfg(not(windows))]
+pub(crate) fn run_device_action(
+    _action: DeviceAction,
+    _device_id: Option<&str>,
+) -> std::result::Result<ActionResult, String> {
+    Err("Device actions require the Windows audio adapter.".into())
+}
+
 /// Loads the persisted configuration.
 ///
 /// A missing file means "no configuration yet". A file that cannot be read or

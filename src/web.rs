@@ -57,18 +57,67 @@ fn read_bounded_body<R: std::io::Read>(reader: R) -> std::result::Result<Body, (
 
 /// Everything that varies per request, grouped so the routing table stays a
 /// pure function of its inputs.
-///
-/// The request body is not carried here: a config write needs it only after
-/// routing, and only the caller can apply it because it owns the live state and
-/// must persist before answering.
 struct Request<'a> {
     method: &'a Method,
     path: &'a str,
     host: Option<&'a str>,
     origin: Option<&'a str>,
     authorized: bool,
+    /// Decoded request body, empty when there is none or it was rejected.
+    body: &'a str,
     /// The body was oversized or not valid UTF-8, so it was not parsed.
     body_rejected: bool,
+}
+
+/// Runs one allowlisted device action and renders its result as JSON.
+///
+/// The endpoint id comes from the request body, falling back to the configured
+/// device. Never a platform default: if no endpoint is named anywhere, the
+/// action fails rather than quietly acting on some other microphone.
+fn run_action(action: service::DeviceAction, body: &str) -> std::result::Result<String, String> {
+    let requested = decode_device_id(body)?;
+    let device_id = match requested {
+        Some(id) => Some(id),
+        // Falling back to the saved device is the user's own configured choice,
+        // not a platform default — and only when the body named none.
+        None => service::load_config()
+            .ok()
+            .and_then(|config| config.device_id),
+    };
+    match service::run_device_action(action, device_id.as_deref())? {
+        service::ActionResult::MuteState { device_id, muted } => Ok(serde_json::json!({
+            "device_id": device_id,
+            "muted": muted,
+        })
+        .to_string()),
+        service::ActionResult::Devices(devices) => {
+            let list: Vec<serde_json::Value> = devices
+                .iter()
+                .map(|(name, id)| serde_json::json!({"name": name, "id": id}))
+                .collect();
+            Ok(serde_json::json!({ "devices": list }).to_string())
+        }
+    }
+}
+
+/// Reads an optional `device_id` from a JSON body, rejecting malformed input.
+fn decode_device_id(body: &str) -> std::result::Result<Option<String>, String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|_| "Request body must be valid JSON.".to_string())?;
+    match value.get("device_id") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(id)) => {
+            if id.is_empty() || id.contains('\0') || id.len() > 512 {
+                return Err("device_id must be a non-empty identifier.".into());
+            }
+            Ok(Some(id.clone()))
+        }
+        Some(_) => Err("device_id must be a string.".into()),
+    }
 }
 
 /// What a config write produced: either committed state, or a reason the
@@ -188,6 +237,27 @@ fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Route
             // adapter contracts settle.
             (200, "application/json", "{\"accepted\":true}".into())
         }
+        (Method::Post, path) if path.starts_with("/api/actions/") => {
+            if !request.authorized {
+                return unauthorized();
+            }
+            let Some(name) = path.strip_prefix("/api/actions/") else {
+                return (404, "text/plain; charset=utf-8", "Not found".into());
+            };
+            let Some(action) = service::DeviceAction::parse(name) else {
+                // Closed allowlist: an unrecognised verb never reaches the
+                // platform adapter, so no new action can be smuggled in.
+                return (404, "text/plain; charset=utf-8", "Unknown action".into());
+            };
+            match run_action(action, request.body) {
+                Ok(result) => (200, "application/json", result),
+                Err(message) => (
+                    502,
+                    "text/plain; charset=utf-8",
+                    format!("Action failed: {message}"),
+                ),
+            }
+        }
         (Method::Get, _) | (Method::Post, _) => {
             (404, "text/plain; charset=utf-8", "Not found".into())
         }
@@ -289,6 +359,7 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
                 host,
                 origin,
                 authorized,
+                body: &body,
                 body_rejected,
             },
             state,
@@ -379,6 +450,7 @@ mod tests {
                 host: Some(host),
                 origin,
                 authorized,
+                body,
                 body_rejected: false,
             },
             &state,
@@ -444,6 +516,7 @@ mod tests {
                 host: Some(host().as_str()),
                 origin: None,
                 authorized: true,
+                body: "",
                 body_rejected: true,
             },
             &state,
@@ -636,6 +709,7 @@ mod tests {
                 host: Some(host().as_str()),
                 origin: None,
                 authorized: true,
+                body: "{\"hotkey\":\"F10\"}",
                 body_rejected: false,
             },
             &state,
