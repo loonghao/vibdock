@@ -34,6 +34,7 @@ const SHUTDOWN_SENTINEL: &str = "\u{0}vibdock-shutdown";
 ///
 /// Fixed rather than derived: the service owns exactly one global binding, so
 /// there is no second registration to distinguish.
+#[cfg(windows)]
 pub(crate) const BINDING_HOTKEY_ID: i32 = 1;
 
 /// The platform hotkey registration the service owns, if the platform has one.
@@ -48,7 +49,8 @@ type Binding = ();
 
 /// Outcome of arming or re-arming the configured hotkey after a config change.
 enum Activation {
-    /// The binding is registered and live.
+    /// The binding is registered and live (Windows adapter only).
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
     Armed,
     /// No binding is configured, so nothing was registered.
     Idle,
@@ -475,7 +477,7 @@ fn route(
             (
                 200,
                 "application/json",
-                format!("{{\"mode\":\"{mode}\",\"audio_control\":{token_configured}}}"),
+                serde_json::json!({"mode": mode, "audio_control": token_configured && cfg!(windows)}).to_string(),
             )
         }
         (Method::Get, "/instance") => {
@@ -1116,6 +1118,13 @@ mod tests {
         )
         .1
         .contains("design-preview"));
+    }
+
+    #[test]
+    fn health_reports_platform_audio_support() {
+        let (_, body) = call(&Method::Get, "/health", &host(), None, true, "", true);
+        let health: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(health["audio_control"], cfg!(windows));
     }
 
     #[test]

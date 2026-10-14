@@ -664,6 +664,7 @@ impl Config {
     /// than ignored. Treating it as "no binding" would look identical to a
     /// configuration that never had one, so the user could not tell an
     /// unarmable hotkey from an unconfigured one.
+    #[cfg(any(windows, test))]
     pub(crate) fn hotkey_binding(&self) -> std::result::Result<Option<Hotkey>, String> {
         match &self.hotkey {
             None => Ok(None),
