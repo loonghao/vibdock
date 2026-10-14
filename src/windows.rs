@@ -51,15 +51,15 @@ impl HotkeyCode {
 
 /// Maps a key to its Win32 virtual-key code.
 ///
-/// Printable keys are their own uppercase ASCII code point, which is the
-/// documented virtual-key value for `A`..`Z`, `0`..`9`, and the punctuation on
-/// the shared digit row: recording `Ctrl + Alt + 1` and pressing the `1` key
-/// produce the same code, with or without Shift.
+/// Character keys use the active Windows keyboard layout. Unicode scalar
+/// values are not virtual-key codes; unsupported characters fail registration.
 fn virtual_key(key: Key) -> u32 {
     match key {
         // VK_F1 is 0x70 and the function keys are contiguous through VK_F24.
         Key::Function(number) => 0x6F + u32::from(number),
-        Key::Character(character) => u32::from(character as u8),
+        Key::Character(character) => character_key(character)
+            .map(|mapping| u32::from(mapping as u8))
+            .unwrap_or(u32::MAX),
         Key::Escape => u32::from(VK_ESCAPE.0),
         Key::Delete => u32::from(VK_DELETE.0),
         Key::Insert => u32::from(VK_INSERT.0),
@@ -75,6 +75,12 @@ fn virtual_key(key: Key) -> u32 {
         Key::Tab => u32::from(VK_TAB.0),
         Key::Backspace => u32::from(VK_BACK.0),
     }
+}
+
+fn character_key(character: char) -> Option<u16> {
+    let character = u16::try_from(u32::from(character)).ok()?;
+    let mapping = unsafe { VkKeyScanW(character) };
+    (mapping != -1).then_some(mapping as u16)
 }
 
 /// Translates a Win32 error from `RegisterHotKey` into an honest message.
@@ -107,6 +113,25 @@ pub struct RegisteredHotkey {
 impl RegisteredHotkey {
     /// Registers `hotkey` for this thread, returning the live registration.
     pub fn register(hotkey: &Hotkey, id: i32) -> std::result::Result<RegisteredHotkey, String> {
+        if let Key::Character(character) = hotkey.key() {
+            let mapping = character_key(character)
+                .ok_or("The character is unavailable on the active keyboard layout.")?;
+            // Letters are normalized to uppercase in the domain parser, but
+            // letter shortcuts do not imply Shift. Symbols retain the layout's
+            // required modifiers, which must be explicit in the recorded chord.
+            if !character.is_ascii_alphabetic() {
+                let required = mapping >> 8;
+                for (bit, modifier) in [
+                    (1, Modifier::Shift),
+                    (2, Modifier::Control),
+                    (4, Modifier::Alt),
+                ] {
+                    if required & bit != 0 && !hotkey.modifiers().contains(&modifier) {
+                        return Err("The character requires additional keyboard-layout modifiers; record the complete shortcut.".into());
+                    }
+                }
+            }
+        }
         let code = HotkeyCode::from_hotkey(hotkey);
         unsafe { RegisterHotKey(None, id, code.modifiers, code.virtual_key) }
             .map_err(registration_error)?;
@@ -391,7 +416,13 @@ mod tests {
         // digit row key matches the key the user actually presses.
         assert_eq!(virtual_key(Key::Character('A')), 0x41);
         assert_eq!(virtual_key(Key::Character('1')), 0x31);
-        assert_eq!(virtual_key(Key::Character('/')), 0x2F);
+        assert_eq!(
+            virtual_key(Key::Character('/')),
+            character_key('/')
+                .map(|value| u32::from(value as u8))
+                .unwrap_or(u32::MAX)
+        );
+        assert_eq!(virtual_key(Key::Character('😀')), u32::MAX);
         assert_eq!(virtual_key(Key::Escape), u32::from(VK_ESCAPE.0));
         assert_eq!(virtual_key(Key::Enter), u32::from(VK_RETURN.0));
         assert_eq!(virtual_key(Key::Up), u32::from(VK_UP.0));
