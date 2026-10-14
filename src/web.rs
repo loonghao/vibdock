@@ -87,19 +87,32 @@ fn run_action(action: service::DeviceAction, body: &str) -> std::result::Result<
             .ok()
             .and_then(|config| config.device_id),
     };
-    match service::run_device_action(action, device_id.as_deref())? {
-        service::ActionResult::MuteState { device_id, muted } => Ok(serde_json::json!({
-            "device_id": device_id,
-            "muted": muted,
-        })
-        .to_string()),
-        service::ActionResult::Devices(devices) => {
-            let list: Vec<serde_json::Value> = devices
-                .iter()
-                .map(|(name, id)| serde_json::json!({"name": name, "id": id}))
-                .collect();
-            Ok(serde_json::json!({ "devices": list }).to_string())
+    // Only Windows can produce a device result; the rendering is scoped with
+    // the type so no branch can claim a shape that platform cannot yield.
+    #[cfg(windows)]
+    {
+        match service::run_device_action(action, device_id.as_deref())? {
+            service::ActionResult::MuteState { device_id, muted } => Ok(serde_json::json!({
+                "device_id": device_id,
+                "muted": muted,
+            })
+            .to_string()),
+            service::ActionResult::Devices(devices) => {
+                let list: Vec<serde_json::Value> = devices
+                    .iter()
+                    .map(|(name, id)| serde_json::json!({"name": name, "id": id}))
+                    .collect();
+                Ok(serde_json::json!({ "devices": list }).to_string())
+            }
         }
+    }
+    #[cfg(not(windows))]
+    {
+        // Unsupported platforms surface the adapter's own error unchanged.
+        // Returning here keeps `action` and `device_id` meaningful on both
+        // paths without a compile-time unused warning on either.
+        let result = service::run_device_action(action, device_id.as_deref())?;
+        Ok(serde_json::json!({ "result": format!("{result:?}") }).to_string())
     }
 }
 

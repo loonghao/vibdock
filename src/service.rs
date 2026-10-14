@@ -422,16 +422,20 @@ fn require_device_id(id: Option<&str>) -> std::result::Result<String, String> {
 }
 
 /// The result of a device action, as reported back to an API caller.
+///
+/// The variants are scoped by platform so the type says what each platform can
+/// actually produce, instead of carrying a shape that is only ever
+/// unconstructable there.
 #[derive(Debug, PartialEq)]
 pub(crate) enum ActionResult {
     /// The mute state read back from the platform after the action.
     ///
-    /// Only a platform with an audio adapter can produce this; elsewhere the
-    /// action fails instead, so no mute state is ever reported without having
-    /// been read from the device.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Only Windows has an audio adapter to read from; elsewhere no such
+    /// variant exists, so no mute state can be reported without being read.
+    #[cfg(windows)]
     MuteState { device_id: String, muted: bool },
     /// The active capture endpoints, as `(name, id)` pairs.
+    #[cfg(windows)]
     Devices(Vec<(String, String)>),
 }
 
@@ -478,23 +482,21 @@ fn platform_device_action(
     })
 }
 
-/// Non-Windows path: there is no audio adapter to read or change.
+/// Non-Windows path: the audio backend is unimplemented, not empty.
 ///
-/// Failing explicitly beats reporting a state that was never read: the service
-/// must not claim a microphone is muted on a platform where it cannot know.
-/// Listing endpoints is the one honest answer available — there are none,
-/// because this platform has no audio adapter to enumerate.
+/// Every action fails with an explicit "unsupported" error, including
+/// enumeration. Returning an empty device list would mean "we looked and found
+/// none", which is a different statement from "this platform cannot look" — and
+/// a caller could not tell the difference. No mute state is fabricated either.
 #[cfg(not(windows))]
 fn platform_device_action(
     action: DeviceAction,
     _device_id: Option<&str>,
 ) -> std::result::Result<ActionResult, String> {
-    match action {
-        DeviceAction::Devices => Ok(ActionResult::Devices(Vec::new())),
-        _ => Err(format!(
-            "{action:?} requires the Windows audio adapter; no device state is available here."
-        )),
-    }
+    Err(format!(
+        "{action:?} requires the Windows audio adapter; audio is unimplemented on this platform, \
+         so no device state is available."
+    ))
 }
 
 /// Loads the persisted configuration.
@@ -755,11 +757,49 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_platforms_report_unsupported_not_empty() {
+        // "This platform cannot enumerate" must never look like "we enumerated
+        // and found nothing". A caller has to be able to tell them apart.
+        #[cfg(not(windows))]
+        {
+            let result = run_device_action(DeviceAction::Devices, None);
+            assert!(result.is_err(), "enumeration must fail, not return empty");
+            let message = result.unwrap_err();
+            assert!(
+                message.contains("unimplemented") || message.contains("Windows audio adapter"),
+                "error must say the platform is unsupported, got: {message}"
+            );
+            // No action may fabricate a mute state either.
+            for action in [
+                DeviceAction::Status,
+                DeviceAction::Mute,
+                DeviceAction::Unmute,
+                DeviceAction::Toggle,
+            ] {
+                assert!(run_device_action(action, Some("any-device")).is_err());
+            }
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, enumeration must actually talk to the adapter; an
+            // error here is a real failure, never a silent empty list.
+            match run_device_action(DeviceAction::Devices, None) {
+                Ok(ActionResult::Devices(_)) => {}
+                Ok(ActionResult::MuteState { .. }) => {
+                    panic!("enumeration must return an endpoint list, not a mute state")
+                }
+                Err(message) => {
+                    panic!("Windows enumeration must not report unsupported: {message}")
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn mute_state_records_the_device_that_was_actually_touched() {
         // The result must name the endpoint it read back, so a caller can never
-        // describe a different microphone than the one that changed. This pins
-        // the contract on platforms with no audio adapter too, where no real
-        // mute state can be produced.
+        // describe a different microphone than the one that changed.
         let result = ActionResult::MuteState {
             device_id: "endpoint-1".to_string(),
             muted: true,
@@ -780,18 +820,23 @@ mod tests {
         );
     }
 
+    /// Windows-only: a device result is possible, so it must be a real readback.
+    ///
+    /// The unsupported-platform counterpart is
+    /// `unsupported_platforms_report_unsupported_not_empty`.
+    #[cfg(windows)]
     #[test]
     fn device_action_results_report_readback_not_assumption() {
-        // Every platform must either return state read from the device or an
-        // explicit error - never an assumed success.
+        // Every result must be state read from the device, never an assumption.
         match run_device_action(DeviceAction::Devices, None) {
             Ok(ActionResult::Devices(_)) => {}
-            // On a platform with no audio adapter the action must fail loudly.
             Err(message) => assert!(
                 !message.is_empty(),
                 "failure must explain itself, not report success"
             ),
-            Ok(other) => panic!("devices must return an endpoint list, got {other:?}"),
+            Ok(ActionResult::MuteState { .. }) => {
+                panic!("devices must return an endpoint list, not a mute state")
+            }
         }
     }
 
