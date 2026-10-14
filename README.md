@@ -6,6 +6,8 @@ Use a microphone button to talk to an agent, silence an input device, and get ba
 
 **Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Pending source changes add authenticated Web configuration, a resident Windows shortcut binding, two executable entry points, and dual-entry packaging. These changes have local integration evidence but are not a new published release. Physical Ulanzi buttons and native launcher/tray interaction still need acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting controls remain planned; VibDock is independent of these vendors.
 
+**Known service limitation:** Pending service builds have failed responsiveness checks with slow clients. A proposed transport repair also fails normal browser authorization. These failures are being repaired and must pass both normal configuration and resilience checks before a resident-service release. Current review builds are not accepted for unattended use.
+
 ## Download and run
 
 Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); the pending release pipeline packages both and checks their executable subsystems. No Node.js, Python, or separate Web server is required.
@@ -177,3 +179,5 @@ Double-click to start one resident local service and open the Web settings. Clos
 WeChat Input and Codex/Mini are the first integration priorities. WorkBuddy and meeting-friendly per-application audio controls follow; Slack and Tencent Meeting scenarios remain integration-specific acceptance work.
 
 The latest product launch design uses a thin Windows launcher/tray executable alongside the console CLI, both sharing one Rust core/service. The `tray` command implements the tray entry and shares the service core with the CLI; current preview downloads still contain only the CLI.
+
+Integration evidence and shortcut ownership are tracked in [voice integration evidence](docs/integrations/voice-evidence.md). Documentation support does not mean an installed client has been controlled successfully.
