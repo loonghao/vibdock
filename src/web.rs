@@ -524,6 +524,30 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[test]
+    fn browser_code_redemption_preserves_origin_and_replay_protection() {
+        let mut auth = crate::browser_auth::BrowserAuth::default();
+        let code = auth.mint().unwrap();
+        let body = serde_json::json!({"code": code}).to_string();
+        let host = host();
+        let mut request = Request {
+            method: &Method::Post,
+            path: "/api/bootstrap",
+            host: Some(&host),
+            origin: Some("https://foreign.example"),
+            authorized: false,
+            body: &body,
+            body_rejected: false,
+        };
+        assert_eq!(bootstrap_route(&request, &mut auth, false, true).0, 403);
+        request.origin = None;
+        assert_eq!(bootstrap_route(&request, &mut auth, false, false).0, 405);
+        assert_eq!(bootstrap_route(&request, &mut auth, false, true).0, 200);
+        assert_eq!(bootstrap_route(&request, &mut auth, false, true).0, 401);
+        request.path = "/api/bootstrap/new";
+        assert_eq!(bootstrap_route(&request, &mut auth, false, true).0, 401);
+    }
+
     /// Host header matching the bound loopback address for these tests.
     fn host() -> String {
         address()
