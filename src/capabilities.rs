@@ -62,7 +62,9 @@ impl Capability {
 pub enum Support {
     /// Observed live on the installed client; safe to report as working.
     Verified,
-    /// Inspected, no live confirmation. Dispatch is not success.
+    /// Known to exist — documented or otherwise declared — but no live
+    /// confirmation. Existence evidence need not come from an inspection.
+    /// Dispatch is not success.
     Unverified,
     /// Inspected and confirmed absent.
     #[allow(dead_code, reason = "available to adapters that do inspect")]
@@ -170,13 +172,11 @@ pub fn report_all() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 "  verified: none ({} capabilities not verified; dispatch is not success)",
                 report.findings.len()
             );
-        } else {
-            println!("  verified: {}", verified.join(", "));
-        }
-        if verified.is_empty() {
             println!(
                 "  note: no entry is verified; these declarations are documentation-derived, not an inspection of the installed client"
             );
+        } else {
+            println!("  verified: {}", verified.join(", "));
         }
         if report.has_unknown() {
             println!(
