@@ -121,6 +121,9 @@ async function saveBinding(){
     try{
       // Config is a patch: name only the fields being changed.
       await saveToService({device_id:deviceId,hotkey:shortcut});
+      // saveToService replaces serviceConfig with the committed body, so the
+      // authoritative binding row is refreshed here rather than left stale.
+      applyServiceConfig();
       saved.set(selected,{target:'mic',action:'toggle',shortcut,deviceId});
       persist();conflict=null;renderBindings();loadEditor();
       say('已写入后台服务，配置已持久化（服务重启后仍保留）。','ok');
@@ -257,12 +260,16 @@ async function redeemBootstrap(code){
   const data=await readJson(response);
   return data&&data.token?data.token:null;
 }
+// Returns true only when the service actually accepted the token and the live
+// config was read. Callers must not treat a failure as authorized: hiding the
+// authorization UI on a failed exchange would leave the page looking ready
+// while every save silently fails.
 async function authorizeWith(token){
   serviceToken=token;
   try{
     const response=await api('/api/config');
-    if(response.status===401||response.status===403){serviceToken=null;$('authError').textContent='令牌无效，服务拒绝了这次请求。';return;}
-    if(!response.ok){serviceToken=null;$('authError').textContent=serviceError(response,'');return;}
+    if(response.status===401||response.status===403){serviceToken=null;$('authError').textContent='引导码无效或已过期，服务拒绝了这次请求。';return false;}
+    if(!response.ok){serviceToken=null;$('authError').textContent=serviceError(response,'');return false;}
     serviceConfig=await readJson(response);
     applyServiceConfig();
     $('authRow').hidden=true;$('token').value='';
@@ -271,8 +278,10 @@ async function authorizeWith(token){
     updateModeLabels();
     $('banner').textContent='已连接并通过鉴权的后台服务。设备列表与配置来自服务；保存会先写入服务，成功后再更新页面。';
     say('已授权。已从服务载入设备与配置。','ok');
+    return true;
   }catch{
     serviceToken=null;$('authError').textContent='无法连接服务，请确认服务仍在运行。';
+    return false;
   }
 }
 $('authorize').onclick=async ()=>{
@@ -305,27 +314,30 @@ async function saveToService(patch){
   if(committed&&typeof committed==='object')serviceConfig=committed;
   return true;
 }
-// One-use bootstrap: if the launcher opened this page with a short-lived code,
-// redeem it for a session token and erase it from the address bar immediately.
-// The code is never persisted and never reused.
+// One-use bootstrap. The launcher opens the page with `#bootstrap=<code>`; the
+// code is copied into memory and wiped from the fragment *before* any async
+// exchange so it cannot be replayed from a shared link or a screenshot. There
+// is deliberately no query-string credential support.
 async function tryBootstrap(){
-  const code=new URLSearchParams(location.search).get('code')
-    ||new URLSearchParams(location.hash.slice(1)).get('code');
+  const code=new URLSearchParams(location.hash.slice(1)).get('bootstrap');
   if(!code)return false;
+  history.replaceState({},document.title,location.pathname+location.search);
   try{
     const token=await redeemBootstrap(code);
     if(!token)return false;
-    await authorizeWith(token);
-    // Drop the code from history and the visible URL so it cannot be replayed
-    // from the address bar or a shared link.
-    history.replaceState({},document.title,location.pathname);
-    return true;
+    const authorized=await authorizeWith(token);
+    return authorized;
   }catch{return false;}
 }
 renderBindings();loadEditor();
 probe().then(async ()=>{
   if(mode!=='service')return;
   const ok=await tryBootstrap();
-  if(ok)$('authRow').hidden=true;
+  if(ok){$('authRow').hidden=true;return;}
+  // A plain URL carries no code, and a replayed or expired one is rejected by
+  // the service. Either way the fix is the same and must be stated plainly:
+  // reopen the page from the tray so it arrives with a fresh single-use code.
+  $('authRow').hidden=false;
+  $('authError').textContent='请通过托盘的「打开配置」重新进入本页，链接会自带一次性引导码。手动粘贴仅用于排查，不作为正常入口。';
 });
 </script></html>
