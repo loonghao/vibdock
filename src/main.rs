@@ -1,4 +1,6 @@
 use std::{env, error::Error};
+mod capabilities;
+mod integrations;
 mod web;
 #[cfg(windows)]
 mod windows;
@@ -12,6 +14,7 @@ enum Action {
     Unmute,
     Toggle,
     Listen,
+    Capabilities,
 }
 
 fn parse(args: &[String]) -> Result<(Action, Option<String>)> {
@@ -23,12 +26,16 @@ fn parse(args: &[String]) -> Result<(Action, Option<String>)> {
         Some("unmute") => Action::Unmute,
         Some("toggle") => Action::Toggle,
         Some("listen") => Action::Listen,
+        Some("capabilities") => Action::Capabilities,
         _ => return Err(
-            "Usage: vibdock serve | devices | <status|mute|unmute|toggle|listen> --device <endpoint-id>"
+            "Usage: vibdock serve | devices | capabilities | <status|mute|unmute|toggle|listen> --device <endpoint-id>"
                 .into(),
         ),
     };
-    if matches!(action, Action::Devices | Action::Serve) {
+    if matches!(
+        action,
+        Action::Devices | Action::Serve | Action::Capabilities
+    ) {
         if args.len() != 1 {
             return Err("This command does not accept device arguments.".into());
         }
@@ -47,6 +54,9 @@ fn run() -> Result<()> {
     let (action, id) = parse(&env::args().skip(1).collect::<Vec<_>>())?;
     if action == Action::Serve {
         return web::serve();
+    }
+    if action == Action::Capabilities {
+        return capabilities::report_all();
     }
     #[cfg(windows)]
     {
