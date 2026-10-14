@@ -22,6 +22,34 @@ Release archives contain one Rust executable and this README. No Node.js, Python
 
 Open http://127.0.0.1:43128 to explore the design. The preview uses mock data, keeps changes only in page memory, and never controls audio. Close the terminal or press Ctrl+C to stop the preview server. The current `serve` and `listen` commands are separate processes.
 
+## Resident service
+
+`service-start` runs a loopback service on the same address with authenticated
+configuration and action endpoints:
+
+```powershell
+.\vibdock.exe service-start
+.\vibdock.exe service-status
+.\vibdock.exe service-stop
+```
+
+The service generates a bearer token at startup and records it with the bound
+port in `%LOCALAPPDATA%\VibDock\service.json`. Reads and writes under `/api`
+require that token via `Authorization: Bearer <token>` or the `X-VibDock-Token`
+header. Requests are rejected unless the `Host` header is the bound loopback
+address and any `Origin` header is that same loopback origin. `/api/config`
+accepts `device_id` and `hotkey` as plain strings under 512 bytes; no shell or
+arbitrary-command endpoint exists.
+
+Repeated `service-start` invocations reuse the running instance instead of
+binding a second listener. The published record is verified against a live
+connection before it is trusted, so a service that was killed without cleanup
+does not block the next launch.
+
+`service-stop` reports whether a service is running. Stopping the process
+itself is performed by the tray Exit item or by terminating the service
+process; the cross-process shutdown signal ships with the launcher entry.
+
 ## Control a microphone on Windows
 
 ```powershell
@@ -45,7 +73,7 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
-A future control API must authenticate callers and validate browser origins. The current Web server is read-only, loopback-only, rejects unexpected Host headers, and exposes no audio-control endpoints. A sent shortcut must not be reported as a verified application state change.
+The control API authenticates callers and validates browser origins. The `serve` preview is read-only, loopback-only, and rejects unexpected Host headers. `service-start` exposes authenticated `/api` configuration and action endpoints; audio control is not wired to them yet. A sent shortcut must not be reported as a verified application state change.
 
 See [the interaction specification](docs/design/README.md) and [the clickable design source](docs/design/index.html).
 

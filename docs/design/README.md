@@ -37,13 +37,28 @@ Adapters declare actions, scope, prerequisites, and state-query capability. CLI,
 
 ## Prototype limits
 
-All device/application data is mock data. Save means page memory only. No audio, global capture, desktop overlay, app detection, plugin loading, or authenticated control API is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS.
+All device/application data is mock data. Save means page memory only. No audio, global capture, desktop overlay, app detection, or plugin loading is implemented by this page. The embedded Rust preview serves the same page read-only on Windows, Linux, and macOS.
+
+## Service API contract
+
+`service-start` runs the authenticated service. It binds loopback only, generates a bearer token per launch, and records it with the bound port in the service state file.
+
+- Authentication: `Authorization: Bearer <token>`, or `X-VibDock-Token`. Compared in constant time; a missing or wrong token yields 401.
+- Host and origin: the `Host` header must be the bound loopback address and any `Origin` must be the same loopback origin, otherwise 403.
+- `GET /api/config` and `POST /api/config` read and patch `device_id` and `hotkey`. Values are plain strings under 512 bytes; a malformed patch yields 400.
+- No arbitrary command or shell endpoint is exposed. `/api/actions/echo` exists only to prove the authenticated action path.
+- Single instance: a second launch reuses the running service. The published record is checked against a live connection first, so a service killed without cleanup does not block the next launch.
+- `service-status` reports whether a service is listening; `service-stop` reports status and defers process shutdown to the tray Exit item or the service process.
+
+The `serve` preview remains read-only and unauthenticated: it serves the page and reports `design-preview` mode.
 
 ## Resident-service lifecycle requirement
 
 The product version must start by double-clicking the executable, launch one local service, and open its configuration page. Closing the browser does not stop the service. A Windows notification-area icon provides Open configuration, status, and Exit. A separate small floating status indicator may be optional; it is not a replacement for a discoverable Exit control.
 
-Repeated launches must discover and reuse the existing service instead of starting a second listener. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port. The current CLI preview does not implement this lifecycle yet.
+Repeated launches must discover and reuse the existing service instead of starting a second listener. That reuse check is implemented: the published instance record is verified against a live connection before it is trusted. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port.
+
+Remaining lifecycle work: the double-click launcher/tray executable, the tray Open configuration / status / Exit menu, and the cross-process shutdown signal behind `service-stop`. The CLI entry implements start, status reporting, and single-instance reuse today.
 
 ## Delivery priorities
 
