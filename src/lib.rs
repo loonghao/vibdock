@@ -8,6 +8,7 @@
 use std::{error::Error, fmt};
 mod browser_auth;
 
+pub mod hotkey;
 pub mod service;
 #[cfg(windows)]
 pub mod tray;

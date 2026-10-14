@@ -30,6 +30,98 @@ const COMMIT_SENTINEL: &str = "\u{0}vibdock-commit-config";
 /// Body returned by `/api/shutdown`, telling the accept loop to stop serving.
 const SHUTDOWN_SENTINEL: &str = "\u{0}vibdock-shutdown";
 
+/// The id the resident service registers its configured hotkey under.
+///
+/// Fixed rather than derived: the service owns exactly one global binding, so
+/// there is no second registration to distinguish.
+pub(crate) const BINDING_HOTKEY_ID: i32 = 1;
+
+/// The platform hotkey registration the service owns, if the platform has one.
+///
+/// Aliased so the accept loop is written once: on platforms without a global
+/// hotkey adapter the slot is simply never filled.
+#[cfg(windows)]
+type Binding = crate::windows::RegisteredHotkey;
+/// Placeholder for platforms with no global hotkey adapter.
+#[cfg(not(windows))]
+type Binding = ();
+
+/// Outcome of arming or re-arming the configured hotkey after a config change.
+enum Activation {
+    /// The binding is registered and live.
+    Armed,
+    /// No binding is configured, so nothing was registered.
+    Idle,
+    /// Registration was attempted and refused. The message is shown to the
+    /// user and stored so status can report the binding is not live.
+    Failed(String),
+}
+
+impl Activation {
+    /// True when a hotkey is actually registered and will fire.
+    fn is_armed(&self) -> bool {
+        matches!(self, Activation::Armed)
+    }
+}
+
+/// Applies the current configuration to the global hotkey registration.
+///
+/// This is the single place a saved binding becomes operational. The previous
+/// binding is always released first, so a failed re-registration never leaves a
+/// stale hotkey armed for a device or chord the user has moved away from.
+///
+/// A failure is returned rather than swallowed: reporting success here would
+/// tell the client a binding is live when pressing it does nothing. The
+/// previously persisted configuration is untouched by this function; the caller
+/// owns whether the change is kept.
+#[cfg(windows)]
+fn activate_hotkey(
+    config: &Config,
+    current: &mut Option<crate::windows::RegisteredHotkey>,
+) -> Activation {
+    // Drop whatever is registered before trying the new chord. Registering
+    // the new one first would fail as a conflict against our own binding,
+    // and on some chords the OS refuses the second registration outright.
+    *current = None;
+    let Some(device_id) = config.device_id.as_deref() else {
+        return Activation::Idle;
+    };
+    if device_id.is_empty() {
+        return Activation::Idle;
+    }
+    let binding = match config.hotkey_binding() {
+        Ok(Some(binding)) => binding,
+        Ok(None) => return Activation::Idle,
+        Err(message) => return Activation::Failed(message),
+    };
+    match crate::windows::RegisteredHotkey::register(&binding, BINDING_HOTKEY_ID) {
+        Ok(registered) => {
+            *current = Some(registered);
+            println!("Binding armed: {binding} toggles the configured microphone.");
+            Activation::Armed
+        }
+        Err(message) => {
+            eprintln!("ERROR: could not arm the binding: {message}");
+            Activation::Failed(message)
+        }
+    }
+}
+
+/// Non-Windows path: there is no platform hotkey adapter, so nothing arms.
+///
+/// Deliberately explicit rather than a silent no-op, so a caller cannot read
+/// success from the absence of an error.
+#[cfg(not(windows))]
+fn activate_hotkey(config: &Config, _current: &mut Option<()>) -> Activation {
+    if !config.is_bindable() {
+        return Activation::Idle;
+    }
+    Activation::Failed(
+        "Global hotkeys require the Windows input adapter; no binding is armed on this platform."
+            .to_string(),
+    )
+}
+
 /// Outcome of a routed request: status, content type, body, and whether the
 /// client may cache it.
 type Routed = (u16, &'static str, String);
@@ -149,6 +241,79 @@ enum WriteOutcome {
     PersistFailed(String),
 }
 
+/// True when the bound hotkey was pressed since the last check.
+///
+/// Non-Windows platforms have no binding to poll, so this is always false
+/// there — matching the fact that no hotkey can be armed on them either.
+#[cfg(windows)]
+fn fired_since_last_poll(binding: &Option<Binding>) -> bool {
+    binding.is_some() && crate::windows::poll_hotkey(BINDING_HOTKEY_ID)
+}
+
+/// Placeholder for platforms with no global hotkey to poll.
+#[cfg(not(windows))]
+fn fired_since_last_poll(_binding: &Option<Binding>) -> bool {
+    false
+}
+
+/// Performs the action the armed binding is configured for.
+///
+/// Only the toggle action exists today, and it always names the configured
+/// endpoint explicitly. A disconnected or absent device is an error rather
+/// than a reason to fall back to another microphone: silently retargeting the
+/// user's button would change the meaning of the hardware without telling
+/// them.
+#[cfg(windows)]
+fn run_bound_action(state: &Config) -> std::result::Result<String, String> {
+    let device_id = state
+        .device_id
+        .clone()
+        .ok_or("The binding has no microphone configured.".to_string())?;
+    match service::run_device_action(service::DeviceAction::Toggle, Some(&device_id))? {
+        service::ActionResult::MuteState { muted, .. } => {
+            Ok((if muted { "MUTED" } else { "LIVE" }).to_string())
+        }
+        // Enumeration is not a bound action; a binding toggles one device.
+        service::ActionResult::Devices(_) => {
+            Err("The binding can only toggle a microphone.".into())
+        }
+    }
+}
+
+/// Placeholder for platforms with no audio adapter to act on.
+#[cfg(not(windows))]
+fn run_bound_action(_state: &Config) -> std::result::Result<String, String> {
+    Err("Bound actions require the Windows audio adapter.".into())
+}
+
+/// Renders the configuration together with how its binding actually stands.
+///
+/// The activation state is reported separately from the stored values because
+/// they are different facts: a hotkey can be saved and yet not be armed, and
+/// telling the user "saved" without that distinction is how a binding ends up
+/// silently dead. `hotkey_live` is true only when the platform confirmed a
+/// registration that is still held.
+fn binding_status(config: &Config, activation: &Activation) -> String {
+    let message: Option<String> = match activation {
+        Activation::Armed => None,
+        Activation::Idle => {
+            if config.is_bindable() {
+                None
+            } else {
+                Some("Choose a microphone and record a shortcut to arm the binding.".to_string())
+            }
+        }
+        Activation::Failed(message) => Some(message.clone()),
+    };
+    serde_json::json!({
+        "device_id": config.device_id.clone().unwrap_or_default(),
+        "hotkey": config.hotkey.clone().unwrap_or_default(),
+        "hotkey_live": activation.is_armed(),
+        "activation_error": message,
+    })
+    .to_string()
+}
+
 /// Applies a config patch to the live state and persists it before reporting
 /// success.
 ///
@@ -157,6 +322,7 @@ enum WriteOutcome {
 /// disk, and only then is memory updated and the committed state returned. A
 /// failed write therefore leaves both the on-disk and in-memory configuration
 /// exactly as they were, and the caller must surface an error status.
+#[cfg(test)]
 fn commit_patch(state: &Config, body: &str) -> WriteOutcome {
     match service::validate_patch(body) {
         Err(message) => WriteOutcome::Rejected(message),
@@ -166,6 +332,37 @@ fn commit_patch(state: &Config, body: &str) -> WriteOutcome {
                 Ok(()) => WriteOutcome::Committed(merged),
                 Err(error) => WriteOutcome::PersistFailed(error.to_string()),
             }
+        }
+    }
+}
+
+/// Validate and arm before persistence; restore the previous registration on
+/// either platform rejection or disk failure. A rejected edit never replaces
+/// the saved configuration.
+fn commit_live_patch(
+    state: &Config,
+    body: &str,
+    binding: &mut Option<Binding>,
+    activation: &mut Activation,
+) -> WriteOutcome {
+    let patch = match service::validate_patch(body) {
+        Ok(patch) => patch,
+        Err(message) => return WriteOutcome::Rejected(message),
+    };
+    let merged = state.apply(&patch);
+    let candidate = activate_hotkey(&merged, binding);
+    if let Activation::Failed(error) = candidate {
+        *activation = activate_hotkey(state, binding);
+        return WriteOutcome::PersistFailed(format!("Shortcut activation failed: {error}"));
+    }
+    match service::save_config(&merged) {
+        Ok(()) => {
+            *activation = candidate;
+            WriteOutcome::Committed(merged)
+        }
+        Err(error) => {
+            *activation = activate_hotkey(state, binding);
+            WriteOutcome::PersistFailed(error.to_string())
         }
     }
 }
@@ -203,7 +400,12 @@ fn validate_request(request: &Request<'_>, token_configured: bool) -> Option<Rou
     None
 }
 
-fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Routed {
+fn route(
+    request: &Request<'_>,
+    state: &Config,
+    token_configured: bool,
+    activation: &Activation,
+) -> Routed {
     if let Some(rejection) = validate_request(request, token_configured) {
         return rejection;
     }
@@ -246,7 +448,9 @@ fn route(request: &Request<'_>, state: &Config, token_configured: bool) -> Route
             if !request.authorized {
                 return unauthorized();
             }
-            (200, "application/json", state.to_json())
+            // Reported with the activation state so a caller can tell a saved
+            // binding from one that is actually registered and will fire.
+            (200, "application/json", binding_status(state, activation))
         }
         (Method::Post, "/api/config") => {
             if !request.authorized {
@@ -356,7 +560,19 @@ fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
     // Start from the persisted configuration so a restart keeps the user's
     // saved device and hotkey rather than resetting to empty.
     let mut state = service::load_config()?;
-    let result = accept_loop(&server, &token, &mut state);
+    // Arm the persisted binding on startup. Only meaningful for the resident
+    // service: the read-only preview has no token and must not grab a global
+    // hotkey, since two instances would then fight over the same chord.
+    let mut binding = None;
+    let activation = if instance.is_some() {
+        activate_hotkey(&state, &mut binding)
+    } else {
+        Activation::Idle
+    };
+    if let Activation::Failed(message) = &activation {
+        eprintln!("WARNING: the saved binding is not armed: {message}");
+    }
+    let result = accept_loop(&server, &token, &mut state, &mut binding, activation);
     if instance.is_some() {
         let _ = service::clear_instance();
     }
@@ -364,9 +580,34 @@ fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
 }
 
 /// Serves requests until the listener stops, tracking config mutations.
-fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> Result<()> {
+///
+/// `binding` is the live global hotkey registration, owned here so it is
+/// unregistered when the loop exits. `activation` is how the current binding
+/// came to be armed, which status reports honestly.
+fn accept_loop(
+    server: &Server,
+    token: &Option<String>,
+    state: &mut Config,
+    binding: &mut Option<Binding>,
+    mut activation: Activation,
+) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
-    for mut request in server.incoming_requests() {
+    loop {
+        // Deliver any hotkey press that arrived since the last request. A
+        // Win32 binding only reaches us through this thread's message queue,
+        // so without this drain a registered binding could never fire.
+        if fired_since_last_poll(binding) {
+            if let Err(error) = run_bound_action(state) {
+                // A failed toggle must not look like success. It also must not
+                // disarm the binding: the configuration is still the user's
+                // saved choice, and the next press may well succeed once the
+                // microphone is reconnected.
+                eprintln!("ERROR: the bound action failed: {error}");
+            }
+        }
+        let Some(mut request) = server.recv_timeout(std::time::Duration::from_millis(20))? else {
+            continue;
+        };
         let owned: Vec<(String, String)> = request
             .headers()
             .iter()
@@ -419,16 +660,21 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
                 token.is_some(),
             )
         } else {
-            route(&routed_request, state, token.is_some())
+            route(&routed_request, state, token.is_some(), &activation)
         };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
-            match commit_patch(state, &body) {
+            match commit_live_patch(state, &body, binding, &mut activation) {
                 WriteOutcome::Committed(committed) => {
                     // Only now is the change real: the file is on disk, so
                     // update memory and answer with the committed state.
                     *state = committed.clone();
+                    // The save succeeded, so try to make the binding live. The
+                    // response reports the activation result rather than a
+                    // blanket success: a binding that is stored but could not
+                    // be registered is not the thing the user asked for.
+
                     mime = "application/json";
-                    payload = committed.to_json();
+                    payload = binding_status(state, &activation);
                 }
                 WriteOutcome::Rejected(message) => {
                     code = 400;
@@ -466,7 +712,6 @@ fn accept_loop(server: &Server, token: &Option<String>, state: &mut Config) -> R
             return Ok(());
         }
     }
-    Ok(())
 }
 
 fn bootstrap_route(
@@ -524,6 +769,31 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[cfg(windows)]
+    #[test]
+    fn conflicting_edit_restores_the_previous_live_binding() {
+        let state = Config {
+            device_id: Some("test-endpoint-no-audio-action".into()),
+            hotkey: Some("Ctrl+Alt+Shift+F21".into()),
+        };
+        let occupied = crate::hotkey::Hotkey::parse("Ctrl+Alt+Shift+F22").unwrap();
+        let _other = crate::windows::RegisteredHotkey::register(&occupied, 2031).unwrap();
+        let mut binding = None;
+        let mut activation = activate_hotkey(&state, &mut binding);
+        assert!(activation.is_armed());
+        let outcome = commit_live_patch(
+            &state,
+            r#"{"hotkey":"Ctrl+Alt+Shift+F22"}"#,
+            &mut binding,
+            &mut activation,
+        );
+        assert!(matches!(outcome, WriteOutcome::PersistFailed(_)));
+        assert!(activation.is_armed());
+        assert!(binding.is_some());
+        let previous = state.hotkey_binding().unwrap().unwrap();
+        assert!(crate::windows::RegisteredHotkey::register(&previous, 2032).is_err());
+    }
+
     #[test]
     fn browser_code_redemption_preserves_origin_and_replay_protection() {
         let mut auth = crate::browser_auth::BrowserAuth::default();
@@ -577,6 +847,7 @@ mod tests {
         let dir = private_test_dir();
         std::env::set_var("LOCALAPPDATA", &dir);
         let state = Config::default();
+        let activation = Activation::Idle;
         let (mut code, mut mime, mut payload) = route(
             &Request {
                 method,
@@ -589,6 +860,7 @@ mod tests {
             },
             &state,
             service_mode,
+            &activation,
         );
         if code == 200 && payload == COMMIT_SENTINEL {
             match commit_patch(&state, body) {
@@ -655,6 +927,7 @@ mod tests {
             },
             &state,
             service_mode,
+            &Activation::Idle,
         )
         .0
     }
@@ -814,6 +1087,51 @@ mod tests {
     }
 
     #[test]
+    fn idle_activation_is_not_reported_as_live() {
+        // The honest-status contract: an unconfigured binding must never
+        // report `hotkey_live: true`, or the UI would show an armed binding
+        // that pressing cannot trigger.
+        let status = binding_status(&Config::default(), &Activation::Idle);
+        assert!(status.contains("\"hotkey_live\":false"), "got: {status}");
+        assert!(
+            status.contains("Choose a microphone"),
+            "an incomplete binding must say what is missing: {status}"
+        );
+        // A failed registration is also not live, and must say why.
+        let failed = binding_status(
+            &Config::default(),
+            &Activation::Failed("chord is taken".into()),
+        );
+        assert!(failed.contains("\"hotkey_live\":false"), "got: {failed}");
+        assert!(failed.contains("chord is taken"), "got: {failed}");
+    }
+
+    #[test]
+    fn an_armed_binding_reports_live_without_an_error() {
+        // Only a confirmed registration may claim to be live, and it must not
+        // carry a stale error from an earlier attempt.
+        let config = Config {
+            device_id: Some("mic-1".into()),
+            hotkey: Some("Ctrl + Alt + Shift + F9".into()),
+        };
+        let status = binding_status(&config, &Activation::Armed);
+        assert!(status.contains("\"hotkey_live\":true"), "got: {status}");
+        assert!(
+            status.contains("\"activation_error\":null"),
+            "an armed binding must not report an error: {status}"
+        );
+    }
+
+    #[test]
+    fn activation_states_are_distinguishable() {
+        // `is_armed` is what guards the live flag, so exactly one state may
+        // claim it.
+        assert!(Activation::Armed.is_armed());
+        assert!(!Activation::Idle.is_armed());
+        assert!(!Activation::Failed("x".into()).is_armed());
+    }
+
+    #[test]
     fn invalid_patch_is_rejected_with_400() {
         assert_eq!(
             call(
@@ -843,11 +1161,12 @@ mod tests {
                 host: Some(host().as_str()),
                 origin: None,
                 authorized: true,
-                body: "{\"hotkey\":\"F10\"}",
+                body: "{\"hotkey\":\"Ctrl + Alt + F10\"}",
                 body_rejected: false,
             },
             &state,
             true,
+            &Activation::Idle,
         );
         assert_eq!(code, 200);
         assert_eq!(payload, COMMIT_SENTINEL);
@@ -875,10 +1194,10 @@ mod tests {
         // A patch whose save target is the real state dir would touch shared
         // state, so assert the merge arithmetic directly here and leave the
         // persisted end-to-end check to the isolated acceptance harness.
-        let patch = service::validate_patch("{\"hotkey\":\"F10\"}").unwrap();
+        let patch = service::validate_patch("{\"hotkey\":\"Ctrl + Alt + F10\"}").unwrap();
         let merged = stored.apply(&patch);
         assert_eq!(merged.device_id.as_deref(), Some("review-mic"));
-        assert_eq!(merged.hotkey.as_deref(), Some("F10"));
+        assert_eq!(merged.hotkey.as_deref(), Some("Ctrl + Alt + F10"));
     }
 
     #[test]
@@ -954,12 +1273,12 @@ mod tests {
                 host().as_str(),
                 Some("http://127.0.0.1:43128"),
                 true,
-                "{\"hotkey\":\"F9\"}",
+                "{\"hotkey\":\"Ctrl + Alt + F9\"}",
                 true,
             );
             assert_eq!(code, 200, "attempt {attempt}: expected 200, got {payload}");
             assert!(
-                payload.contains("\"hotkey\":\"F9\""),
+                payload.contains("\"hotkey\":\"Ctrl + Alt + F9\""),
                 "attempt {attempt}: payload was {payload}"
             );
         }
