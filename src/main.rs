@@ -28,7 +28,10 @@ fn parse(args: &[String]) -> Result<(Action, Option<String>)> {
                 .into(),
         ),
     };
-    if matches!(action, Action::Devices | Action::Serve) && args.len() == 1 {
+    if matches!(action, Action::Devices | Action::Serve) {
+        if args.len() != 1 {
+            return Err("This command does not accept device arguments.".into());
+        }
         return Ok((action, None));
     }
     if args.len() != 3 || args[1] != "--device" || (args[2].is_empty() || args[2].contains('\0')) {
@@ -82,5 +85,7 @@ mod tests {
             (Action::Listen, Some("id".into()))
         );
         assert!(parse(&args(&["devices", "extra"])).is_err());
+        assert!(parse(&args(&["serve", "--device", "id"])).is_err());
+        assert_eq!(parse(&args(&["serve"])).unwrap(), (Action::Serve, None));
     }
 }

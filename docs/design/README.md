@@ -52,3 +52,5 @@ P0: persist and test bindings; authenticated local configuration and agent actio
 P1: application output mute with meeting isolation, non-focus-stealing feedback, WorkBuddy integration, extensible adapter contracts and Agent CLI/API/MCP.
 
 P2: Slack/Tencent Meeting scenarios, more hardware/platform adapters, and genuinely supported macOS/Linux audio backends. Cross-platform build success is not platform audio acceptance.
+
+Latest launch decision: use two thin Windows entry executables (a double-click launcher/tray application and a console CLI) backed by the same Rust core and one resident service. This supersedes the earlier single-entry launch proposal; it does not duplicate business logic. The current preview still ships only the CLI executable.
