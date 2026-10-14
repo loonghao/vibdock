@@ -83,7 +83,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           $digest = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$digest  $archive" | Set-Content "$archive.sha256" -Encoding ascii
+          # Force a single LF terminator so `sha256sum -c` accepts the sidecar on
+          # every platform; Set-Content would emit CRLF on the Windows runner.
+          "$digest  $archive`n" | Set-Content "$archive.sha256" -Encoding ascii -NoNewline
       - name: Upload binaries
         shell: pwsh
         env:
