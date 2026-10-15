@@ -1480,11 +1480,11 @@ mod tests {
             assert!(!is_allowed_host(&format!("{host}:{other_port}")));
             assert!(!is_allowed_origin(&format!("http://{host}:{other_port}")));
         }
-        assert!(is_allowed_origin("http://127.0.0.1:43128"));
-        assert!(is_allowed_origin("http://localhost:43128"));
+        assert!(is_allowed_origin(&format!("http://127.0.0.1:{}", port())));
+        assert!(is_allowed_origin(&format!("http://localhost:{}", port())));
         assert!(!is_allowed_origin("http://evil.example"));
-        assert!(!is_allowed_origin("https://127.0.0.1:43128"));
-        assert!(is_allowed_host("127.0.0.1:43128"));
+        assert!(!is_allowed_origin(&format!("https://127.0.0.1:{}", port())));
+        assert!(is_allowed_host(&format!("127.0.0.1:{}", port())));
         assert!(!is_allowed_host("evil.example"));
     }
 }

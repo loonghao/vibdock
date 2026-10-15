@@ -174,9 +174,7 @@ impl BoundedListener {
                             {
                                 return;
                             }
-                            if let Ok((status, mime, payload)) =
-                                reply_rx.recv_timeout(WRITE_TIMEOUT)
-                            {
+                            if let Ok((status, mime, payload)) = reply_rx.recv() {
                                 connection.respond(status, &mime, &payload);
                             }
                             let _ = done_tx.send(());
@@ -670,6 +668,34 @@ mod tests {
         request.connection.respond(200, "text/plain", &payload);
         assert!(started.elapsed() < Duration::from_secs(1));
         client.shutdown(std::net::Shutdown::Both).unwrap();
+    }
+
+    #[test]
+    fn slow_routing_does_not_discard_the_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let transport = BoundedListener::new(listener).unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let started = Instant::now();
+        let mut request = loop {
+            transport.pump().unwrap();
+            if let Some(request) = transport.next_request() {
+                break request;
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        std::thread::sleep(WRITE_TIMEOUT + Duration::from_millis(100));
+        request.connection.respond(200, "text/plain", "ready");
+        request.connection.finish().unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response:?}");
+        assert!(response.ends_with("ready"));
     }
 
     #[test]
