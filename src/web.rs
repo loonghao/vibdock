@@ -647,45 +647,43 @@ fn accept_loop(
         }
         // Non-blocking accept keeps this loop responsive to hotkeys and to
         // shutdown, instead of stalling in accept() or on a slow client.
-        let Some(mut connection) = listener.accept_one()? else {
+        // Hand any pending connections to the bounded I/O pool. This never
+        // blocks: a client that connected but sends nothing stays in the
+        // backlog or with its worker, so it cannot stall hotkeys or shutdown.
+        listener.pump()?;
+        // Take at most one finished request per turn, so the loop keeps
+        // returning to the hotkey pump and to shutdown.
+        let Some(incoming) = listener.next_request() else {
             std::thread::sleep(std::time::Duration::from_millis(20));
             continue;
         };
-        let received = match connection.read_head() {
-            // A client that never completes its request head is dropped rather
-            // than waited for, so one slow connection cannot block the service.
-            crate::transport::Handled::Skip => continue,
-            crate::transport::Handled::Request(received) => received,
-        };
-        let host = received.header("host");
-        let origin = received.header("origin");
+        let mut connection = incoming.connection;
+        let mut received = incoming.request;
+        let host = received.header("host").map(str::to_string);
+        let origin = received.header("origin").map(str::to_string);
         let method = Method::parse(received.method.as_str());
-        let path = received.path.as_str();
+        let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config" || path.starts_with("/api/actions/");
         let authorized = administrator
             || (browser_scope && browser_auth.accepts(service::request_token(&received.headers)));
-        // Read the body only once the request is authorized. An unauthorized
-        // caller is answered from the head alone, so it cannot hold this thread
-        // by announcing a body and then trickling it out.
-        let (body_text, body_rejected) = if authorized {
-            connection.read_body()
-        } else {
-            (None, false)
-        };
+        // The body was read on the worker, so public endpoints that take their
+        // input in the body (one-use bootstrap code redemption) still work.
+        let body_text = received.body.take();
+        let body_rejected = received.body_rejected;
         let body = body_text.as_deref().unwrap_or("");
         let is_config_write = method == Method::Post && path == "/api/config";
         let routed_request = Request {
             method,
-            path,
-            host,
-            origin,
+            path: &path,
+            host: host.as_deref(),
+            origin: origin.as_deref(),
             authorized,
             body,
             body_rejected,
         };
-        let bootstrap =
-            method == Method::Post && matches!(path, "/api/bootstrap" | "/api/bootstrap/new");
+        let bootstrap = method == Method::Post
+            && matches!(path.as_str(), "/api/bootstrap" | "/api/bootstrap/new");
         let (mut code, mut mime, mut payload) = if bootstrap {
             bootstrap_route(
                 &routed_request,

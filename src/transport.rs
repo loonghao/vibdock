@@ -34,6 +34,14 @@ pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_BODY: usize = 8192;
 /// Upper bound on the request head (request line plus headers).
 const MAX_HEAD: usize = 16 * 1024;
+/// How many connections may be read concurrently.
+///
+/// Bounded on purpose: an unbounded "thread per connection" would be its own
+/// denial of service. Each worker is a real thread that owns one connection's
+/// I/O, and the count is fixed so slow clients cannot exhaust the process.
+pub const MAX_WORKERS: usize = 8;
+/// How many finished requests may wait for the action loop.
+const QUEUE_DEPTH: usize = 64;
 
 /// A parsed request, produced only after its head and body are fully read.
 pub struct Received {
@@ -66,42 +74,119 @@ pub enum Handled {
     Skip,
 }
 
-/// A listener that hands out deadline-bounded connections.
+/// A listener that hands connections to a bounded pool of reader threads.
 ///
 /// Wrapping the listener here keeps the rest of the service free of socket
-/// concerns: callers see either a complete request or `Skip`.
+/// concerns: callers either receive a complete request or nothing at all, and
+/// never block on a client.
 pub struct BoundedListener {
     listener: TcpListener,
+    /// Connections awaiting a free worker, handed over as raw sockets.
+    ///
+    /// Raw sockets are used because `TcpStream` is `Send` and each worker sets
+    /// its own deadlines on the stream it takes.
+    pending: std::sync::mpsc::SyncSender<std::net::TcpStream>,
+    /// Fully read requests, ready for the action loop.
+    ready: std::sync::mpsc::Receiver<Incoming>,
+    /// Signals the workers to stop when the listener is dropped.
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// A request that has been fully read and is ready to route.
+///
+/// The connection travels with it so the action loop can write the response
+/// without ever performing a blocking read itself.
+pub struct Incoming {
+    /// The parsed request head and body.
+    pub request: Received,
+    /// The live connection, for writing the reply.
+    pub connection: BoundedConnection,
 }
 
 impl BoundedListener {
-    /// Takes ownership of an already-bound listener.
+    /// Takes ownership of an already-bound listener and starts the reader pool.
     pub fn new(listener: TcpListener) -> std::io::Result<BoundedListener> {
         listener.set_nonblocking(true)?;
-        Ok(BoundedListener { listener })
+        let (pending_tx, pending_rx) =
+            std::sync::mpsc::sync_channel::<std::net::TcpStream>(QUEUE_DEPTH);
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Incoming>(QUEUE_DEPTH);
+        let pending_rx = std::sync::Arc::new(std::sync::Mutex::new(pending_rx));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for _ in 0..MAX_WORKERS {
+            let pending_rx = pending_rx.clone();
+            let ready_tx = ready_tx.clone();
+            let stop = stop.clone();
+            // Each worker is a named thread with one job: read a single
+            // connection to completion, under deadlines, then hand it over.
+            std::thread::Builder::new()
+                .name("vibdock-io".to_string())
+                .spawn(move || {
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        // Bounded wait so the thread notices `stop` promptly.
+                        let next = {
+                            let guard = match pending_rx.lock() {
+                                Ok(guard) => guard,
+                                Err(_) => return,
+                            };
+                            guard.recv_timeout(Duration::from_millis(200))
+                        };
+                        let Ok(stream) = next else { continue };
+                        let Some(connection) = BoundedConnection::from_stream(stream) else {
+                            continue;
+                        };
+                        if let Some(incoming) = connection.read_fully() {
+                            // If the action loop is gone the connection is
+                            // dropped here, which closes the socket.
+                            if ready_tx.send(incoming).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                })
+                .map_err(std::io::Error::other)?;
+        }
+        Ok(BoundedListener {
+            listener,
+            pending: pending_tx,
+            ready: ready_rx,
+            stop,
+        })
     }
 
-    /// Accepts one connection without blocking, or `None` if none is pending.
+    /// Accepts pending connections without blocking and queues them for I/O.
     ///
-    /// Non-blocking accept is what lets the caller keep polling for shutdown
-    /// and for hotkey messages instead of stalling in `accept`.
-    pub fn accept_one(&self) -> std::io::Result<Option<BoundedConnection>> {
-        match self.listener.accept() {
-            Ok((stream, _)) => {
-                stream.set_nonblocking(false)?;
-                stream.set_read_timeout(Some(READ_TIMEOUT))?;
-                stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
-                let _ = stream.set_nodelay(true);
-                Ok(Some(BoundedConnection {
-                    stream,
-                    reader: None,
-                    head_headers: Vec::new(),
-                    started: Instant::now(),
-                }))
+    /// Accept itself never waits. A connection the pool cannot take yet is left
+    /// in the OS backlog rather than stalling this loop, so an idle client that
+    /// connected but sent nothing can never hold up hotkeys or shutdown.
+    pub fn pump(&self) -> std::io::Result<()> {
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _)) => {
+                    let _ = stream.set_nodelay(true);
+                    // `try_send` rather than `send`: if every worker is busy the
+                    // connection stays in the backlog instead of blocking here.
+                    if self.pending.try_send(stream).is_err() {
+                        return Ok(());
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(error),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(error) => Err(error),
         }
+    }
+
+    /// Takes the next fully read request, or `None` if none is ready.
+    ///
+    /// Never blocks on a client: the read already happened on a worker thread,
+    /// so the action loop only routes and writes.
+    pub fn next_request(&self) -> Option<Incoming> {
+        self.ready.try_recv().ok()
+    }
+}
+
+impl Drop for BoundedListener {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -119,6 +204,43 @@ pub struct BoundedConnection {
 }
 
 impl BoundedConnection {
+    /// Wraps an accepted stream with read and write deadlines applied.
+    fn from_stream(stream: std::net::TcpStream) -> Option<BoundedConnection> {
+        stream.set_nonblocking(false).ok()?;
+        stream.set_read_timeout(Some(READ_TIMEOUT)).ok()?;
+        stream.set_write_timeout(Some(WRITE_TIMEOUT)).ok()?;
+        Some(BoundedConnection {
+            stream,
+            reader: None,
+            head_headers: Vec::new(),
+            started: Instant::now(),
+        })
+    }
+
+    /// Reads the head and the body to completion.
+    ///
+    /// Called on a worker thread, so blocking here is safe and intended: the
+    /// action loop is meanwhile free to pump hotkeys and serve other clients.
+    /// Both stages still carry a deadline, so no connection is held forever.
+    pub fn read_fully(mut self) -> Option<Incoming> {
+        let mut request = match self.read_head() {
+            Handled::Request(request) => request,
+            Handled::Skip => return None,
+        };
+        // The body is always read here. Deciding that from the head alone would
+        // skip bodies for public endpoints that legitimately need them — the
+        // one-use bootstrap code arrives in the body of an unauthenticated
+        // request — and would not help responsiveness now that reads happen on
+        // a worker rather than in the action loop.
+        let (body, body_rejected) = self.read_body();
+        request.body = body;
+        request.body_rejected = body_rejected;
+        Some(Incoming {
+            request,
+            connection: self,
+        })
+    }
+
     /// Reads the request head and prepares to read the body.
     ///
     /// The body is deliberately NOT read here. The caller decides, from the
@@ -555,6 +677,41 @@ mod tests {
         let (body, rejected) = read_body(&mut reader, &headers, Instant::now());
         assert!(body.is_none());
         assert!(!rejected, "absent body is normal, not a rejection");
+    }
+
+    #[test]
+    fn read_fully_always_consumes_the_body() {
+        // Regression: the body used to be read only for authorized requests,
+        // which silently broke public endpoints that take their input in the
+        // body — one-use bootstrap code redemption is unauthenticated by
+        // design, and its code never arrived.
+        //
+        // read_fully has no notion of authorization, so a body is always read.
+        let raw = concat!(
+            "POST /api/bootstrap HTTP/1.1\r\n",
+            "Content-Length: 14\r\n",
+            "\r\n",
+            "{\"code\":\"abc\"}"
+        )
+        .as_bytes();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let connection = BoundedConnection::from_stream(stream).unwrap();
+            connection
+                .read_fully()
+                .map(|incoming| incoming.request.body)
+        });
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.write_all(raw).unwrap();
+        client.flush().unwrap();
+        let body = server.join().unwrap();
+        assert_eq!(
+            body.expect("the request must have been read"),
+            Some("{\"code\":\"abc\"}".to_string()),
+            "the body of an unauthenticated request must still be read"
+        );
     }
 
     #[test]
