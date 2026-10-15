@@ -171,6 +171,13 @@ process cannot make an unrelated session impossible to control. When that
 happens `app-list` prints a warning naming how many sessions were skipped, so a
 partial list is never presented as a complete one.
 
+Two kinds of skipped sessions are reported separately, because only one is a
+problem. Sessions with no session-instance identifier — system sounds, on most
+Windows desktops — are **not addressable** and are never selectable; that is
+expected and is counted but not treated as a fault. A session that is
+addressable but whose state could not be read is a genuine **could not be read**
+warning.
+
 ## Product direction
 
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.

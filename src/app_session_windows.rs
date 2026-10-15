@@ -146,16 +146,46 @@ unsafe fn observe(
     }))
 }
 
-/// A session on an endpoint whose state could not be read.
+/// Why a session present on an endpoint is not in the returned list.
+///
+/// The two variants are kept apart because they need different wording and
+/// different severity. [`SkippedSession::Unaddressable`] is normal: system
+/// sounds and similar sessions have no session-instance identifier, so they can
+/// never be selected and are excluded by design — on a typical Windows desktop
+/// at least one such session exists. [`SkippedSession::Unreadable`] is not
+/// normal: the session is addressable but its state could not be read, which
+/// points at a real platform problem. Reporting the first as the second would
+/// claim a failure on nearly every healthy machine.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum SkippedSession {
+    /// No session-instance identifier, so it can never be addressed. Expected.
+    Unaddressable,
+    /// Addressable, but reading its state failed. Indicates a platform problem.
+    Unreadable,
+}
+
+impl SkippedSession {
+    /// Wording for the summary line, matching the reason it was skipped.
+    fn description(&self) -> &'static str {
+        match self {
+            SkippedSession::Unaddressable => "are not addressable",
+            SkippedSession::Unreadable => "could not be read",
+        }
+    }
+}
+
+/// A session on an endpoint that is not in the returned list, and why.
 ///
 /// Returned alongside the readable sessions so a caller can tell "this endpoint
-/// has no sessions" apart from "this endpoint has sessions we cannot read" —
+/// has no sessions" apart from "this endpoint has sessions we did not list" —
 /// reporting the first when the second is true would be a silent lie about the
 /// platform, and would make an unrelated session look absent to `app-mute`.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct UnreadableSession {
+pub(crate) struct SkippedSessionEntry {
     /// Index of the session within the endpoint's enumeration, for reporting.
     pub index: i32,
+    /// Why it was skipped.
+    pub reason: SkippedSession,
 }
 
 /// Enumerates every session on one render endpoint.
@@ -170,28 +200,34 @@ pub(crate) struct UnreadableSession {
 /// readable session impossible to mute. Skipping only ever removes candidates,
 /// so it cannot widen what a command is allowed to touch.
 ///
-/// The skipped sessions are returned rather than discarded, so the count of
-/// unreadable sessions is still reported instead of being swallowed.
+/// The skipped sessions are returned rather than discarded, each with the
+/// reason, so a partial list is never presented as a complete one and the
+/// reported wording matches why each session is missing.
 pub(crate) unsafe fn list(
     manager: &IMMDeviceEnumerator,
     endpoint_id: &str,
-) -> Result<(Vec<AppSession>, Vec<UnreadableSession>)> {
+) -> Result<(Vec<AppSession>, Vec<SkippedSessionEntry>)> {
     let device = render_endpoint(manager, endpoint_id)?;
     let manager2: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
     let enumerator = manager2.GetSessionEnumerator()?;
     let mut sessions = Vec::new();
-    let mut unreadable = Vec::new();
+    let mut skipped = Vec::new();
     for index in 0..enumerator.GetCount()? {
         let control: IAudioSessionControl = enumerator.GetSession(index)?;
         let control2: IAudioSessionControl2 = control.cast()?;
-        match observe(&control2, endpoint_id) {
-            Ok(Some(session)) => sessions.push(session),
-            // Either unaddressable (no instance id) or unreadable. Both are
-            // skipped for the same reason: neither can be safely acted on.
-            Ok(None) | Err(_) => unreadable.push(UnreadableSession { index }),
-        }
+        // Both arms skip for the same safety reason — neither can be acted on —
+        // but they are recorded separately because only one is a fault.
+        let reason = match observe(&control2, endpoint_id) {
+            Ok(Some(session)) => {
+                sessions.push(session);
+                continue;
+            }
+            Ok(None) => SkippedSession::Unaddressable,
+            Err(_) => SkippedSession::Unreadable,
+        };
+        skipped.push(SkippedSessionEntry { index, reason });
     }
-    Ok((sessions, unreadable))
+    Ok((sessions, skipped))
 }
 
 /// Finds the live session matching `identity`, or reports why it is gone.
@@ -216,7 +252,7 @@ pub(crate) unsafe fn apply(
     identity: &SessionIdentity,
     action: SessionAction,
 ) -> std::result::Result<AppSession, String> {
-    let (sessions, _unreadable) = list(manager, &identity.endpoint_id).map_err(endpoint_error)?;
+    let (sessions, _skipped) = list(manager, &identity.endpoint_id).map_err(endpoint_error)?;
     let current = resolve(&sessions, identity)?;
     let requested = crate::app_audio::desired_mute(action, current.muted);
     // What we actually asked Windows for. Equal to `requested` except for
@@ -286,7 +322,7 @@ pub(crate) unsafe fn apply(
     // as "nothing happened", which invites a retry that could reverse a mute
     // that did take effect.
     let after = match list(manager, &identity.endpoint_id) {
-        Ok((after, _unreadable)) => after,
+        Ok((after, _skipped)) => after,
         Err(error) => return Err(readback_error(action, written, &endpoint_error(error))),
     };
     let observed = match resolve(&after, identity) {
@@ -338,18 +374,13 @@ pub(crate) fn execute(
         // and cannot drift into input handling unnoticed.
         debug_assert_eq!(crate::app_audio::FLOW, SessionFlow::Render);
         if action == SessionAction::List {
-            let (sessions, unreadable) = list(&manager, endpoint_id).map_err(endpoint_error)?;
-            // Report unreadable sessions rather than letting the list look
+            let (sessions, skipped) = list(&manager, endpoint_id).map_err(endpoint_error)?;
+            // Report what was left out rather than letting the list look
             // complete. This stays a warning, not an error: failing the whole
             // command would reintroduce the problem the skip was added to
             // solve, where one unreadable session blocked an unrelated one.
-            if unreadable_sessions_need_warning(&unreadable) {
-                eprintln!(
-                    "warning: {} of {} session(s) on this endpoint could not be read and are \
-                     not listed below.",
-                    unreadable.len(),
-                    sessions.len() + unreadable.len()
-                );
+            for warning in skipped_session_warnings(&skipped, sessions.len()) {
+                eprintln!("{warning}");
             }
             return Ok(SessionOutcome::Sessions(sessions));
         }
@@ -358,7 +389,7 @@ pub(crate) fn execute(
         // The process id is unknown at parse time, so the session is looked up
         // by instance id first and its live pid adopted as the identity to
         // verify against. Selection always happens from a fresh enumeration.
-        let (sessions, _unreadable) = list(&manager, endpoint_id).map_err(endpoint_error)?;
+        let (sessions, _skipped) = list(&manager, endpoint_id).map_err(endpoint_error)?;
         let found = sessions
             .iter()
             .find(|session| session.identity.session_instance_id == session_id)
@@ -461,11 +492,33 @@ fn post_write_readback_error(action: SessionAction, cause: &str) -> String {
 
 /// Whether an enumeration lost sessions that could not be read.
 ///
-/// Drives the `app-list` warning. Kept separate from [`list`] so the decision
-/// is testable on its own: reporting a complete list when sessions were
-/// dropped would hide a real platform problem behind a plausible result.
-fn unreadable_sessions_need_warning(unreadable: &[UnreadableSession]) -> bool {
-    !unreadable.is_empty()
+/// Builds the `app-list` warning lines, one per skip reason that occurred.
+///
+/// Each reason is described in its own words so an expected, by-design
+/// exclusion is never reported as a read failure: unaddressable sessions exist
+/// on nearly every Windows desktop, so calling them a read failure would report
+/// a healthy machine as broken on every run. They are still counted, because
+/// the list would otherwise look like the whole endpoint.
+///
+/// Kept separate from [`list`] so the wording is testable on its own.
+fn skipped_session_warnings(skipped: &[SkippedSessionEntry], listed: usize) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for reason in [SkippedSession::Unaddressable, SkippedSession::Unreadable] {
+        let count = skipped
+            .iter()
+            .filter(|entry| entry.reason == reason)
+            .count();
+        if count == 0 {
+            continue;
+        }
+        warnings.push(format!(
+            "warning: {} of {} session(s) on this endpoint {} and are not listed below.",
+            count,
+            listed + skipped.len(),
+            reason.description()
+        ));
+    }
+    warnings
 }
 
 /// Recomputes the mute value to write, given the state read just before it.
@@ -701,20 +754,70 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_sessions_are_counted_not_swallowed() {
-        // The F3 fix: skipping an unreadable session must not make the
-        // enumeration look complete. `list()` returns them separately so
-        // `app-list` can warn instead of silently under-reporting, and the
-        // total of both lists is the endpoint's real session count.
-        let unreadable = [UnreadableSession { index: 2 }];
-        assert_eq!(unreadable.len(), 1);
-        assert_eq!(unreadable[0].index, 2);
-        let readable = [session("s1", 100)];
-        assert_eq!(readable.len() + unreadable.len(), 2);
-        // The warning is derived from the unreadable count, so an all-readable
-        // enumeration must not warn while a partly-unreadable one must.
-        assert!(unreadable_sessions_need_warning(&unreadable));
-        assert!(!unreadable_sessions_need_warning(&[]));
+    fn only_a_read_failure_warns_not_a_by_design_exclusion() {
+        // The P3 fix. System-sound sessions have no instance id, so they are
+        // excluded by design and exist on nearly every Windows desktop. Warning
+        // about them would report a healthy machine as broken on every run.
+        let unaddressable = [SkippedSessionEntry {
+            index: 2,
+            reason: SkippedSession::Unaddressable,
+        }];
+        let warnings = skipped_session_warnings(&unaddressable, 1);
+        assert!(
+            !warnings
+                .iter()
+                .any(|line| line.contains("could not be read")),
+            "an expected exclusion must not be reported as a fault: {warnings:?}"
+        );
+
+        // A genuine read failure must still warn — that was the whole point of
+        // F3, and dropping it would silently under-report again.
+        let unreadable = [SkippedSessionEntry {
+            index: 3,
+            reason: SkippedSession::Unreadable,
+        }];
+        assert!(!skipped_session_warnings(&unreadable, 1).is_empty());
+        assert!(skipped_session_warnings(&[], 1).is_empty());
+    }
+
+    #[test]
+    fn each_skip_reason_is_described_in_its_own_words() {
+        // The wording must match the reason. Merging them is what produced the
+        // false "could not be read" claim for unaddressable sessions.
+        let skipped = [
+            SkippedSessionEntry {
+                index: 1,
+                reason: SkippedSession::Unaddressable,
+            },
+            SkippedSessionEntry {
+                index: 2,
+                reason: SkippedSession::Unreadable,
+            },
+        ];
+        let warnings = skipped_session_warnings(&skipped, 3);
+        assert_eq!(warnings.len(), 2, "one line per reason: {warnings:?}");
+
+        let unaddressable_line = &warnings[0];
+        assert!(
+            unaddressable_line.contains("not addressable"),
+            "got: {unaddressable_line}"
+        );
+        assert!(
+            !unaddressable_line.contains("could not be read"),
+            "must not call a by-design exclusion a read failure: {unaddressable_line}"
+        );
+
+        let unreadable_line = &warnings[1];
+        assert!(
+            unreadable_line.contains("could not be read"),
+            "got: {unreadable_line}"
+        );
+        // Both are counted against the same total, so the denominator stays the
+        // endpoint's real session count rather than the listed subset.
+        assert!(
+            unreadable_line.contains("of 5 session(s)"),
+            "got: {unreadable_line}"
+        );
     }
 
     #[test]
