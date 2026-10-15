@@ -107,12 +107,60 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 
 **Device mute affects every app using that microphone.** It is different from muting one agent's input or output. The agent must use the selected microphone for this control to affect its audio. Hold-to-talk and device-specific button recognition are not implemented.
 
+## Application playback controls (pending Windows source)
+
+These commands are an unreleased implementation under review. Live mutation
+acceptance is on hold; the existing preview download does not include them.
+
+Application playback sessions are separate from microphone mute: they let one
+program's audio be silenced while everything else keeps playing.
+
+```powershell
+.\vibdock.exe app-devices
+.\vibdock.exe app-list --endpoint '<full endpoint ID from app-devices>'
+.\vibdock.exe app-mute --endpoint '<endpoint ID>' --session '<session ID from app-list>'
+```
+
+Use `app-status`, `app-unmute`, or `app-toggle` in place of `app-mute`. Each
+command prints a readable summary followed by one line of JSON describing the
+session that was actually read back, for example:
+
+```json
+{"endpoint_id":"{0.0.0.00000000}.{...}","session_instance_id":"{...}","process_id":1234,"display_name":"Music","process_identity":"pid 1234","muted":true,"volume":1.000000,"active":true}
+```
+
+Choose a session by its `session_instance_id`, shown as `session:` in the
+readable output. Application playback control is deliberately strict:
+
+- Both `--endpoint` and `--session` are required. There is no default endpoint
+  and no "first session" fallback, so a mute cannot land on a device or
+  application you did not name.
+- The session is re-verified immediately before any change. If it has gone away
+  or a different process now owns it, the command fails and says so instead of
+  controlling a different session.
+- Only the mute state is changed, for that one session. The system master mute,
+  the volume of other applications, and microphone state are never touched.
+- Mute state is never reported from the request: it is read back from Windows
+  after the change, and a mismatch is an error.
+
+Applications that split audio across several processes are **not** grouped
+automatically. Where the owning process cannot be resolved, it is reported as
+`unknown process` and you choose explicitly rather than relying on a guess from
+similar names. Only playback (output) sessions are addressed; this is unrelated
+to microphone input mute.
+
+On Linux and macOS these commands report that application audio sessions are
+unimplemented rather than returning an empty list.
+
+A readback error can occur after Windows applies a mute change. Query
+`app-status` before retrying; repeating `app-toggle` could reverse the change.
+
 ## Product direction
 
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color.
-- Silence an agent's output during a meeting without changing meeting audio. This requires application-session controls and is not available yet.
+- Silence an agent's output during a meeting without changing meeting audio. Application playback commands are implemented in pending Windows source. Hardware bindings, service API access, and accepted two-application isolation tests remain open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 

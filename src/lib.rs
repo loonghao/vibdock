@@ -6,6 +6,11 @@
 //! so the console CLI and the Windows launcher cannot drift apart.
 
 use std::{error::Error, fmt};
+mod app_audio;
+#[cfg(not(windows))]
+mod app_session_stub;
+#[cfg(windows)]
+mod app_session_windows;
 mod browser_auth;
 
 pub mod hotkey;
@@ -35,6 +40,12 @@ pub enum Action {
     Unmute,
     Toggle,
     Listen,
+    AppList,
+    AppDevices,
+    AppStatus,
+    AppMute,
+    AppUnmute,
+    AppToggle,
 }
 
 impl fmt::Display for Action {
@@ -52,18 +63,75 @@ impl fmt::Display for Action {
             Action::Unmute => "unmute",
             Action::Toggle => "toggle",
             Action::Listen => "listen",
+            Action::AppList => "app-list",
+            Action::AppDevices => "app-devices",
+            Action::AppStatus => "app-status",
+            Action::AppMute => "app-mute",
+            Action::AppUnmute => "app-unmute",
+            Action::AppToggle => "app-toggle",
         };
         f.write_str(name)
+    }
+}
+
+/// Maps a parsed application-session verb onto its [`Action`].
+///
+/// Separate from [`parse`] only to keep the match bodies small; both sides
+/// live in the core so the CLI and the service cannot disagree.
+fn session_action(action: app_audio::SessionAction) -> Action {
+    match action {
+        app_audio::SessionAction::Devices => Action::AppDevices,
+        app_audio::SessionAction::List => Action::AppList,
+        app_audio::SessionAction::Status => Action::AppStatus,
+        app_audio::SessionAction::Mute => Action::AppMute,
+        app_audio::SessionAction::Unmute => Action::AppUnmute,
+        app_audio::SessionAction::Toggle => Action::AppToggle,
+    }
+}
+
+/// Maps an [`Action`] onto its application-session verb, if it has one.
+///
+/// Used to keep the end-to-end command path honest: the text render and the
+/// unsupported-platform message must name the verb the user actually typed.
+fn as_session_action(action: Action) -> Option<app_audio::SessionAction> {
+    match action {
+        Action::AppList => Some(app_audio::SessionAction::List),
+        Action::AppDevices => Some(app_audio::SessionAction::Devices),
+        Action::AppStatus => Some(app_audio::SessionAction::Status),
+        Action::AppMute => Some(app_audio::SessionAction::Mute),
+        Action::AppUnmute => Some(app_audio::SessionAction::Unmute),
+        Action::AppToggle => Some(app_audio::SessionAction::Toggle),
+        _ => None,
     }
 }
 
 /// Usage text for the console entry point.
 pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|service-status|tray|help>
        vibdock devices
-       vibdock <status|mute|unmute|toggle|listen> --device <endpoint-id>";
+       vibdock <status|mute|unmute|toggle|listen> --device <endpoint-id>
+       vibdock app-devices
+       vibdock app-list --endpoint <endpoint-id>
+       vibdock <app-status|app-mute|app-unmute|app-toggle> --endpoint <endpoint-id> \\
+               --session <session-instance-id>";
 
 /// Parses command-line arguments into an [`Action`].
+///
+/// Application-session commands are recognised here but their selectors are
+/// parsed separately by [`app_audio::parse_session`], whose rules are richer:
+/// two flags in any order, each required or forbidden depending on the verb.
 pub fn parse(args: &[String]) -> Result<Action> {
+    // Recognise the application-session verbs before the device verbs so the
+    // two families cannot be confused: `app-mute` must never be read as a
+    // microphone mute, which has a much wider blast radius.
+    if args.first().map(String::as_str).is_some_and(|first| {
+        matches!(
+            first,
+            "app-devices" | "app-list" | "app-status" | "app-mute" | "app-unmute" | "app-toggle"
+        )
+    }) {
+        let (action, _, _) = app_audio::parse_session(args)?;
+        return Ok(session_action(action));
+    }
     let action = match args.first().map(String::as_str) {
         Some("serve") => Action::Serve,
         Some("service-start") => Action::ServiceStart,
@@ -126,6 +194,10 @@ pub fn help() {
     println!("  devices          List active microphone endpoints and their IDs");
     println!("  status|mute|unmute|toggle   Read or change one microphone's mute state");
     println!("  listen           Print state and toggle it on Ctrl+Alt+Shift+F9");
+    println!("  app-devices      List playback endpoints for application session control");
+    println!("  app-list         List application playback sessions on a render endpoint");
+    println!("  app-status|app-mute|app-unmute|app-toggle");
+    println!("                   Read or change one application's playback mute state");
     println!("  help             Show this message");
     println!();
     println!("Exit codes are zero on success and nonzero on error. `service-start`");
@@ -325,6 +397,12 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
                 Err("The tray entry requires Windows.".into())
             }
         }
+        Action::AppList
+        | Action::AppDevices
+        | Action::AppStatus
+        | Action::AppMute
+        | Action::AppUnmute
+        | Action::AppToggle => run_session_command(action, args),
         _ => {
             #[cfg(windows)]
             {
@@ -338,6 +416,79 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
             }
         }
     }
+}
+
+/// Runs one application-playback-session command.
+///
+/// Distinct from the device path on purpose: application session control never
+/// falls back to a default endpoint or to device-level mute, and it never
+/// touches the microphone. On a platform without a session adapter it reports
+/// `unsupported` rather than an empty session list, so "cannot look" is never
+/// mistaken for "looked and found none".
+fn run_session_command(action: Action, args: &[String]) -> Result<()> {
+    // Resolve the verb from the action as well as parsing it, so the two
+    // mappings are checked against each other on every invocation rather
+    // than only in tests.
+    let (verb, endpoint, session) = app_audio::parse_session(args)?;
+    let mapped =
+        as_session_action(action).ok_or("This command is not an application-session action.")?;
+    if mapped != verb {
+        return Err(format!("Command {action} does not match the parsed verb {verb}.").into());
+    }
+    if verb == app_audio::SessionAction::Devices {
+        let devices = render_endpoints()?;
+        if devices.is_empty() {
+            println!("No active playback endpoints found.");
+            return Ok(());
+        }
+        for (name, id) in devices {
+            println!("{name}\n  {id}");
+        }
+        return Ok(());
+    }
+    let endpoint = endpoint.ok_or("Specify a render endpoint with --endpoint <endpoint-id>.")?;
+    let outcome = execute(verb, &endpoint, session.as_deref())
+        .map_err(|message| -> Box<dyn std::error::Error> { message.into() })?;
+    // Human-readable first: the session id and its actual state are what the
+    // user needs to copy into the next command, or to confirm that only the
+    // intended application changed.
+    println!("{}", app_audio::to_text(&outcome));
+    println!();
+    // The JSON line is the stable contract for a future UI or agent call.
+    println!("{}", app_audio::to_json(&outcome));
+    Ok(())
+}
+
+/// Windows path: the real Core Audio session adapter.
+#[cfg(windows)]
+fn execute(
+    action: app_audio::SessionAction,
+    endpoint_id: &str,
+    session_id: Option<&str>,
+) -> std::result::Result<app_audio::SessionOutcome, String> {
+    app_session_windows::execute(action, endpoint_id, session_id)
+}
+
+/// Windows path: enumerate the render endpoints that carry sessions.
+#[cfg(windows)]
+fn render_endpoints() -> Result<Vec<(String, String)>> {
+    app_session_windows::render_endpoints()
+}
+
+/// Non-Windows path: no adapter, so every command reports unsupported.
+#[cfg(not(windows))]
+fn execute(
+    action: app_audio::SessionAction,
+    endpoint_id: &str,
+    session_id: Option<&str>,
+) -> std::result::Result<app_audio::SessionOutcome, String> {
+    app_session_stub::execute(action, endpoint_id, session_id)
+}
+
+/// Non-Windows path: no adapter, so enumeration reports unsupported.
+#[cfg(not(windows))]
+fn render_endpoints() -> Result<Vec<(String, String)>> {
+    app_session_stub::render_endpoints()
 }
 
 #[cfg(test)]
@@ -398,6 +549,44 @@ mod tests {
     #[test]
     fn empty_invocation_prints_usage_not_error() {
         assert!(parse(&args(&[])).is_err());
+    }
+
+    #[test]
+    fn app_devices_is_parsed_and_takes_no_arguments() {
+        assert_eq!(parse(&args(&["app-devices"])).unwrap(), Action::AppDevices);
+        assert!(parse(&args(&["app-devices", "--endpoint", "e"])).is_err());
+    }
+
+    #[test]
+    fn session_actions_round_trip_through_the_core_mapping() {
+        // The verb a user types must survive parse, dispatch, and rendering
+        // unchanged, including on platforms where the adapter is absent and
+        // only the unsupported message is produced.
+        for action in [
+            Action::AppList,
+            Action::AppDevices,
+            Action::AppStatus,
+            Action::AppMute,
+            Action::AppUnmute,
+            Action::AppToggle,
+        ] {
+            let verb = as_session_action(action).expect("app actions map to a verb");
+            assert_eq!(session_action(verb), action);
+            assert_eq!(verb.to_string(), action.to_string());
+        }
+        assert!(as_session_action(Action::Mute).is_none());
+        assert!(as_session_action(Action::Devices).is_none());
+    }
+
+    #[test]
+    fn unsupported_session_commands_name_the_verb_the_user_typed() {
+        // The message must stay honest about being unimplemented rather than
+        // degrading to an empty result.
+        let message = app_audio::unsupported(app_audio::SessionAction::List);
+        assert!(message.contains("app-list"), "got: {message}");
+        assert!(message.contains("unimplemented"), "got: {message}");
+        let message = app_audio::unsupported(app_audio::SessionAction::Devices);
+        assert!(message.contains("app-devices"), "got: {message}");
     }
 
     #[test]
