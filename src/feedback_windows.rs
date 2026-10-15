@@ -68,6 +68,31 @@ const FOREGROUND_FAILED: COLORREF = COLORREF(0x00_5a_6b_e0);
 /// makes the panel visible at all.
 const OVERLAY_ALPHA: u8 = 235;
 
+/// A screen rectangle in absolute coordinates, as `SPI_GETWORKAREA` reports it.
+///
+/// A plain struct rather than the Win32 `RECT` it is filled from: it keeps the
+/// pure placement helper constructible from a literal in tests without
+/// depending on how the platform type derives its traits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+impl Rect {
+    /// Width of the rectangle; not guaranteed positive for a degenerate area.
+    fn width(self) -> i32 {
+        self.right - self.left
+    }
+
+    /// Height of the rectangle; not guaranteed positive for a degenerate area.
+    fn height(self) -> i32 {
+        self.bottom - self.top
+    }
+}
+
 /// A running indicator window on its own thread.
 ///
 /// Cleanup is entirely in [`Drop`]: the owning thread is asked to stop, joined,
@@ -99,17 +124,17 @@ impl OverlayHandle {
     /// loop. Dropping a *frame* is safe because a frame is a view over state
     /// the service has already recorded; no action is ever dropped.
     ///
-    /// Returns whether the frame was queued, so the caller can decide whether
-    /// to retry later. A full queue reports success: the frame that was made
-    /// room for is the one that supersedes everything dropped.
+    /// Returns whether the frame was delivered, so the caller can decide
+    /// whether to retry later. Both steps must succeed: a frame that is queued
+    /// but never woken sits undrained, and a wake with nothing queued paints
+    /// nothing. A full queue still counts as queued, because the frame that was
+    /// made room for supersedes everything dropped.
     pub fn show(&self, frame: &StatusFrame) -> bool {
         let queued = self.enqueue(ThreadMessage::Frame(frame.clone()));
         // Wake the overlay thread. Without this the loop stays blocked in
-        // GetMessageW and the frame is never drained.
-        if queued {
-            self.wake();
-        }
-        queued
+        // GetMessageW and the frame is never drained. If the wake cannot be
+        // posted, the frame is queued but unreachable, so it is not delivered.
+        queued && self.wake()
     }
 
     /// Queues a frame, dropping the oldest pending one if the queue is full.
@@ -160,24 +185,36 @@ impl OverlayHandle {
     /// `GetMessageW`, and a posted thread message is what unblocks it. The
     /// overlay thread posts its own thread id through the readiness channel
     /// before entering the loop, so no wake can be lost to a race.
-    fn wake(&self) {
-        if self.thread_id != 0 {
-            unsafe {
-                let _ = PostThreadMessageW(self.thread_id, WM_VIBDOCK_WAKE, WPARAM(0), LPARAM(0));
-            }
-        }
+    ///
+    /// Returns whether the wake was actually posted. A failure means the
+    /// overlay thread's queue is gone or full, so the frame it was meant to
+    /// announce will not be drained now; the caller must not advance past it.
+    fn wake(&self) -> bool {
+        self.post(WM_VIBDOCK_WAKE)
     }
 
     /// Asks the overlay thread to stop, without consuming `self`.
     ///
     /// Kept separate from [`Drop`] so the stop path is one code path: dropping
     /// and any explicit shutdown both end at the same teardown.
-    fn request_stop(&self) {
-        if self.thread_id != 0 {
-            unsafe {
-                let _ = PostThreadMessageW(self.thread_id, WM_VIBDOCK_STOP, WPARAM(0), LPARAM(0));
-            }
+    ///
+    /// Returns whether the stop was posted. When it was not, [`Drop`] must not
+    /// join: a thread that never received the stop stays blocked in
+    /// `GetMessageW`, and joining it would hang shutdown forever.
+    fn request_stop(&self) -> bool {
+        self.post(WM_VIBDOCK_STOP)
+    }
+
+    /// Posts a control message to the overlay thread's queue.
+    ///
+    /// Returns `false` rather than silently succeeding when the post fails or
+    /// there is no thread id to post to. Both callers change behaviour on that
+    /// outcome, so the result must not be discarded here.
+    fn post(&self, message: u32) -> bool {
+        if self.thread_id == 0 {
+            return false;
         }
+        unsafe { PostThreadMessageW(self.thread_id, message, WPARAM(0), LPARAM(0)) }.is_ok()
     }
 }
 
@@ -188,8 +225,17 @@ impl Drop for OverlayHandle {
         // The stop is posted as a thread message, which is also what wakes a
         // loop blocked in GetMessageW — a stop sent only through the channel
         // would sit there unread forever.
-        self.request_stop();
-        if let Some(thread) = self.thread.take() {
+        let stopped = self.request_stop();
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        // Join only when the stop actually reached the thread. A post that
+        // failed leaves the loop blocked in GetMessageW with no way to learn it
+        // should exit, so joining would hang shutdown forever. Detaching
+        // instead leaks the thread until the process ends, which is the lesser
+        // failure of the two: the indicator is an auxiliary view and must never
+        // wedge the service's shutdown.
+        if stopped {
             let _ = thread.join();
         }
     }
@@ -254,23 +300,33 @@ enum ThreadReady {
 /// target line clipped. `SPI_GETWORKAREA` reports the area left after the
 /// shell reserves its bands, so the indicator lands where it can be read.
 ///
-/// Falls back to the full monitor if the work area cannot be read, since a
-/// misplaced indicator is still better than one that never appears.
+/// Falls back to the full monitor rectangle if the work area cannot be read.
+/// That fallback is *not* taskbar-aware: it spans the whole monitor, so with a
+/// left or top taskbar the indicator may overlap the taskbar band. It is kept
+/// because a misplaced indicator is still better than one that never appears.
 fn place(corner: Corner) -> (i32, i32) {
-    // The only platform call in this path; everything below is pure so it can
+    // The only platform calls in this path; everything below is pure so it can
     // be verified against a fixture instead of the real display.
-    let (width, height) = work_area().unwrap_or_else(|| unsafe {
-        (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+    let area = work_area().unwrap_or_else(|| Rect {
+        left: 0,
+        top: 0,
+        right: unsafe { GetSystemMetrics(SM_CXSCREEN) },
+        bottom: unsafe { GetSystemMetrics(SM_CYSCREEN) },
     });
-    place_in(corner, width, height)
+    place_in(corner, area)
 }
 
 /// Reads the primary monitor's work area: the monitor rectangle minus the
 /// space the shell reserves for the taskbar and other app bars.
 ///
+/// The origin is preserved rather than reduced to a width and height:
+/// `SPI_GETWORKAREA` reports `left`/`top` greater than zero when the taskbar
+/// sits on the left or top, and dropping that origin would place the indicator
+/// underneath the taskbar.
+///
 /// Returns `None` if the call fails, leaving the caller to fall back to the
 /// full monitor rectangle.
-fn work_area() -> Option<(i32, i32)> {
+fn work_area() -> Option<Rect> {
     let mut area = RECT::default();
     unsafe {
         SystemParametersInfoW(
@@ -281,38 +337,45 @@ fn work_area() -> Option<(i32, i32)> {
         )
     }
     .ok()?;
-    let width = area.right - area.left;
-    let height = area.bottom - area.top;
+    let area = Rect {
+        left: area.left,
+        top: area.top,
+        right: area.right,
+        bottom: area.bottom,
+    };
     // A non-positive area means the call succeeded but reported something
     // unusable; treat it as a failure so the caller falls back.
-    if width > 0 && height > 0 {
-        Some((width, height))
+    if area.width() > 0 && area.height() > 0 {
+        Some(area)
     } else {
         None
     }
 }
 
-/// Places the indicator inside a work area of the given size.
+/// Places the indicator inside the given work-area rectangle.
 ///
-/// Pure: it takes the dimensions as arguments rather than reading the display,
-/// so placement can be verified against fixtures. The result is always clamped
-/// so the window stays fully on-screen, because an indicator pushed partly or
-/// wholly off-screen is indistinguishable from one that failed to start.
-fn place_in(corner: Corner, screen_width: i32, screen_height: i32) -> (i32, i32) {
-    // A screen smaller than the window leaves no room for margins, so the
-    // window is pinned to the origin instead of being pushed off the edge.
-    let max_x = (screen_width - WIDTH).max(0);
-    let max_y = (screen_height - HEIGHT).max(0);
+/// Pure: it takes the rectangle as an argument rather than reading the display,
+/// so placement can be verified against fixtures. The origin is honoured: with
+/// a left or top taskbar the area starts away from zero, and the offset is
+/// added to the corner result. The result is always clamped so the window stays
+/// fully inside the area, because an indicator pushed partly or wholly outside
+/// it is indistinguishable from one that failed to start.
+fn place_in(corner: Corner, area: Rect) -> (i32, i32) {
+    // An area smaller than the window leaves no room for margins, so the
+    // window is pinned to the area's origin instead of being pushed off it.
+    let max_x = (area.width() - WIDTH).max(0);
+    let max_y = (area.height() - HEIGHT).max(0);
     let margin_x = MARGIN.min(max_x);
     let margin_y = MARGIN.min(max_y);
     let right = (max_x - margin_x).max(0);
     let bottom = (max_y - margin_y).max(0);
-    match corner {
+    let (offset_x, offset_y) = match corner {
         Corner::BottomRight => (right, bottom),
         Corner::BottomLeft => (margin_x, bottom),
         Corner::TopRight => (right, margin_y),
         Corner::TopLeft => (margin_x, margin_y),
-    }
+    };
+    (area.left + offset_x, area.top + offset_y)
 }
 
 /// The extended window styles the indicator is created with.
@@ -589,17 +652,29 @@ mod tests {
         Corner::TopLeft,
     ];
 
+    /// A work-area rectangle with no reserved band: the fallback shape and the
+    /// shape the origin-zero fixtures were written against.
+    fn full_area(width: i32, height: i32) -> Rect {
+        Rect {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        }
+    }
+
     /// These tests are pure fixtures. They must never create a window, pump
     /// messages, or touch COM/audio: native UI acceptance is a separate,
     /// currently blocked gate. Placement is therefore verified through
-    /// [`place_in`] with injected dimensions rather than the real display.
+    /// [`place_in`] with an injected rectangle rather than the real display,
+    /// covering non-zero origins (left and top taskbars) as well as sizes.
 
     #[test]
     fn corners_land_inside_a_normal_screen() {
         // A typical 1080p work area, including the band a taskbar occupies:
         // the indicator must sit inside it and clear the bottom edge.
         for corner in CORNERS {
-            let (x, y) = place_in(corner, 1920, 1040);
+            let (x, y) = place_in(corner, full_area(1920, 1040));
             assert!(x >= 0, "{corner:?} placed off-screen at x={x}");
             assert!(y >= 0, "{corner:?} placed off-screen at y={y}");
             assert!(x + WIDTH <= 1920, "{corner:?} overflows width at x={x}");
@@ -617,20 +692,20 @@ mod tests {
         // The old behaviour is asserted first so the fixture is pinned to the
         // input production really passes: the full 1920x1080 screen, not the
         // 1040 height the previous test happened to use.
-        let (_, full_height_y) = place_in(Corner::BottomRight, 1920, 1080);
+        let (_, full_height_y) = place_in(Corner::BottomRight, full_area(1920, 1080));
         assert_eq!(
             full_height_y,
             1080 - HEIGHT - MARGIN,
             "fixture must describe the full-screen placement that hid the target line"
         );
-        let work_area_y = place_in(Corner::BottomRight, 1920, 1040).1;
+        let work_area_y = place_in(Corner::BottomRight, full_area(1920, 1040)).1;
         assert!(
             work_area_y < full_height_y,
             "the work area must place the indicator higher than the full screen does"
         );
         // Inside the work area, both bottom corners clear the taskbar edge.
         for corner in [Corner::BottomRight, Corner::BottomLeft] {
-            let (_, y) = place_in(corner, 1920, 1040);
+            let (_, y) = place_in(corner, full_area(1920, 1040));
             assert!(
                 y + HEIGHT <= 1040,
                 "{corner:?} bottom edge {} reaches into the taskbar band",
@@ -640,11 +715,113 @@ mod tests {
     }
 
     #[test]
+    fn a_left_taskbar_shifts_every_corner_past_its_origin() {
+        // The regression: the work area starts at left=40, and dropping the
+        // origin put the top-left indicator inside the taskbar band at (16,16)
+        // instead of (56,16), and the bottom-right one at x=1604 instead of
+        // 1644.
+        let area = Rect {
+            left: 40,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        assert_eq!(place_in(Corner::TopLeft, area), (56, 16));
+        assert_eq!(place_in(Corner::BottomLeft, area), (56, 1000));
+        assert_eq!(place_in(Corner::TopRight, area), (1644, 16));
+        assert_eq!(place_in(Corner::BottomRight, area), (1644, 1000));
+    }
+
+    #[test]
+    fn a_top_taskbar_shifts_every_corner_below_its_origin() {
+        // A top taskbar reserves the first 40 rows, so a top corner at y=16
+        // would sit inside the bar; the correct landing is y=56.
+        let area = Rect {
+            left: 0,
+            top: 40,
+            right: 1920,
+            bottom: 1080,
+        };
+        assert_eq!(place_in(Corner::TopLeft, area), (16, 56));
+        assert_eq!(place_in(Corner::TopRight, area), (1644, 56));
+        assert_eq!(place_in(Corner::BottomLeft, area), (16, 1000));
+        assert_eq!(place_in(Corner::BottomRight, area), (1644, 1000));
+    }
+
+    #[test]
+    fn a_bottom_taskbar_keeps_the_bottom_corners_inside_the_area() {
+        // The classic case, now asserted with the real RECT shape rather than
+        // pre-subtracted dimensions.
+        let area = Rect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1040,
+        };
+        for corner in [Corner::BottomRight, Corner::BottomLeft] {
+            let (_, y) = place_in(corner, area);
+            assert!(
+                y + HEIGHT <= 1040,
+                "{corner:?} bottom edge {} reaches into the taskbar band",
+                y + HEIGHT
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_zero_origin_never_pushes_the_window_outside_the_area() {
+        // Generalisation of the fixtures above: whatever the origin, the window
+        // stays within [left, right] x [top, bottom].
+        for area in [
+            Rect {
+                left: 40,
+                top: 0,
+                right: 1920,
+                bottom: 1080,
+            },
+            Rect {
+                left: 0,
+                top: 40,
+                right: 1920,
+                bottom: 1080,
+            },
+            Rect {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1040,
+            },
+            Rect {
+                left: 40,
+                top: 40,
+                right: 1920,
+                bottom: 1040,
+            },
+        ] {
+            for corner in CORNERS {
+                let (x, y) = place_in(corner, area);
+                assert!(x >= area.left, "{corner:?} on {area:?} at x={x}");
+                assert!(y >= area.top, "{corner:?} on {area:?} at y={y}");
+                assert!(
+                    x + WIDTH <= area.right,
+                    "{corner:?} on {area:?} overflows right at x={x}"
+                );
+                assert!(
+                    y + HEIGHT <= area.bottom,
+                    "{corner:?} on {area:?} overflows bottom at y={y}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_work_area_falls_back_to_the_full_screen_when_unavailable() {
         // A failed SPI_GETWORKAREA must not leave the window unplaced: the
         // caller falls back to the monitor rectangle. This asserts the
-        // fallback input stays placeable rather than being degenerate.
-        let (x, y) = place_in(Corner::BottomRight, 1920, 1080);
+        // fallback input stays placeable rather than being degenerate. The
+        // fallback spans the whole monitor and is not taskbar-aware, so it is
+        // only reached when the work area could not be read at all.
+        let (x, y) = place_in(Corner::BottomRight, full_area(1920, 1080));
         assert!(x >= 0 && y >= 0, "the fallback area must stay on-screen");
         assert!(x + WIDTH <= 1920 && y + HEIGHT <= 1080);
     }
@@ -653,11 +830,11 @@ mod tests {
     fn placement_respects_the_configured_margin() {
         // Bottom-right keeps the margin from both edges; top-left sits exactly
         // on it. Asserting the exact numbers pins the geometry, not just bounds.
-        let (x, y) = place_in(Corner::BottomRight, 1920, 1080);
+        let (x, y) = place_in(Corner::BottomRight, full_area(1920, 1080));
         assert_eq!(x, 1920 - WIDTH - MARGIN);
         assert_eq!(y, 1080 - HEIGHT - MARGIN);
 
-        let (x, y) = place_in(Corner::TopLeft, 1920, 1080);
+        let (x, y) = place_in(Corner::TopLeft, full_area(1920, 1080));
         assert_eq!((x, y), (MARGIN, MARGIN));
     }
 
@@ -668,7 +845,7 @@ mod tests {
         // keeps it visible instead of appearing broken.
         for screen in [(100, 80), (WIDTH, HEIGHT), (1, 1), (0, 0)] {
             for corner in CORNERS {
-                let (x, y) = place_in(corner, screen.0, screen.1);
+                let (x, y) = place_in(corner, full_area(screen.0, screen.1));
                 assert!(
                     x >= 0 && y >= 0,
                     "{corner:?} on {screen:?} placed at ({x}, {y})"
@@ -687,7 +864,7 @@ mod tests {
         // placeable origin rather than a negative offset.
         for screen in [(0, 0), (-100, -100)] {
             for corner in CORNERS {
-                let (x, y) = place_in(corner, screen.0, screen.1);
+                let (x, y) = place_in(corner, full_area(screen.0, screen.1));
                 assert_eq!((x, y), (0, 0), "{corner:?} on {screen:?}");
             }
         }

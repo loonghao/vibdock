@@ -346,11 +346,33 @@ struct ActionFeedback {
     sequence: u64,
     state: Option<String>,
     error: Option<String>,
+    /// The device the recorded action actually applied to.
+    ///
+    /// Captured when the action runs rather than read from the live config at
+    /// display time: a binding change after an action would otherwise relabel
+    /// that older action's verified result with the newly selected microphone.
+    target: Option<String>,
 }
 
 impl ActionFeedback {
+    /// Records an action with no known device.
+    ///
+    /// Test-only: the production loop always knows which device an action ran
+    /// against and uses [`ActionFeedback::record_for`], so a target captured
+    /// later can never be attributed to an earlier action.
+    #[cfg(test)]
     fn record(&mut self, result: std::result::Result<String, String>) {
+        self.record_for(result, None)
+    }
+
+    /// Records one completed action and the device it applied to.
+    ///
+    /// `target` is the device id the action was run against, captured by the
+    /// caller at the moment it ran. An action recorded without one is labelled
+    /// as having no target rather than inheriting whatever is configured later.
+    fn record_for(&mut self, result: std::result::Result<String, String>, target: Option<&str>) {
         self.sequence = self.sequence.saturating_add(1);
+        self.target = target.map(str::to_string);
         match result {
             Ok(state) => {
                 self.state = Some(state);
@@ -421,9 +443,11 @@ struct OverlayCursor {
 /// Renders the latest completed action into the indicator, if one is running.
 ///
 /// Pure view over state the service already recorded: this never performs an
-/// action and never queries the platform. The target label is resolved from
-/// the configured device id so the indicator always says which microphone an
-/// action applied to rather than showing a bare state.
+/// action and never queries the platform. The target label is the device the
+/// action was run against, captured on [`ActionFeedback`] when it ran — not the
+/// currently configured device, which may have been rebound since. Labelling an
+/// older action with the newly selected microphone would present one device's
+/// verified LIVE/MUTED as another's.
 ///
 /// Enqueues only when the sequence or the target changed, so an idle loop
 /// costs one comparison per iteration instead of a queue send and a thread
@@ -433,13 +457,15 @@ struct OverlayCursor {
 fn show_latest_frame(
     overlay: Option<&crate::feedback_windows::OverlayHandle>,
     feedback: &ActionFeedback,
-    device_id: Option<&str>,
+    _device_id: Option<&str>,
     cursor: &mut OverlayCursor,
 ) {
     let Some(overlay) = overlay else {
         return;
     };
-    let target = device_id
+    let target = feedback
+        .target
+        .as_deref()
         .map(|id| {
             if id.is_empty() {
                 "No target selected"
@@ -463,9 +489,9 @@ fn show_latest_frame(
         state: feedback.state.clone(),
         error: feedback.error.clone(),
     };
-    // The cursor advances only once the frame is actually queued. Advancing it
-    // first would mark this state as delivered and never retry it if the queue
-    // rejected the frame, leaving the indicator stuck on an older state.
+    // The cursor advances only once the frame is actually queued and woken.
+    // Advancing it first would mark this state as delivered and never retry it,
+    // leaving the indicator stuck on an older state.
     if overlay.show(&frame_from(&view, &config)) {
         cursor.sequence = feedback.sequence;
         cursor.target = target;
@@ -759,18 +785,19 @@ fn accept_loop(
             if let Err(error) = &result {
                 eprintln!("ERROR: the bound action failed: {error}");
             }
-            feedback.record(result);
+            // The device is captured with the action, so a later rebinding
+            // cannot relabel this action's verified result with another mic.
+            feedback.record_for(result, state.device_id.as_deref());
         }
         // Repaint the indicator from the completed action. This enqueues only
         // when the sequence or target changed, and the overlay coalesces
         // pending frames to the newest; every action has already advanced the
         // sequence above, so none is ever dropped here.
-        show_latest_frame(
-            overlay.as_ref(),
-            &feedback,
-            state.device_id.as_deref(),
-            &mut overlay_cursor,
-        );
+        //
+        // The target shown is the one captured with the action, not the live
+        // configuration: a rebinding must not repaint an older action's result
+        // as if it had applied to the newly selected device.
+        show_latest_frame(overlay.as_ref(), &feedback, None, &mut overlay_cursor);
         // Non-blocking accept keeps this loop responsive to hotkeys and to
         // shutdown, instead of stalling in accept() or on a slow client.
         // Hand any pending connections to the bounded I/O pool. This never
@@ -940,17 +967,61 @@ mod tests {
             sequence: 7,
             state: Some("live".to_string()),
             error: None,
+            target: Some("Shure MV7".to_string()),
         };
         let mut cursor = OverlayCursor::default();
         #[cfg(windows)]
         let overlay: Option<&crate::feedback_windows::OverlayHandle> = None;
         #[cfg(not(windows))]
         let overlay: Option<&OverlayPlaceholder> = None;
-        show_latest_frame(overlay, &feedback, Some("Shure MV7"), &mut cursor);
+        show_latest_frame(overlay, &feedback, None, &mut cursor);
         assert_eq!(
             cursor,
             OverlayCursor::default(),
             "the cursor must stay at its initial state so the frame is retried"
+        );
+    }
+
+    /// An action keeps the device it actually ran against.
+    ///
+    /// The regression this guards: reading the target from the live
+    /// configuration at display time relabels a previously verified result with
+    /// whatever microphone is selected now, so one device's LIVE/MUTED is shown
+    /// next to another device's name.
+    #[test]
+    fn an_action_keeps_the_device_it_ran_against_after_a_rebinding() {
+        let mut feedback = ActionFeedback::default();
+        // Two actions against the first microphone, then the user rebinds.
+        feedback.record_for(Ok("LIVE".to_string()), Some("Shure MV7"));
+        feedback.record_for(Ok("MUTED".to_string()), Some("Shure MV7"));
+        assert_eq!(feedback.target.as_deref(), Some("Shure MV7"));
+        // The rebinding itself is not an action, so the recorded target must
+        // stay with the action that produced the state.
+        assert_eq!(
+            feedback.target.as_deref(),
+            Some("Shure MV7"),
+            "a config change must not relabel a completed action"
+        );
+        // A later action records the new device, without rewriting the old one.
+        feedback.record_for(Ok("LIVE".to_string()), Some("Rode NT"));
+        assert_eq!(feedback.target.as_deref(), Some("Rode NT"));
+        assert_eq!(feedback.sequence, 3);
+    }
+
+    /// An action recorded with no device is labelled as having no target,
+    /// rather than inheriting whatever is configured afterwards.
+    #[test]
+    fn an_action_without_a_device_does_not_inherit_the_later_configuration() {
+        let mut feedback = ActionFeedback::default();
+        feedback.record_for(Ok("MUTED".to_string()), None);
+        assert_eq!(
+            feedback.target, None,
+            "an action with no target must not be relabelled from the live config"
+        );
+        feedback.record(Ok("LIVE".to_string()));
+        assert_eq!(
+            feedback.target, None,
+            "the no-target convenience path must also stay unlabelled"
         );
     }
 

@@ -33,6 +33,8 @@ Distinguish trigger received, action pending, verified success, shortcut dispatc
 
 Status: the corner status indicator is implemented on Windows behind an explicit opt-in that defaults to off. Enable it with `VIBDOCK_OVERLAY=1` (`on`, `true`, `yes` accepted); `VIBDOCK_OVERLAY_CORNER` chooses `bottom-right` (default), `bottom-left`, `top-right`, or `top-left`. It is a separate non-activating, mouse-transparent window showing the last completed action (`LIVE`, `MUTED`, a real failure, or unknown) together with the selected target. It renders state the service already recorded and never performs or invents an action; a status reports success only from a verified platform readback. The optional breathing border remains **planned** and is not implemented.
 
+It is placed in the taskbar-free work area of the primary monitor, so a left, top, or bottom taskbar is excluded. That work area is a preference, not a guarantee: if `SPI_GETWORKAREA` cannot be read the window falls back to the full monitor rectangle, which spans any taskbar band, on the grounds that a misplaced indicator is still better than one that never appears. Multi-monitor placement is not handled — only the primary monitor is considered.
+
 The indicator has not been accepted against live Windows: no run has observed it on a real desktop, so typing/focus, multi-monitor behaviour, and failed-action feedback are unverified in practice. Unit tests cover the status contracts without creating a window.
 
 ## Agent and plugin direction
