@@ -255,7 +255,7 @@ fn session_json(session: &AppSession) -> String {
         concat!(
             "{{\"endpoint_id\":{e},\"session_instance_id\":{s},\"process_id\":{p},",
             "\"display_name\":{d},\"process_identity\":{i},\"muted\":{m},",
-            "\"volume\":{v},\"active\":{a}}}"
+            "\"volume\":{v},\"volume_valid\":{vv},\"active\":{a}}}"
         ),
         e = quote(&session.identity.endpoint_id),
         s = quote(&session.identity.session_instance_id),
@@ -264,20 +264,36 @@ fn session_json(session: &AppSession) -> String {
         i = quote(&session.process_identity.to_string()),
         m = session.muted,
         v = format_volume(session.volume),
+        vv = session.volume.is_finite(),
         a = session.active,
     )
 }
 
-/// Formats a volume as JSON, refusing to emit a non-finite number.
+/// Formats a volume as JSON, or `null` when the platform did not report one.
 ///
-/// `NaN` and infinity are not valid JSON. A platform that reports one has
-/// failed, and emitting the literal would produce a document no parser can
-/// read, so the value is clamped to a valid number instead.
+/// `NaN` and infinity are not valid JSON, so a non-finite volume becomes
+/// `null` rather than a number. Emitting `0.0` would be a lie: an agent reading
+/// this document cannot otherwise tell "this session is silent" apart from "the
+/// platform never gave us a volume". Callers distinguish the two through
+/// `volume_valid`, and mute state is carried by `muted` regardless.
 fn format_volume(volume: f32) -> String {
     if volume.is_finite() {
         format!("{volume:.6}")
     } else {
-        "0.0".to_string()
+        "null".to_string()
+    }
+}
+
+/// Renders a volume for human-readable output.
+///
+/// Shares the "not reported" distinction with [`format_volume`]: an unreadable
+/// volume is printed as `unknown`, never as `0`, so a reader cannot mistake a
+/// platform failure for a session that is silent.
+fn format_volume_text(volume: f32) -> String {
+    if volume.is_finite() {
+        format!("{volume:.6}")
+    } else {
+        "unknown".to_string()
     }
 }
 
@@ -323,7 +339,7 @@ pub(crate) fn to_text(outcome: &SessionOutcome) -> String {
                         id = session.identity.session_instance_id,
                         proc = session.process_identity,
                         muted = session.muted,
-                        vol = format_volume(session.volume),
+                        vol = format_volume_text(session.volume),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -336,7 +352,7 @@ pub(crate) fn to_text(outcome: &SessionOutcome) -> String {
             id = session.identity.session_instance_id,
             proc = session.process_identity,
             muted = session.muted,
-            vol = format_volume(session.volume),
+            vol = format_volume_text(session.volume),
         ),
     }
 }
@@ -417,6 +433,12 @@ pub(crate) fn verify_readback(
 /// message can be asserted on from tests that run on any host. It must never
 /// degrade into an empty session list, which would mean "we looked and found
 /// none" — a different and misleading claim.
+///
+/// This is strictly a no-adapter message. Windows has the adapter, so a Windows
+/// failure has a real cause and must not be reported as "unimplemented" — see
+/// the COM and platform error helpers in the Windows adapter. It lives in the
+/// core because the stub and the cross-platform tests both use it.
+#[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn unsupported(action: SessionAction) -> String {
     format!(
         "{action} requires the Windows Core Audio session adapter; \

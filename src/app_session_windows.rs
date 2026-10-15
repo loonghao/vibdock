@@ -18,7 +18,10 @@ use windows::{
     core::{Interface, PCWSTR},
     Win32::{
         Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
-        Foundation::{ERROR_DEVICE_NOT_AVAILABLE, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND},
+        Foundation::{
+            ERROR_DEVICE_NOT_AVAILABLE, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND,
+            RPC_E_CHANGED_MODE,
+        },
         Media::Audio::{Endpoints::IAudioEndpointVolume, *},
         System::Com::*,
     },
@@ -147,6 +150,13 @@ unsafe fn observe(
 ///
 /// System sounds are included so the user can see them, but they carry no
 /// addressable application identity and are never muted implicitly.
+///
+/// A session whose state cannot be read is skipped rather than failing the
+/// whole enumeration. That matches how `observe` already treats a session with
+/// no instance identifier, and it matters for `app-mute`: one unreadable
+/// session belonging to another process must not make an unrelated, perfectly
+/// readable session impossible to mute. Skipping only ever removes candidates,
+/// so it cannot widen what a command is allowed to touch.
 pub(crate) unsafe fn list(
     manager: &IMMDeviceEnumerator,
     endpoint_id: &str,
@@ -158,7 +168,7 @@ pub(crate) unsafe fn list(
     for index in 0..enumerator.GetCount()? {
         let control: IAudioSessionControl = enumerator.GetSession(index)?;
         let control2: IAudioSessionControl2 = control.cast()?;
-        if let Some(session) = observe(&control2, endpoint_id)? {
+        if let Ok(Some(session)) = observe(&control2, endpoint_id) {
             sessions.push(session);
         }
     }
@@ -167,9 +177,9 @@ pub(crate) unsafe fn list(
 
 /// Finds the live session matching `identity`, or reports why it is gone.
 ///
-/// The endpoint is re-resolved and the full set re-enumerated on every call,
-/// so a session that vanished since selection is detected rather than being
-/// substituted with whatever now occupies a similar slot.
+/// A thin forward to the shared selector, so this adapter cannot grow its own
+/// laxer matching rules. Re-resolution and re-enumeration are the caller's job:
+/// [`apply`] re-enumerates immediately before acting on the result.
 unsafe fn resolve<'a>(
     sessions: &'a [AppSession],
     identity: &SessionIdentity,
@@ -187,42 +197,47 @@ pub(crate) unsafe fn apply(
     identity: &SessionIdentity,
     action: SessionAction,
 ) -> std::result::Result<AppSession, String> {
-    let sessions = list(manager, &identity.endpoint_id).map_err(|e| e.to_string())?;
+    let sessions = list(manager, &identity.endpoint_id).map_err(endpoint_error)?;
     let current = resolve(&sessions, identity)?;
     let requested = crate::app_audio::desired_mute(action, current.muted);
+    // What we actually asked Windows for. Equal to `requested` except for
+    // `app-toggle`, whose target is recomputed from live state just before the
+    // write; the readback gate below must verify against this value, not
+    // against a target derived from a snapshot taken earlier.
+    let mut written = requested;
 
     if let Some(muted) = requested {
-        let device = render_endpoint(manager, &identity.endpoint_id).map_err(|e| e.to_string())?;
-        let manager2: IAudioSessionManager2 = device
-            .Activate(CLSCTX_ALL, None)
-            .map_err(|e| e.to_string())?;
-        let enumerator = manager2.GetSessionEnumerator().map_err(|e| e.to_string())?;
+        let device = render_endpoint(manager, &identity.endpoint_id).map_err(endpoint_error)?;
+        let manager2: IAudioSessionManager2 =
+            device.Activate(CLSCTX_ALL, None).map_err(platform_error)?;
+        let enumerator = manager2.GetSessionEnumerator().map_err(platform_error)?;
         let mut target: Option<IAudioSessionControl2> = None;
-        for index in 0..enumerator.GetCount().map_err(|e| e.to_string())? {
+        for index in 0..enumerator.GetCount().map_err(platform_error)? {
             let control: IAudioSessionControl =
-                enumerator.GetSession(index).map_err(|e| e.to_string())?;
-            let control2: IAudioSessionControl2 = control.cast().map_err(|e| e.to_string())?;
+                enumerator.GetSession(index).map_err(platform_error)?;
+            let control2: IAudioSessionControl2 = control.cast().map_err(platform_error)?;
             let instance_id = co_string(
                 control2
                     .GetSessionInstanceIdentifier()
-                    .map_err(|e| e.to_string())?,
+                    .map_err(platform_error)?,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(endpoint_error)?;
             if instance_id == identity.session_instance_id {
                 target = Some(control2);
                 break;
             }
         }
         // Absent here means the session died between the enumerate above and
-        // this activation. Report it as stale rather than mutating a different
-        // session that happens to be at the same index.
+        // this activation. Nothing has been written yet, so this is genuinely
+        // "no change was made" — unlike the post-write readback below, which
+        // must say so explicitly.
         let control2 = target.ok_or_else(|| {
             "That session no longer exists on this endpoint; run app-list again.".to_string()
         })?;
         // The owning process is checked once more, immediately before the
         // change, so a PID recycled in the window since selection cannot
         // redirect the mute to a different application.
-        let live_pid = control2.GetProcessId().map_err(|e| e.to_string())?;
+        let live_pid = control2.GetProcessId().map_err(platform_error)?;
         if live_pid != identity.process_id {
             return Err(format!(
                 "That session is now owned by a different process (was pid {}, now pid {}); \
@@ -230,17 +245,47 @@ pub(crate) unsafe fn apply(
                 identity.process_id, live_pid
             ));
         }
-        let volume: ISimpleAudioVolume = control2.cast().map_err(|e| e.to_string())?;
+        let volume: ISimpleAudioVolume = control2.cast().map_err(platform_error)?;
+        // For `app-toggle` the desired state was derived from the enumeration
+        // above. Re-read the live mute state from the very interface we are
+        // about to write, so a third-party change (Volume Mixer, another
+        // controller) in that window cannot make us write the inverted value:
+        // the toggle target is recomputed from current state, not from a stale
+        // snapshot. `mute`/`unmute` ask for an absolute state and are unaffected.
+        let live_muted = volume.GetMute().map_err(platform_error)?.as_bool();
+        let muted = match action {
+            crate::app_audio::SessionAction::Toggle => !live_muted,
+            _ => muted,
+        };
+        written = Some(muted);
         volume
             .SetMute(muted, std::ptr::null())
-            .map_err(|e| e.to_string())?;
+            .map_err(platform_error)?;
     }
 
     // Read the whole session back from the platform rather than reusing the
     // pre-action observation: the reported state must be the observed one.
-    let after = list(manager, &identity.endpoint_id).map_err(|e| e.to_string())?;
-    let observed = resolve(&after, identity)?;
-    crate::app_audio::verify_readback(action, requested, observed.muted)?;
+    //
+    // Once `SetMute` has returned Ok, Windows may already have applied the
+    // change. If this re-enumeration now fails, the caller must not be told
+    // "the session no longer exists" — that is the pre-write wording and reads
+    // as "nothing happened", which invites a retry that could reverse a mute
+    // that did take effect.
+    let after = match list(manager, &identity.endpoint_id) {
+        Ok(after) => after,
+        Err(error) => return Err(readback_error(action, written, &endpoint_error(error))),
+    };
+    let observed = match resolve(&after, identity) {
+        Ok(observed) => observed,
+        Err(error) => {
+            return Err(readback_error(
+                action,
+                written,
+                &format!("the session could not be re-checked afterwards: {error}"),
+            ))
+        }
+    };
+    crate::app_audio::verify_readback(action, written, observed.muted)?;
     Ok(observed.clone())
 }
 
@@ -264,12 +309,19 @@ pub(crate) fn execute(
         // COM is required for every Core Audio call. If the audio stack is
         // unavailable — a session with no audio service, or a stripped-down
         // SKU — say so plainly instead of reporting an empty session list.
+        //
+        // "Unsupported on this platform" is reserved for builds without the
+        // adapter. On Windows every failure has a real cause, and reporting it
+        // as unimplemented sends the reader looking in the wrong place: the
+        // common one is `RPC_E_CHANGED_MODE`, where the process already
+        // initialized COM in another mode. That does not happen on today's CLI
+        // path, but it does once this runs inside the resident service or GUI.
         CoInitializeEx(None, COINIT_APARTMENTTHREADED)
             .ok()
-            .map_err(|_| crate::app_audio::unsupported(action))?;
+            .map_err(com_error)?;
         let _com = Com;
-        let manager: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-            .map_err(|_| crate::app_audio::unsupported(action))?;
+        let manager: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(platform_error)?;
         // Confirm the flow this adapter implements: playback only. Stated
         // here so the render-only scope is visible at the platform boundary
         // and cannot drift into input handling unnoticed.
@@ -342,6 +394,52 @@ fn hresult_message(code: windows::core::HRESULT) -> Option<String> {
 fn platform_error(error: windows::core::Error) -> String {
     hresult_message(error.code())
         .unwrap_or_else(|| format!("Windows rejected the playback endpoint: {error}"))
+}
+
+/// Explains a COM initialization failure on Windows.
+///
+/// Kept separate from [`platform_error`] because the endpoint messages would be
+/// actively misleading here: COM failing has nothing to do with the endpoint id
+/// the user supplied. `RPC_E_CHANGED_MODE` means the process already called
+/// `CoInitializeEx` with a different concurrency model, which is expected once
+/// this adapter runs inside the resident service or GUI rather than the CLI.
+fn com_error(error: windows::core::Error) -> String {
+    if error.code() == RPC_E_CHANGED_MODE {
+        return format!(
+            "COM is already initialized in a different mode in this process ({error}). \
+             Application session control needs COINIT_APARTMENTTHREADED; \
+             initialize COM that way before calling {}.",
+            "this command"
+        );
+    }
+    format!("Windows COM is unavailable, so application sessions cannot be read: {error}")
+}
+
+/// Renders a readback failure, distinguishing "wrote, unconfirmed" from "read failed".
+///
+/// Factored out of [`apply`] so the wording is testable without a real audio
+/// stack — the Windows write path has no automated coverage, and this message
+/// is the one a caller would most easily misread.
+///
+/// When a write was submitted, the message must never say the session is gone:
+/// after `SetMute` returns Ok the change may already be applied, and a caller
+/// told "no longer exists" would conclude the command did nothing and retry,
+/// reversing a mute that did take effect. With no write submitted, that same
+/// claim would be a lie in the other direction, so the cause is reported alone.
+fn post_write_readback_error(action: SessionAction, cause: &str) -> String {
+    format!(
+        "{action} was submitted to Windows but the result could not be read back: {cause}. \
+         The change may already be applied; run app-status to check before retrying, \
+         because repeating app-toggle could reverse it."
+    )
+}
+
+/// Turns a readback failure into an error, branching on whether a write was made.
+fn readback_error(action: SessionAction, written: Option<bool>, cause: &str) -> String {
+    match written {
+        Some(_) => post_write_readback_error(action, cause),
+        None => cause.to_string(),
+    }
 }
 
 /// Lists the active render endpoints, so a user can find an id for `app-list`.
@@ -453,5 +551,86 @@ mod tests {
             process_id: 0,
         };
         assert!(unsafe { resolve(&sessions, &identity) }.is_err());
+    }
+
+    #[test]
+    fn a_read_only_action_never_reports_a_submitted_but_unconfirmed_write() {
+        // The post-write wording must be reserved for real writes. With no
+        // requested change, an enumeration failure is still just "cannot look",
+        // so a caller is never told a mute may have been applied when none was.
+        let error = readback_error(SessionAction::Status, None, "endpoint went away");
+        assert!(
+            !error.contains("submitted to Windows"),
+            "a read must not claim a write: {error}"
+        );
+        assert!(error.contains("endpoint went away"), "got: {error}");
+    }
+
+    #[test]
+    fn a_failed_readback_after_a_write_says_the_change_may_have_applied() {
+        // This is the P2 wording fix: after SetMute returns Ok, "session no
+        // longer exists" would read as "nothing happened" and invite a retry
+        // that reverses a mute which did take effect.
+        let error = readback_error(SessionAction::Mute, Some(true), "endpoint went away");
+        assert!(error.contains("submitted to Windows"), "got: {error}");
+        assert!(error.contains("app-status"), "must name the check: {error}");
+        assert!(
+            error.contains("app-toggle"),
+            "must warn against blind retry: {error}"
+        );
+        // And it must not be confused with the pre-write "nothing was changed".
+        assert!(!error.contains("no longer exists"), "got: {error}");
+    }
+
+    #[test]
+    fn com_mode_conflict_is_not_reported_as_unimplemented() {
+        // Telling a Windows user their platform is unimplemented sends them the
+        // wrong way; the real cause here is COM already initialized in another
+        // mode, which is what happens once this runs inside the service or GUI.
+        let message = com_error(windows::core::Error::from_hresult(RPC_E_CHANGED_MODE));
+        assert!(
+            !message.contains("unimplemented"),
+            "COM conflict is not an unimplemented platform: {message}"
+        );
+        assert!(message.contains("APARTMENTTHREADED"), "got: {message}");
+    }
+
+    #[test]
+    fn an_unrelated_com_failure_keeps_its_hresult() {
+        // Not every COM failure is a mode conflict; the rest must stay
+        // diagnosable rather than being flattened into one guess.
+        let message = com_error(windows::core::Error::from_hresult(windows::core::HRESULT(
+            0x8000_FFFFu32 as i32,
+        )));
+        assert!(message.contains("COM"), "got: {message}");
+        assert!(!message.contains("APARTMENTTHREADED"), "got: {message}");
+    }
+
+    #[test]
+    fn a_toggle_target_is_recomputed_from_live_state() {
+        // `app-toggle` used to flip a snapshot taken before the write, so a
+        // third-party change in between produced the inverted value that then
+        // passed the readback gate. The target must be recomputed from the
+        // live mute state instead. This pins the pure rule the write path
+        // applies: toggle means "opposite of what is true now", while the
+        // absolute verbs keep their fixed target.
+        assert_eq!(
+            crate::app_audio::desired_mute(SessionAction::Toggle, true),
+            Some(false)
+        );
+        assert_eq!(
+            crate::app_audio::desired_mute(SessionAction::Toggle, false),
+            Some(true)
+        );
+        assert_eq!(
+            crate::app_audio::desired_mute(SessionAction::Mute, true),
+            Some(true),
+            "mute is absolute and must ignore current state"
+        );
+        assert_eq!(
+            crate::app_audio::desired_mute(SessionAction::Unmute, false),
+            Some(false),
+            "unmute is absolute and must ignore current state"
+        );
     }
 }

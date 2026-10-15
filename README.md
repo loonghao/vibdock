@@ -126,7 +126,7 @@ command prints a readable summary followed by one line of JSON describing the
 session that was actually read back, for example:
 
 ```json
-{"endpoint_id":"{0.0.0.00000000}.{...}","session_instance_id":"{...}","process_id":1234,"display_name":"Music","process_identity":"pid 1234","muted":true,"volume":1.000000,"active":true}
+{"endpoint_id":"{0.0.0.00000000}.{...}","session_instance_id":"{...}","process_id":1234,"display_name":"Music","process_identity":"pid 1234","muted":true,"volume":1.000000,"volume_valid":true,"active":true}
 ```
 
 Choose a session by its `session_instance_id`, shown as `session:` in the
@@ -142,6 +142,12 @@ readable output. Application playback control is deliberately strict:
   the volume of other applications, and microphone state are never touched.
 - Mute state is never reported from the request: it is read back from Windows
   after the change, and a mismatch is an error.
+- `app-toggle` flips the session's state as read immediately before the write,
+  not a value observed earlier. A third-party change in between cannot make the
+  command write the inverse of what you asked for.
+- A volume the platform does not report is emitted as `"volume":null` with
+  `"volume_valid":false`, never as `0`, so "silent" and "unknown" stay
+  distinguishable.
 
 Applications that split audio across several processes are **not** grouped
 automatically. Where the owning process cannot be resolved, it is reported as
@@ -152,8 +158,16 @@ to microphone input mute.
 On Linux and macOS these commands report that application audio sessions are
 unimplemented rather than returning an empty list.
 
-A readback error can occur after Windows applies a mute change. Query
-`app-status` before retrying; repeating `app-toggle` could reverse the change.
+**A readback failure after a write is not the same as no change.** Once the mute
+change has been submitted to Windows, a failure to re-read the result is
+reported as "submitted but not confirmed" — the change may already be applied.
+Query `app-status` before retrying; repeating `app-toggle` could reverse a mute
+that did take effect. A failure *before* the write is different: nothing was
+changed, and the command says the session is gone instead.
+
+One session whose state cannot be read is skipped during enumeration rather than
+failing the whole endpoint, so an unreadable session belonging to another
+process cannot make an unrelated session impossible to control.
 
 ## Product direction
 

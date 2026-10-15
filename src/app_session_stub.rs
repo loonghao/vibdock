@@ -61,11 +61,17 @@ pub(crate) fn execute(
         let requested = app_audio::desired_mute(action, false);
         app_audio::verify_readback(action, requested, false)?;
     }
-    // Describe the empty result we are refusing to report as success, so the
-    // error explains what was looked for as well as why it is unavailable.
-    let looked_for = describe(&SessionOutcome::Sessions(observed));
-    let _ = looked_for;
-    Err(app_audio::unsupported(action))
+    // Name what was asked for alongside why it is unavailable. The request is
+    // described from the selectors rather than from the empty observed set, so
+    // the error says which session was targeted instead of describing nothing.
+    let looked_for = format!(
+        "endpoint {endpoint_id} session {}",
+        session_id.unwrap_or_default()
+    );
+    Err(format!(
+        "{} (looked for: {looked_for})",
+        app_audio::unsupported(action)
+    ))
 }
 
 /// The error used when a session action is missing its session selector.
@@ -80,20 +86,6 @@ fn session_selector_error() -> String {
 /// [`execute`]: "cannot look" must not be reported as "looked, found none".
 pub(crate) fn render_endpoints() -> crate::Result<Vec<(String, String)>> {
     Err(app_audio::unsupported(SessionAction::Devices).into())
-}
-
-/// Renders an outcome, for callers that already hold one.
-///
-/// Present so the outcome type and its renderers have a live consumer on this
-/// platform; the adapter is the only thing that can produce a real one, so
-/// here it can only ever describe an unsupported request.
-pub(crate) fn describe(outcome: &SessionOutcome) -> String {
-    match outcome {
-        SessionOutcome::Sessions(_) => app_audio::to_text(outcome),
-        // A single-session result is described the same way, and rendering it
-        // through the shared text form keeps both shapes consistent.
-        SessionOutcome::State(_) => app_audio::to_text(outcome),
-    }
 }
 
 #[cfg(test)]
@@ -152,12 +144,12 @@ mod tests {
     }
 
     #[test]
-    fn describe_renders_both_outcome_shapes() {
+    fn both_outcome_shapes_render_on_this_platform() {
         // Both variants must render, so neither can be a shape the code can
         // construct but the renderer silently mishandles.
-        let listed = describe(&SessionOutcome::Sessions(vec![sample_session()]));
+        let listed = app_audio::to_text(&SessionOutcome::Sessions(vec![sample_session()]));
         assert!(listed.contains("Player"), "got: {listed}");
-        let state = describe(&SessionOutcome::State(sample_session()));
+        let state = app_audio::to_text(&SessionOutcome::State(sample_session()));
         assert!(state.contains("LIVE"), "got: {state}");
     }
 }
