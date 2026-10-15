@@ -881,22 +881,6 @@ mod tests {
     }
 
     #[test]
-    fn page_allows_loopback_health_probe() {
-        let response = with_headers(Response::from_string(""));
-        let policy = response
-            .headers()
-            .iter()
-            .find(|header| header.field.equiv("Content-Security-Policy"))
-            .unwrap()
-            .value
-            .as_str();
-        assert!(policy.contains("connect-src 'self'"));
-        assert!(policy.contains("default-src 'none'"));
-        assert!(policy.contains("frame-ancestors 'none'"));
-        assert!(!policy.contains("connect-src 'none'"));
-    }
-
-    #[test]
     fn browser_code_redemption_preserves_origin_and_replay_protection() {
         let mut auth = crate::browser_auth::BrowserAuth::default();
         let code = auth.mint().unwrap();

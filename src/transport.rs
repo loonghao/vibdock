@@ -570,6 +570,33 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    #[test]
+    fn page_allows_loopback_health_probe() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            BoundedConnection::from_stream(stream)
+                .unwrap()
+                .respond(200, "text/html", "");
+        });
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        server.join().unwrap();
+        let policy = response
+            .lines()
+            .find(|line| line.starts_with("Content-Security-Policy:"))
+            .unwrap();
+        assert!(policy.contains("connect-src 'self'"));
+        assert!(policy.contains("default-src 'none'"));
+        assert!(policy.contains("frame-ancestors 'none'"));
+        assert!(!policy.contains("connect-src 'none'"));
+        assert!(response.contains("Cache-Control: no-store\r\n"));
+        assert!(response.contains("X-Content-Type-Options: nosniff\r\n"));
+    }
+
     /// (method, path, headers) parsed from an in-memory request head.
     type ParsedHead = (String, String, Vec<(String, String)>);
 
