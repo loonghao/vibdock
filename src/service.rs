@@ -40,16 +40,20 @@ pub(crate) fn port() -> u16 {
 /// actually bound. The port is compared explicitly rather than accepting any
 /// suffix, so a page served from a different loopback port is not trusted.
 pub(crate) fn is_allowed_origin(origin: &str) -> bool {
+    let bound_port = port();
     ["http://127.0.0.1", "http://localhost", "http://[::1]"]
         .iter()
-        .any(|base| origin == format!("{base}:{}", port()) || *base == origin)
+        .any(|base| {
+            origin == format!("{base}:{bound_port}") || (bound_port == 80 && *base == origin)
+        })
 }
 
 /// Host headers accepted for the bound loopback listener.
 pub(crate) fn is_allowed_host(host: &str) -> bool {
+    let bound_port = port();
     ["127.0.0.1", "localhost", "[::1]"]
         .iter()
-        .any(|base| host == format!("{base}:{}", port()) || *base == host)
+        .any(|base| host == format!("{base}:{bound_port}") || (bound_port == 80 && *base == host))
 }
 
 /// Reads a token from a header value, tolerating the conventional `Bearer `
@@ -1469,6 +1473,13 @@ mod tests {
 
     #[test]
     fn allowed_origins_are_loopback_only() {
+        for host in ["127.0.0.1", "localhost", "[::1]"] {
+            assert_eq!(is_allowed_host(host), port() == 80);
+            assert_eq!(is_allowed_origin(&format!("http://{host}")), port() == 80);
+            let other_port = if port() == 80 { 81 } else { 80 };
+            assert!(!is_allowed_host(&format!("{host}:{other_port}")));
+            assert!(!is_allowed_origin(&format!("http://{host}:{other_port}")));
+        }
         assert!(is_allowed_origin("http://127.0.0.1:43128"));
         assert!(is_allowed_origin("http://localhost:43128"));
         assert!(!is_allowed_origin("http://evil.example"));
