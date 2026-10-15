@@ -681,10 +681,12 @@ mod tests {
             stream,
             started: Instant::now() - READ_TIMEOUT,
         };
+        let started = Instant::now();
         assert_eq!(
             reader.read(&mut [0]).unwrap_err().kind(),
             std::io::ErrorKind::TimedOut
         );
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     /// (method, path, headers) parsed from an in-memory request head.
