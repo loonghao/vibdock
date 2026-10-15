@@ -31,6 +31,10 @@ Meeting presets should let a user mute an agent's playback while continuing Slac
 
 Distinguish trigger received, action pending, verified success, shortcut dispatched without state verification, and failure. Keep the controlled target visible. A desktop overlay must be non-focus-stealing and mouse-transparent; the current prototype simulates it inside the browser only.
 
+Status: the corner status indicator is implemented on Windows behind an explicit opt-in that defaults to off. It is a separate non-activating, mouse-transparent window showing the last completed action (`LIVE`, `MUTED`, a real failure, or unknown) together with the selected target. It renders state the service already recorded and never performs or invents an action; a status reports success only from a verified platform readback. The optional breathing border remains **planned** and is not implemented.
+
+The indicator has not been accepted against live Windows: no run has observed it on a real desktop, so typing/focus, multi-monitor behaviour, and failed-action feedback are unverified in practice. Unit tests cover the status contracts without creating a window.
+
 ## Agent and plugin direction
 
 Adapters declare actions, scope, prerequisites, and state-query capability. CLI and authenticated loopback HTTP share execution contracts; MCP remains planned. Detection is not connection, connection is not action success. Do not expose arbitrary command execution through a Web binding endpoint.

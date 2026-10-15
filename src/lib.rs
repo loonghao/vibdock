@@ -13,6 +13,9 @@ mod app_session_stub;
 mod app_session_windows;
 mod browser_auth;
 mod capabilities;
+pub mod feedback;
+#[cfg(windows)]
+mod feedback_windows;
 mod integrations;
 
 pub mod hotkey;

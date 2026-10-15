@@ -8,6 +8,8 @@ Use a microphone button to talk to an agent, silence an input device, and get ba
 
 **Service acceptance:** Earlier pending builds failed slow-client responsiveness and browser authorization checks. The latest transport candidate passes local resilience and authorization checks, but independent review, hosted CI, and complete device and desktop acceptance remain pending. Current review builds are not accepted for unattended use.
 
+**Desktop status feedback:** The corner status indicator is implemented in source as an opt-in Windows overlay (default off). It has unit tests for its status contracts but has **not** been accepted against live Windows: no run has verified typing/focus behaviour, multi-monitor placement, or failed-action feedback on a real desktop. The optional breathing border is planned and not implemented.
+
 ## Download and run
 
 Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); the pending release pipeline packages both and checks their executable subsystems. No Node.js, Python, or separate Web server is required.
@@ -217,7 +219,7 @@ as unknown or unverified rather than claiming a working application connection.
 
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
-- Provide optional non-focus-stealing desktop feedback, with text/icons as well as color.
+- Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
 - Silence an agent's output during a meeting without changing meeting audio. Application playback commands are implemented in pending Windows source. Hardware bindings, service API access, and accepted two-application isolation tests remain open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.

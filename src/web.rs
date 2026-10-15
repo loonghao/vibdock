@@ -6,6 +6,7 @@
 //! generated, so a browser page from another origin cannot mutate state.
 
 use crate::{
+    feedback::{frame_from, FeedbackConfig, LastActionView},
     service::{self, Config, Instance},
     Result,
 };
@@ -372,6 +373,85 @@ impl ActionFeedback {
     }
 }
 
+/// Starts the desktop indicator only when the user has opted in.
+///
+/// Returns `None` on every non-Windows platform and whenever the feature is
+/// off, so the rest of the loop can treat the overlay uniformly as optional.
+/// A failure to start is logged and swallowed: the indicator is an auxiliary
+/// view, and a broken window must never take down audio control.
+#[cfg(windows)]
+fn start_overlay_if_enabled(
+    config: &FeedbackConfig,
+) -> Option<crate::feedback_windows::OverlayHandle> {
+    if !config.enabled {
+        return None;
+    }
+    match crate::feedback_windows::spawn(config.clone()) {
+        Ok(handle) => Some(handle),
+        Err(error) => {
+            eprintln!("ERROR: could not start the desktop status indicator: {error}");
+            None
+        }
+    }
+}
+
+/// Placeholder for platforms with no overlay adapter: never starts anything.
+#[cfg(not(windows))]
+fn start_overlay_if_enabled(_config: &FeedbackConfig) -> Option<OverlayPlaceholder> {
+    None
+}
+
+/// Type stand-in so the non-Windows loop compiles against the same shape.
+#[cfg(not(windows))]
+struct OverlayPlaceholder;
+
+/// Renders the latest completed action into the indicator, if one is running.
+///
+/// Pure view over state the service already recorded: this never performs an
+/// action and never queries the platform. The target label is resolved from
+/// the configured device id so the indicator always says which microphone an
+/// action applied to rather than showing a bare state.
+#[cfg(windows)]
+fn show_latest_frame(
+    overlay: Option<&crate::feedback_windows::OverlayHandle>,
+    feedback: &ActionFeedback,
+    device_id: Option<&str>,
+) {
+    let Some(overlay) = overlay else {
+        return;
+    };
+    let target = device_id
+        .map(|id| {
+            if id.is_empty() {
+                "No target selected"
+            } else {
+                id
+            }
+        })
+        .unwrap_or("No target selected")
+        .to_string();
+    let config = FeedbackConfig {
+        enabled: true,
+        target_label: target,
+        ..FeedbackConfig::default()
+    };
+    let view = LastActionView {
+        sequence: feedback.sequence,
+        state: feedback.state.clone(),
+        error: feedback.error.clone(),
+    };
+    overlay.show(&frame_from(&view, &config));
+}
+
+/// Placeholder for platforms with no overlay to render into.
+#[cfg(not(windows))]
+fn show_latest_frame(
+    _overlay: Option<&OverlayPlaceholder>,
+    _feedback: &ActionFeedback,
+    _device_id: Option<&str>,
+) {
+}
+
 /// Validate and arm before persistence; restore the previous registration on
 /// either platform rejection or disk failure. A rejected edit never replaces
 /// the saved configuration.
@@ -634,6 +714,10 @@ fn accept_loop(
 ) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut feedback = ActionFeedback::default();
+    // The indicator is opt-in. When it is off, no overlay thread starts and no
+    // window is ever created, so the default is observationally identical to
+    // the service as it was before this feature existed.
+    let overlay = start_overlay_if_enabled(&FeedbackConfig::default());
     loop {
         // Deliver any hotkey press that arrived since the last request. A
         // Win32 binding only reaches us through this thread's message queue,
@@ -645,6 +729,10 @@ fn accept_loop(
             }
             feedback.record(result);
         }
+        // Repaint the indicator from the completed action. This renders only
+        // the latest frame, which coalesces paint work; every action has
+        // already advanced the sequence above, so none is ever dropped here.
+        show_latest_frame(overlay.as_ref(), &feedback, state.device_id.as_deref());
         // Non-blocking accept keeps this loop responsive to hotkeys and to
         // shutdown, instead of stalling in accept() or on a slow client.
         // Hand any pending connections to the bounded I/O pool. This never
