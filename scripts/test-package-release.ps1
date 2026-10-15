@@ -71,9 +71,21 @@ function Assert-Case([string]$Name, [scriptblock]$Body) {
     }
 }
 
+# PowerShell renders errors through the host, which indents every line with a
+# '|' gutter and wraps the result at the console width. A phrase can therefore be
+# split across lines with the gutter of the second line sitting in the middle of
+# it, so a case must not assert against that rendering: whether it matched would
+# depend on message length and the runner's console width rather than on the
+# behaviour under test. Drop the per-line gutter, then collapse whitespace so the
+# assertion sees the message text as one continuous line.
+function Get-FlattenedOutput([hashtable]$Run) {
+    return ($Run.Output -replace '(?m)^\s*\|\s*', '') -replace '\s+', ' '
+}
+
 function Assert-FailsWith([hashtable]$Run, [string]$Pattern) {
     if ($Run.Code -eq 0) { return @{ Success = $false; Detail = 'expected failure, got success' } }
-    if ($Run.Output -notmatch $Pattern) { return @{ Success = $false; Detail = "unexpected error: $($Run.Output.Trim())" } }
+    $flattened = Get-FlattenedOutput $Run
+    if ($flattened -notmatch $Pattern) { return @{ Success = $false; Detail = "unexpected error: $($flattened.Trim())" } }
     return @{ Success = $true }
 }
 
@@ -278,7 +290,7 @@ Assert-Case 'verifier rejects missing-launcher in reused evidence dir' {
     if ($good.Code -ne 0) { return @{ Success = $false; Detail = "primer verify failed: $($good.Output.Trim())" } }
     $bad = Invoke-Verify $missing $ev
     if ($bad.Code -eq 0) { return @{ Success = $false; Detail = 'missing-launcher FALSE-PASSED in reused evidence dir' } }
-    if ($bad.Output -notmatch 'launcher') { return @{ Success = $false; Detail = "unexpected error: $($bad.Output.Trim())" } }
+    if ((Get-FlattenedOutput $bad) -notmatch 'launcher') { return @{ Success = $false; Detail = "unexpected error: $((Get-FlattenedOutput $bad).Trim())" } }
     return @{ Success = $true }
 }
 
@@ -295,7 +307,7 @@ Assert-Case 'verifier rejects wrong-subsystem launcher in reused evidence dir' {
     if ($good.Code -ne 0) { return @{ Success = $false; Detail = "primer verify failed: $($good.Output.Trim())" } }
     $bad = Invoke-Verify $wrong $ev
     if ($bad.Code -eq 0) { return @{ Success = $false; Detail = 'console-subsystem launcher FALSE-PASSED in reused evidence dir' } }
-    if ($bad.Output -notmatch 'GUI subsystem') { return @{ Success = $false; Detail = "unexpected error: $($bad.Output.Trim())" } }
+    if ((Get-FlattenedOutput $bad) -notmatch 'GUI subsystem') { return @{ Success = $false; Detail = "unexpected error: $((Get-FlattenedOutput $bad).Trim())" } }
     return @{ Success = $true }
 }
 
@@ -312,7 +324,7 @@ Assert-Case 'verifier rejects missing-README in reused evidence dir' {
     if ($good.Code -ne 0) { return @{ Success = $false; Detail = "primer verify failed: $($good.Output.Trim())" } }
     $bad = Invoke-Verify $noReadme $ev
     if ($bad.Code -eq 0) { return @{ Success = $false; Detail = 'missing-README FALSE-PASSED in reused evidence dir' } }
-    if ($bad.Output -notmatch 'README') { return @{ Success = $false; Detail = "unexpected error: $($bad.Output.Trim())" } }
+    if ((Get-FlattenedOutput $bad) -notmatch 'README') { return @{ Success = $false; Detail = "unexpected error: $((Get-FlattenedOutput $bad).Trim())" } }
     return @{ Success = $true }
 }
 
