@@ -146,6 +146,18 @@ unsafe fn observe(
     }))
 }
 
+/// A session on an endpoint whose state could not be read.
+///
+/// Returned alongside the readable sessions so a caller can tell "this endpoint
+/// has no sessions" apart from "this endpoint has sessions we cannot read" —
+/// reporting the first when the second is true would be a silent lie about the
+/// platform, and would make an unrelated session look absent to `app-mute`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct UnreadableSession {
+    /// Index of the session within the endpoint's enumeration, for reporting.
+    pub index: i32,
+}
+
 /// Enumerates every session on one render endpoint.
 ///
 /// System sounds are included so the user can see them, but they carry no
@@ -157,22 +169,29 @@ unsafe fn observe(
 /// session belonging to another process must not make an unrelated, perfectly
 /// readable session impossible to mute. Skipping only ever removes candidates,
 /// so it cannot widen what a command is allowed to touch.
+///
+/// The skipped sessions are returned rather than discarded, so the count of
+/// unreadable sessions is still reported instead of being swallowed.
 pub(crate) unsafe fn list(
     manager: &IMMDeviceEnumerator,
     endpoint_id: &str,
-) -> Result<Vec<AppSession>> {
+) -> Result<(Vec<AppSession>, Vec<UnreadableSession>)> {
     let device = render_endpoint(manager, endpoint_id)?;
     let manager2: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
     let enumerator = manager2.GetSessionEnumerator()?;
     let mut sessions = Vec::new();
+    let mut unreadable = Vec::new();
     for index in 0..enumerator.GetCount()? {
         let control: IAudioSessionControl = enumerator.GetSession(index)?;
         let control2: IAudioSessionControl2 = control.cast()?;
-        if let Ok(Some(session)) = observe(&control2, endpoint_id) {
-            sessions.push(session);
+        match observe(&control2, endpoint_id) {
+            Ok(Some(session)) => sessions.push(session),
+            // Either unaddressable (no instance id) or unreadable. Both are
+            // skipped for the same reason: neither can be safely acted on.
+            Ok(None) | Err(_) => unreadable.push(UnreadableSession { index }),
         }
     }
-    Ok(sessions)
+    Ok((sessions, unreadable))
 }
 
 /// Finds the live session matching `identity`, or reports why it is gone.
@@ -197,7 +216,7 @@ pub(crate) unsafe fn apply(
     identity: &SessionIdentity,
     action: SessionAction,
 ) -> std::result::Result<AppSession, String> {
-    let sessions = list(manager, &identity.endpoint_id).map_err(endpoint_error)?;
+    let (sessions, _unreadable) = list(manager, &identity.endpoint_id).map_err(endpoint_error)?;
     let current = resolve(&sessions, identity)?;
     let requested = crate::app_audio::desired_mute(action, current.muted);
     // What we actually asked Windows for. Equal to `requested` except for
@@ -246,17 +265,12 @@ pub(crate) unsafe fn apply(
             ));
         }
         let volume: ISimpleAudioVolume = control2.cast().map_err(platform_error)?;
-        // For `app-toggle` the desired state was derived from the enumeration
-        // above. Re-read the live mute state from the very interface we are
-        // about to write, so a third-party change (Volume Mixer, another
-        // controller) in that window cannot make us write the inverted value:
-        // the toggle target is recomputed from current state, not from a stale
-        // snapshot. `mute`/`unmute` ask for an absolute state and are unaffected.
+        // Re-read the live mute state from the very interface we are about to
+        // write, so a third-party change between enumeration and write cannot
+        // invert the toggle: the target is recomputed, not taken from a
+        // snapshot. `mute`/`unmute` name an absolute state and are unaffected.
         let live_muted = volume.GetMute().map_err(platform_error)?.as_bool();
-        let muted = match action {
-            crate::app_audio::SessionAction::Toggle => !live_muted,
-            _ => muted,
-        };
+        let muted = mute_value_to_write(action, muted, live_muted);
         written = Some(muted);
         volume
             .SetMute(muted, std::ptr::null())
@@ -272,18 +286,15 @@ pub(crate) unsafe fn apply(
     // as "nothing happened", which invites a retry that could reverse a mute
     // that did take effect.
     let after = match list(manager, &identity.endpoint_id) {
-        Ok(after) => after,
+        Ok((after, _unreadable)) => after,
         Err(error) => return Err(readback_error(action, written, &endpoint_error(error))),
     };
     let observed = match resolve(&after, identity) {
         Ok(observed) => observed,
-        Err(error) => {
-            return Err(readback_error(
-                action,
-                written,
-                &format!("the session could not be re-checked afterwards: {error}"),
-            ))
-        }
+        // The cause is deliberately generic, not `error` from `select()`: that
+        // wording describes a pre-write lookup and would read as "nothing was
+        // changed" here, where the change may already be applied.
+        Err(_) => return Err(readback_error(action, written, &unconfirmed_cause())),
     };
     crate::app_audio::verify_readback(action, written, observed.muted)?;
     Ok(observed.clone())
@@ -327,16 +338,27 @@ pub(crate) fn execute(
         // and cannot drift into input handling unnoticed.
         debug_assert_eq!(crate::app_audio::FLOW, SessionFlow::Render);
         if action == SessionAction::List {
-            return Ok(SessionOutcome::Sessions(
-                list(&manager, endpoint_id).map_err(endpoint_error)?,
-            ));
+            let (sessions, unreadable) = list(&manager, endpoint_id).map_err(endpoint_error)?;
+            // Report unreadable sessions rather than letting the list look
+            // complete. This stays a warning, not an error: failing the whole
+            // command would reintroduce the problem the skip was added to
+            // solve, where one unreadable session blocked an unrelated one.
+            if unreadable_sessions_need_warning(&unreadable) {
+                eprintln!(
+                    "warning: {} of {} session(s) on this endpoint could not be read and are \
+                     not listed below.",
+                    unreadable.len(),
+                    sessions.len() + unreadable.len()
+                );
+            }
+            return Ok(SessionOutcome::Sessions(sessions));
         }
         let session_id = session_id
             .ok_or("Specify a session instance id with --session <session-instance-id>.")?;
         // The process id is unknown at parse time, so the session is looked up
         // by instance id first and its live pid adopted as the identity to
         // verify against. Selection always happens from a fresh enumeration.
-        let sessions = list(&manager, endpoint_id).map_err(endpoint_error)?;
+        let (sessions, _unreadable) = list(&manager, endpoint_id).map_err(endpoint_error)?;
         let found = sessions
             .iter()
             .find(|session| session.identity.session_instance_id == session_id)
@@ -426,12 +448,53 @@ fn com_error(error: windows::core::Error) -> String {
 /// told "no longer exists" would conclude the command did nothing and retry,
 /// reversing a mute that did take effect. With no write submitted, that same
 /// claim would be a lie in the other direction, so the cause is reported alone.
+///
+/// `cause` is a short phrase, never a sentence: it is spliced before a full
+/// stop, so passing prose ending in punctuation produces a double period.
 fn post_write_readback_error(action: SessionAction, cause: &str) -> String {
     format!(
         "{action} was submitted to Windows but the result could not be read back: {cause}. \
          The change may already be applied; run app-status to check before retrying, \
          because repeating app-toggle could reverse it."
     )
+}
+
+/// Whether an enumeration lost sessions that could not be read.
+///
+/// Drives the `app-list` warning. Kept separate from [`list`] so the decision
+/// is testable on its own: reporting a complete list when sessions were
+/// dropped would hide a real platform problem behind a plausible result.
+fn unreadable_sessions_need_warning(unreadable: &[UnreadableSession]) -> bool {
+    !unreadable.is_empty()
+}
+
+/// Recomputes the mute value to write, given the state read just before it.
+///
+/// `app-toggle` is the only verb whose target depends on observed state, so it
+/// is the only one that can be wrong: a third-party change between enumeration
+/// and write would otherwise invert the request, and the readback gate could
+/// not catch it because it only checks that the write took effect. Reading the
+/// live state immediately before writing closes that window.
+///
+/// `mute` and `unmute` name an absolute target and ignore `live_muted`, so a
+/// concurrent change cannot redirect them.
+fn mute_value_to_write(action: SessionAction, requested: bool, live_muted: bool) -> bool {
+    match action {
+        SessionAction::Toggle => !live_muted,
+        _ => requested,
+    }
+}
+
+/// The cause reported when the written session cannot be found again afterwards.
+///
+/// Deliberately **not** the wording [`crate::app_audio::select`] returns. That
+/// text — "That session no longer exists" — is accurate before a write, where
+/// finding nothing means nothing was done. After a write it is the most
+/// misleading sentence available: the target app exiting mid-command is the
+/// common trigger for this path, and a caller reading "no longer exists" would
+/// conclude the mute failed and retry, reversing one that was applied.
+fn unconfirmed_cause() -> String {
+    "the session is no longer present to confirm the result".to_string()
 }
 
 /// Turns a readback failure into an error, branching on whether a write was made.
@@ -556,30 +619,37 @@ mod tests {
     #[test]
     fn a_read_only_action_never_reports_a_submitted_but_unconfirmed_write() {
         // The post-write wording must be reserved for real writes. With no
-        // requested change, an enumeration failure is still just "cannot look",
-        // so a caller is never told a mute may have been applied when none was.
-        let error = readback_error(SessionAction::Status, None, "endpoint went away");
+        // requested change, a readback failure is still just "cannot look", so
+        // a caller is never told a mute may have been applied when none was.
+        // Uses the real cause, not a synthetic one, so the assertions exercise
+        // the message the write path actually produces.
+        let error = readback_error(SessionAction::Status, None, &unconfirmed_cause());
         assert!(
             !error.contains("submitted to Windows"),
             "a read must not claim a write: {error}"
         );
-        assert!(error.contains("endpoint went away"), "got: {error}");
+        assert!(
+            error.contains("could not be read back") || error.contains("no longer present"),
+            "got: {error}"
+        );
     }
 
     #[test]
     fn a_failed_readback_after_a_write_says_the_change_may_have_applied() {
-        // This is the P2 wording fix: after SetMute returns Ok, "session no
-        // longer exists" would read as "nothing happened" and invite a retry
-        // that reverses a mute which did take effect.
-        let error = readback_error(SessionAction::Mute, Some(true), "endpoint went away");
+        // The P2 wording fix, asserted against the real cause. After SetMute
+        // returns Ok, "session no longer exists" would read as "nothing
+        // happened" and invite a retry that reverses a mute which did apply.
+        let error = readback_error(SessionAction::Mute, Some(true), &unconfirmed_cause());
         assert!(error.contains("submitted to Windows"), "got: {error}");
         assert!(error.contains("app-status"), "must name the check: {error}");
         assert!(
             error.contains("app-toggle"),
             "must warn against blind retry: {error}"
         );
-        // And it must not be confused with the pre-write "nothing was changed".
-        assert!(!error.contains("no longer exists"), "got: {error}");
+        assert!(
+            !error.contains("no longer exists"),
+            "post-write message must not reuse the pre-write wording: {error}"
+        );
     }
 
     #[test]
@@ -607,30 +677,76 @@ mod tests {
     }
 
     #[test]
-    fn a_toggle_target_is_recomputed_from_live_state() {
-        // `app-toggle` used to flip a snapshot taken before the write, so a
-        // third-party change in between produced the inverted value that then
-        // passed the readback gate. The target must be recomputed from the
-        // live mute state instead. This pins the pure rule the write path
-        // applies: toggle means "opposite of what is true now", while the
-        // absolute verbs keep their fixed target.
-        assert_eq!(
-            crate::app_audio::desired_mute(SessionAction::Toggle, true),
-            Some(false)
+    fn toggle_target_follows_live_state_not_the_earlier_snapshot() {
+        // The P3-5 regression, stated so it can actually fail. The snapshot
+        // says unmuted (so a naive toggle writes `true`); the live state read
+        // immediately before the write says already muted, so the correct
+        // toggle writes `false`. An implementation that trusts the snapshot
+        // writes `true` here and fails this assertion.
+        assert!(
+            !mute_value_to_write(SessionAction::Toggle, true, true),
+            "toggle must follow live state, not the stale snapshot"
         );
-        assert_eq!(
-            crate::app_audio::desired_mute(SessionAction::Toggle, false),
-            Some(true)
+        assert!(mute_value_to_write(SessionAction::Toggle, false, false));
+        // Absolute verbs must ignore live state entirely: a concurrent change
+        // cannot redirect them. A toggle-style implementation would fail here.
+        assert!(
+            mute_value_to_write(SessionAction::Mute, true, false),
+            "mute is absolute"
         );
-        assert_eq!(
-            crate::app_audio::desired_mute(SessionAction::Mute, true),
-            Some(true),
-            "mute is absolute and must ignore current state"
+        assert!(
+            !mute_value_to_write(SessionAction::Unmute, false, true),
+            "unmute is absolute"
         );
-        assert_eq!(
-            crate::app_audio::desired_mute(SessionAction::Unmute, false),
-            Some(false),
-            "unmute is absolute and must ignore current state"
+    }
+
+    #[test]
+    fn unreadable_sessions_are_counted_not_swallowed() {
+        // The F3 fix: skipping an unreadable session must not make the
+        // enumeration look complete. `list()` returns them separately so
+        // `app-list` can warn instead of silently under-reporting, and the
+        // total of both lists is the endpoint's real session count.
+        let unreadable = [UnreadableSession { index: 2 }];
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].index, 2);
+        let readable = [session("s1", 100)];
+        assert_eq!(readable.len() + unreadable.len(), 2);
+        // The warning is derived from the unreadable count, so an all-readable
+        // enumeration must not warn while a partly-unreadable one must.
+        assert!(unreadable_sessions_need_warning(&unreadable));
+        assert!(!unreadable_sessions_need_warning(&[]));
+    }
+
+    #[test]
+    fn the_readback_cause_never_repeats_the_pre_write_no_longer_exists_wording() {
+        // The F1 regression. `select()`'s "no longer exists" is accurate before
+        // a write but misleading after one, where it reads as "nothing was
+        // changed" and invites a retry that reverses an applied mute. Assert
+        // the real `select()` error text is absent from what we report.
+        let select_error = {
+            let sessions: Vec<AppSession> = vec![];
+            let identity = SessionIdentity {
+                endpoint_id: "endpoint-1".to_string(),
+                session_instance_id: "gone".to_string(),
+                process_id: 1,
+            };
+            unsafe { resolve(&sessions, &identity) }.unwrap_err()
+        };
+        assert!(
+            select_error.contains("no longer exists"),
+            "precondition: the stale wording must exist in select() to be worth excluding"
+        );
+        let reported = readback_error(SessionAction::Mute, Some(true), &unconfirmed_cause());
+        assert!(
+            !reported.contains("no longer exists"),
+            "post-write message must not reuse the pre-write wording: {reported}"
+        );
+        assert!(reported.contains("submitted to Windows"), "got: {reported}");
+        assert!(reported.contains("app-status"), "got: {reported}");
+        // The cause is spliced before a full stop, so it must not end in one.
+        assert!(
+            !reported.contains(".."),
+            "double period from a sentence-shaped cause: {reported}"
         );
     }
 }

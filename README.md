@@ -167,7 +167,9 @@ changed, and the command says the session is gone instead.
 
 One session whose state cannot be read is skipped during enumeration rather than
 failing the whole endpoint, so an unreadable session belonging to another
-process cannot make an unrelated session impossible to control.
+process cannot make an unrelated session impossible to control. When that
+happens `app-list` prints a warning naming how many sessions were skipped, so a
+partial list is never presented as a complete one.
 
 ## Product direction
 
