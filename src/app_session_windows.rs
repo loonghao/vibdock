@@ -490,8 +490,6 @@ fn post_write_readback_error(action: SessionAction, cause: &str) -> String {
     )
 }
 
-/// Whether an enumeration lost sessions that could not be read.
-///
 /// Builds the `app-list` warning lines, one per skip reason that occurred.
 ///
 /// Each reason is described in its own words so an expected, by-design
