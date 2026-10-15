@@ -138,6 +138,77 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 - **State is unknown:** check that the service is running. The page resumes polling after a timeout; reopening it renews authorization when needed.
 - **Another application owns the port:** resolve that conflict or explicitly choose a different `VIBDOCK_PORT`. Startup will not terminate the other application or silently select another port.
 
+## Application playback controls (pending Windows source)
+
+These commands are an unreleased implementation under review. Live mutation
+acceptance is on hold; the existing preview download does not include them.
+
+Application playback sessions are separate from microphone mute: they let one
+program's audio be silenced while everything else keeps playing.
+
+```powershell
+.\vibdock.exe app-devices
+.\vibdock.exe app-list --endpoint '<full endpoint ID from app-devices>'
+.\vibdock.exe app-mute --endpoint '<endpoint ID>' --session '<session ID from app-list>'
+```
+
+Use `app-status`, `app-unmute`, or `app-toggle` in place of `app-mute`. Each
+command prints a readable summary followed by one line of JSON describing the
+session that was actually read back, for example:
+
+```json
+{"endpoint_id":"{0.0.0.00000000}.{...}","session_instance_id":"{...}","process_id":1234,"display_name":"Music","process_identity":"pid 1234","muted":true,"volume":1.000000,"volume_valid":true,"active":true}
+```
+
+Choose a session by its `session_instance_id`, shown as `session:` in the
+readable output. Application playback control is deliberately strict:
+
+- Both `--endpoint` and `--session` are required. There is no default endpoint
+  and no "first session" fallback, so a mute cannot land on a device or
+  application you did not name.
+- The session is re-verified immediately before any change. If it has gone away
+  or a different process now owns it, the command fails and says so instead of
+  controlling a different session.
+- Only the mute state is changed, for that one session. The system master mute,
+  the volume of other applications, and microphone state are never touched.
+- Mute state is never reported from the request: it is read back from Windows
+  after the change, and a mismatch is an error.
+- `app-toggle` flips the session's state as read immediately before the write,
+  not a value observed earlier. A third-party change in between cannot make the
+  command write the inverse of what you asked for.
+- A volume the platform does not report is emitted as `"volume":null` with
+  `"volume_valid":false`, never as `0`, so "silent" and "unknown" stay
+  distinguishable.
+
+Applications that split audio across several processes are **not** grouped
+automatically. Where the owning process cannot be resolved, it is reported as
+`unknown process` and you choose explicitly rather than relying on a guess from
+similar names. Only playback (output) sessions are addressed; this is unrelated
+to microphone input mute.
+
+On Linux and macOS these commands report that application audio sessions are
+unimplemented rather than returning an empty list.
+
+**A readback failure after a write is not the same as no change.** Once the mute
+change has been submitted to Windows, a failure to re-read the result is
+reported as "submitted but not confirmed" — the change may already be applied.
+Query `app-status` before retrying; repeating `app-toggle` could reverse a mute
+that did take effect. A failure *before* the write is different: nothing was
+changed, and the command says the session is gone instead.
+
+One session whose state cannot be read is skipped during enumeration rather than
+failing the whole endpoint, so an unreadable session belonging to another
+process cannot make an unrelated session impossible to control. When that
+happens `app-list` prints a warning naming how many sessions were skipped, so a
+partial list is never presented as a complete one.
+
+Two kinds of skipped sessions are reported separately, because only one is a
+problem. Sessions with no session-instance identifier — system sounds, on most
+Windows desktops — are **not addressable** and are never selectable; that is
+expected and is counted but not treated as a fault. A session that is
+addressable but whose state could not be read is a genuine **could not be read**
+warning.
+
 ## Product direction
 
 `vibdock capabilities` reports documentation-derived integration declarations.
@@ -147,7 +218,7 @@ as unknown or unverified rather than claiming a working application connection.
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color.
-- Silence an agent's output during a meeting without changing meeting audio. This requires application-session controls and is not available yet.
+- Silence an agent's output during a meeting without changing meeting audio. Application playback commands are implemented in pending Windows source. Hardware bindings, service API access, and accepted two-application isolation tests remain open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
