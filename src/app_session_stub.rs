@@ -6,14 +6,13 @@
 //! caller could not tell it apart from a real enumeration of an endpoint that
 //! genuinely has no sessions.
 //!
-//! This module is also what keeps the platform-independent contract in
-//! `app_audio` live on every platform: the selector and readback rules are
-//! exercised here rather than only in tests, so the shared types have a
-//! consumer even where the adapter does not exist.
+//! The selector shape rules from the core are still applied here so the
+//! selectors a user supplied are validated on every platform. The identity and
+//! readback rules are deliberately *not* run: a platform that cannot look can
+//! only report that it cannot look, never that a session is gone. Those rules
+//! stay covered platform-independently through the `app_audio` tests.
 
-use crate::app_audio::{
-    self, AppSession, ProcessIdentity, SessionAction, SessionIdentity, SessionOutcome,
-};
+use crate::app_audio::{self, SessionAction, SessionOutcome};
 
 /// Executes an application-session action where no adapter exists.
 ///
@@ -37,33 +36,16 @@ pub(crate) fn execute(
     if endpoint_id.is_empty() {
         return Err("Specify a render endpoint with --endpoint <endpoint-id>.".into());
     }
-    // Run the shared identity and readback rules against an empty observed
-    // set. That is the honest model of a platform that cannot look: nothing
-    // was found, and the reason is reported separately rather than as a
-    // successful empty result. Going through the shared functions here also
-    // means the contract is exercised on every platform, not only in tests.
-    let observed: Vec<AppSession> = Vec::new();
-    if action != SessionAction::List {
-        let identity = SessionIdentity {
-            endpoint_id: endpoint_id.to_string(),
-            session_instance_id: session_id.unwrap_or_default().to_string(),
-            // No process can be resolved, so this stays Unknown rather than
-            // defaulting to a plausible-looking pid.
-            process_id: match ProcessIdentity::Unknown {
-                ProcessIdentity::Known(pid) => pid,
-                ProcessIdentity::Unknown => 0,
-            },
-        };
-        app_audio::select(&observed, &identity)?;
-        // Unreachable with an empty set, but the readback gate is applied
-        // anyway so the rule is enforced on every path: a requested state is
-        // only ever reported after the platform confirms it.
-        let requested = app_audio::desired_mute(action, false);
-        app_audio::verify_readback(action, requested, false)?;
-    }
-    // Name what was asked for alongside why it is unavailable. The request is
-    // described from the selectors rather than from the empty observed set, so
-    // the error says which session was targeted instead of describing nothing.
+    // This platform cannot observe sessions at all, so it must not run the
+    // shared `select`/`verify_readback` rules against an empty observed set:
+    // that would report "that session no longer exists", a claim only a
+    // platform that actually looked could honestly make. The no-adapter
+    // message is returned instead, and the request is described from the
+    // selectors so the error names which session was targeted.
+    //
+    // The shared identity and readback rules remain exercised on every
+    // platform through the `app_audio` tests, so living them here is not what
+    // keeps that contract covered.
     let looked_for = format!(
         "endpoint {endpoint_id} session {}",
         session_id.unwrap_or_default()
@@ -91,6 +73,7 @@ pub(crate) fn render_endpoints() -> crate::Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_audio::{AppSession, ProcessIdentity, SessionIdentity};
 
     #[test]
     fn every_action_reports_unsupported_not_empty() {
@@ -125,6 +108,29 @@ mod tests {
         let result = execute(SessionAction::List, "endpoint", None);
         assert!(result.is_err(), "app-list must not report an empty success");
         assert!(render_endpoints().is_err());
+    }
+
+    #[test]
+    fn a_platform_that_cannot_look_never_claims_a_session_is_gone() {
+        // Reporting "that session no longer exists" is a claim only a platform
+        // that actually enumerated the endpoint can honestly make. This stub
+        // cannot look, so every addressed action must fail with the no-adapter
+        // message rather than a missing-session error. This locks the case that
+        // regressed: running the shared selector against an empty observed set
+        // used to surface "no longer exists" for Status/Mute/Unmute/Toggle.
+        for action in [
+            SessionAction::Status,
+            SessionAction::Mute,
+            SessionAction::Unmute,
+            SessionAction::Toggle,
+        ] {
+            let error = execute(action, "endpoint", Some("session")).unwrap_err();
+            assert!(
+                !error.contains("no longer exists"),
+                "{action} must not claim a session it never looked for: {error}"
+            );
+            assert!(error.contains("unimplemented"), "{action}: {error}");
+        }
     }
 
     /// Builds a session with a resolved owning process, for render checks.

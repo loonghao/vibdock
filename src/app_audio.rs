@@ -364,6 +364,7 @@ pub(crate) fn to_text(outcome: &SessionOutcome) -> String {
 /// resolved by picking a candidate: two sessions claiming one identity means
 /// the platform state is not what this code assumes, and acting on either
 /// could mute the wrong application.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn select<'a>(
     sessions: &'a [AppSession],
     identity: &SessionIdentity,
@@ -398,6 +399,7 @@ pub(crate) fn select<'a>(
 ///
 /// `None` means "read only": no state change is requested, so a read can never
 /// be mistaken for a write.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn desired_mute(action: SessionAction, observed: bool) -> Option<bool> {
     match action {
         SessionAction::Mute => Some(true),
@@ -413,6 +415,7 @@ pub(crate) fn desired_mute(action: SessionAction, observed: bool) -> Option<bool
 /// apply it must surface as an error here rather than as a reported success;
 /// the meeting-isolation guarantee depends on never claiming a state that was
 /// not observed.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn verify_readback(
     action: SessionAction,
     requested: Option<bool>,
