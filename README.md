@@ -73,3 +73,7 @@ Double-click to start one resident local service and open the Web settings. Clos
 WeChat Input and Codex/Mini are the first integration priorities. WorkBuddy and meeting-friendly per-application audio controls follow; Slack and Tencent Meeting scenarios remain integration-specific acceptance work.
 
 The latest product launch design uses a thin Windows launcher/tray executable alongside the console CLI, both sharing one Rust core/service. Current preview downloads still contain only the CLI.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
