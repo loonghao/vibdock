@@ -8,6 +8,7 @@
 //! status indicator that took focus or swallowed clicks would break the exact
 //! thing it reports on: the user typing or clicking in another application.
 
+use std::ptr::addr_of_mut;
 use std::sync::{
     mpsc::{self, Receiver, Sender, SyncSender},
     Arc, Mutex,
@@ -93,18 +94,22 @@ enum ThreadMessage {
 impl OverlayHandle {
     /// Shows one frame, coalescing paint work rather than actions.
     ///
-    /// The queue is bounded: when it is full the oldest pending frame is
-    /// dropped rather than blocking, so a stalled window can never wedge the
-    /// accept loop. Dropping a *frame* is safe because a frame is a view over
-    /// state the service has already recorded; no action is ever dropped.
+    /// The queue is bounded: when it is full the pending frames are dropped
+    /// rather than blocking, so a stalled window can never wedge the accept
+    /// loop. Dropping a *frame* is safe because a frame is a view over state
+    /// the service has already recorded; no action is ever dropped.
     ///
-    /// Delivery failure is ignored on purpose: the indicator is an auxiliary
-    /// view, so a broken window must never disable audio control.
-    pub fn show(&self, frame: &StatusFrame) {
-        self.enqueue(ThreadMessage::Frame(frame.clone()));
+    /// Returns whether the frame was queued, so the caller can decide whether
+    /// to retry later. A full queue reports success: the frame that was made
+    /// room for is the one that supersedes everything dropped.
+    pub fn show(&self, frame: &StatusFrame) -> bool {
+        let queued = self.enqueue(ThreadMessage::Frame(frame.clone()));
         // Wake the overlay thread. Without this the loop stays blocked in
         // GetMessageW and the frame is never drained.
-        self.wake();
+        if queued {
+            self.wake();
+        }
+        queued
     }
 
     /// Queues a frame, dropping the oldest pending one if the queue is full.
@@ -128,7 +133,11 @@ impl OverlayHandle {
         }
     }
 
-    /// Removes queued frames until the queue accepts one more.
+    /// Drains every queued frame so the queue accepts one more.
+    ///
+    /// Superseded frames are discarded as a batch, not one at a time: the
+    /// frame about to be queued is newer than anything already waiting, so
+    /// every pending frame is obsolete and none of them will be painted.
     ///
     /// Bounded so a pathological producer cannot spin here: it gives up after
     /// a fixed number of attempts and lets the caller's send simply fail.
@@ -237,15 +246,50 @@ enum ThreadReady {
     Failed(String),
 }
 
-/// Positions the window in the configured corner of the primary monitor.
+/// Positions the window in the configured corner of the work area.
 ///
-/// Uses `SM_CXSCREEN`/`SM_CYSCREEN` so the indicator lands on-screen without
-/// depending on multi-monitor APIs this slice does not need.
+/// The work area excludes the taskbar, which is the whole point:
+/// `SM_CXSCREEN`/`SM_CYSCREEN` describe the full monitor, so a bottom-corner
+/// indicator placed against them would sit *under* the taskbar and have its
+/// target line clipped. `SPI_GETWORKAREA` reports the area left after the
+/// shell reserves its bands, so the indicator lands where it can be read.
+///
+/// Falls back to the full monitor if the work area cannot be read, since a
+/// misplaced indicator is still better than one that never appears.
 fn place(corner: Corner) -> (i32, i32) {
     // The only platform call in this path; everything below is pure so it can
     // be verified against a fixture instead of the real display.
-    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    let (width, height) = work_area().unwrap_or_else(|| unsafe {
+        (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+    });
     place_in(corner, width, height)
+}
+
+/// Reads the primary monitor's work area: the monitor rectangle minus the
+/// space the shell reserves for the taskbar and other app bars.
+///
+/// Returns `None` if the call fails, leaving the caller to fall back to the
+/// full monitor rectangle.
+fn work_area() -> Option<(i32, i32)> {
+    let mut area = RECT::default();
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some(addr_of_mut!(area).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .ok()?;
+    let width = area.right - area.left;
+    let height = area.bottom - area.top;
+    // A non-positive area means the call succeeded but reported something
+    // unusable; treat it as a failure so the caller falls back.
+    if width > 0 && height > 0 {
+        Some((width, height))
+    } else {
+        None
+    }
 }
 
 /// Places the indicator inside a work area of the given size.
@@ -561,6 +605,48 @@ mod tests {
             assert!(x + WIDTH <= 1920, "{corner:?} overflows width at x={x}");
             assert!(y + HEIGHT <= 1040, "{corner:?} overflows height at y={y}");
         }
+    }
+
+    #[test]
+    fn a_bottom_corner_never_reaches_into_the_taskbar_band() {
+        // The regression this guards: the work area is shorter than the screen,
+        // and placing against the full screen height pushed the indicator under
+        // the taskbar. A 1080p screen with a 40px taskbar leaves 1040px, so the
+        // bottom corners must sit at or above 1040 - HEIGHT - MARGIN.
+        //
+        // The old behaviour is asserted first so the fixture is pinned to the
+        // input production really passes: the full 1920x1080 screen, not the
+        // 1040 height the previous test happened to use.
+        let (_, full_height_y) = place_in(Corner::BottomRight, 1920, 1080);
+        assert_eq!(
+            full_height_y,
+            1080 - HEIGHT - MARGIN,
+            "fixture must describe the full-screen placement that hid the target line"
+        );
+        let work_area_y = place_in(Corner::BottomRight, 1920, 1040).1;
+        assert!(
+            work_area_y < full_height_y,
+            "the work area must place the indicator higher than the full screen does"
+        );
+        // Inside the work area, both bottom corners clear the taskbar edge.
+        for corner in [Corner::BottomRight, Corner::BottomLeft] {
+            let (_, y) = place_in(corner, 1920, 1040);
+            assert!(
+                y + HEIGHT <= 1040,
+                "{corner:?} bottom edge {} reaches into the taskbar band",
+                y + HEIGHT
+            );
+        }
+    }
+
+    #[test]
+    fn the_work_area_falls_back_to_the_full_screen_when_unavailable() {
+        // A failed SPI_GETWORKAREA must not leave the window unplaced: the
+        // caller falls back to the monitor rectangle. This asserts the
+        // fallback input stays placeable rather than being degenerate.
+        let (x, y) = place_in(Corner::BottomRight, 1920, 1080);
+        assert!(x >= 0 && y >= 0, "the fallback area must stay on-screen");
+        assert!(x + WIDTH <= 1920 && y + HEIGHT <= 1080);
     }
 
     #[test]

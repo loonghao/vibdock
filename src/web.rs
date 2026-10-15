@@ -412,7 +412,7 @@ struct OverlayPlaceholder;
 /// Used to enqueue only on a real change. The accept loop runs continuously,
 /// so without this the same frame would be queued on every iteration and the
 /// overlay woken for nothing.
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq, Debug)]
 struct OverlayCursor {
     sequence: u64,
     target: String,
@@ -453,11 +453,9 @@ fn show_latest_frame(
     if cursor.sequence == feedback.sequence && cursor.target == target {
         return;
     }
-    cursor.sequence = feedback.sequence;
-    cursor.target = target.clone();
     let config = FeedbackConfig {
         enabled: true,
-        target_label: target,
+        target_label: target.clone(),
         ..FeedbackConfig::default()
     };
     let view = LastActionView {
@@ -465,7 +463,13 @@ fn show_latest_frame(
         state: feedback.state.clone(),
         error: feedback.error.clone(),
     };
-    overlay.show(&frame_from(&view, &config));
+    // The cursor advances only once the frame is actually queued. Advancing it
+    // first would mark this state as delivered and never retry it if the queue
+    // rejected the frame, leaving the indicator stuck on an older state.
+    if overlay.show(&frame_from(&view, &config)) {
+        cursor.sequence = feedback.sequence;
+        cursor.target = target;
+    }
 }
 
 /// Placeholder for platforms with no overlay to render into.
@@ -922,6 +926,75 @@ fn bootstrap_route(
 mod tests {
     use super::*;
     use std::fs;
+
+    /// The cursor must only advance past state the indicator actually accepted.
+    ///
+    /// Its fields drive the "did anything change?" short-circuit, so advancing
+    /// it before the frame is queued would mark a state as delivered and never
+    /// retry it — the indicator would sit on an older frame after any rejected
+    /// enqueue. The no-overlay case is the reachable half of that contract on
+    /// every platform: nothing to render into means the cursor must stay put.
+    #[test]
+    fn the_cursor_does_not_advance_without_an_overlay() {
+        let feedback = ActionFeedback {
+            sequence: 7,
+            state: Some("live".to_string()),
+            error: None,
+        };
+        let mut cursor = OverlayCursor::default();
+        #[cfg(windows)]
+        let overlay: Option<&crate::feedback_windows::OverlayHandle> = None;
+        #[cfg(not(windows))]
+        let overlay: Option<&OverlayPlaceholder> = None;
+        show_latest_frame(overlay, &feedback, Some("Shure MV7"), &mut cursor);
+        assert_eq!(
+            cursor,
+            OverlayCursor::default(),
+            "the cursor must stay at its initial state so the frame is retried"
+        );
+    }
+
+    /// A cursor whose target changed must still be considered changed, which is
+    /// what makes the retry above converge rather than loop on a stale target.
+    #[test]
+    fn the_cursor_equality_compares_both_sequence_and_target() {
+        let mut cursor = OverlayCursor {
+            sequence: 7,
+            target: "Shure MV7".to_string(),
+        };
+        let same = OverlayCursor {
+            sequence: 7,
+            target: "Shure MV7".to_string(),
+        };
+        let other_target = OverlayCursor {
+            sequence: 7,
+            target: "Rode NT".to_string(),
+        };
+        let other_sequence = OverlayCursor {
+            sequence: 8,
+            target: "Shure MV7".to_string(),
+        };
+        assert_eq!(cursor, same);
+        assert_ne!(
+            cursor, other_target,
+            "a changed target must count as changed"
+        );
+        assert_ne!(
+            cursor, other_sequence,
+            "a changed sequence must count as changed"
+        );
+        // Advancing both fields reaches the state the next enqueue would
+        // record, which is what lets a retried frame converge.
+        cursor.target = "Rode NT".to_string();
+        cursor.sequence = 8;
+        assert_eq!(
+            cursor,
+            OverlayCursor {
+                sequence: 8,
+                target: "Rode NT".to_string(),
+            }
+        );
+    }
 
     #[cfg(windows)]
     #[test]
