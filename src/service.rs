@@ -81,7 +81,7 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 /// Resolves the request token from the `Authorization` header or the
 /// `X-VibDock-Token` fallback used by browser fetches that cannot set
 /// `Authorization` on a preflighted cross-scheme call.
-pub(crate) fn request_token<'a>(headers: &'a [(&'a str, &'a str)]) -> Option<&'a str> {
+pub fn request_token(headers: &[(String, String)]) -> Option<&str> {
     headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
@@ -97,7 +97,7 @@ pub(crate) fn request_token<'a>(headers: &'a [(&'a str, &'a str)]) -> Option<&'a
 ///
 /// `expected` is the token this instance generated; `None` disables the service
 /// write path entirely rather than allowing unauthenticated access.
-pub(crate) fn authorized<'a>(headers: &'a [(&'a str, &'a str)], expected: Option<&str>) -> bool {
+pub fn authorized(headers: &[(String, String)], expected: Option<&str>) -> bool {
     match (expected, request_token(headers)) {
         (Some(expected), Some(supplied)) => constant_time_eq(expected, supplied),
         _ => false,
@@ -921,6 +921,14 @@ mod tests {
         }
     }
 
+    /// Builds an owned header list, matching what the transport produces.
+    fn owned(headers: &[(&str, &str)]) -> Vec<(String, String)> {
+        headers
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    }
+
     #[test]
     fn token_extraction_tolerates_bearer_prefix_and_whitespace() {
         assert_eq!(extract_token("abc"), Some("abc"));
@@ -935,17 +943,17 @@ mod tests {
 
     #[test]
     fn authorization_requires_exact_constant_time_match() {
-        let headers = [("authorization", "Bearer secret")];
+        let headers = owned(&[("authorization", "Bearer secret")]);
         assert!(authorized(&headers, Some("secret")));
         assert!(!authorized(&headers, Some("secre")));
         assert!(!authorized(&headers, Some("secrets")));
         assert!(!authorized(&headers, None));
-        assert!(!authorized(&[], Some("secret")));
+        assert!(!authorized(&Vec::new(), Some("secret")));
     }
 
     #[test]
     fn token_may_arrive_on_fallback_header() {
-        let headers = [("x-vibdock-token", "secret")];
+        let headers = owned(&[("x-vibdock-token", "secret")]);
         assert!(authorized(&headers, Some("secret")));
     }
 

@@ -5,8 +5,6 @@
 //! headers. Writes additionally require the bearer token this instance
 //! generated, so a browser page from another origin cannot mutate state.
 
-use tiny_http::{Header, Method, Response, Server, StatusCode};
-
 use crate::{
     service::{self, Config, Instance},
     Result,
@@ -17,10 +15,6 @@ const PAGE: &str = include_str!("../docs/design/index.html");
 pub fn address() -> String {
     format!("127.0.0.1:{}", service::port())
 }
-/// Upper bound on a request body. Bodies larger than this are rejected with
-/// 413 rather than read in full: an unauthenticated caller must not be able to
-/// make the service allocate or panic on unbounded input.
-const MAX_BODY: usize = 8192;
 
 /// Placeholder body returned by the `/api/config` route, standing in for a
 /// result only the caller can produce because it owns the live state and must
@@ -128,34 +122,33 @@ fn activate_hotkey(config: &Config, _current: &mut Option<()>) -> Activation {
 /// client may cache it.
 type Routed = (u16, &'static str, String);
 
-/// Result of reading a request body within the size bound.
-enum Body {
-    /// A complete, valid UTF-8 body within the limit.
-    Text(String),
-    /// The body exceeded the limit; the remainder was left unread.
-    TooLarge,
+/// HTTP methods the routing table distinguishes.
+///
+/// This replaced the HTTP library's method type when the transport was brought
+/// in-process so every stage could carry a deadline. It is intentionally small:
+/// only the verbs the router actually matches on.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Method {
+    Get,
+    Post,
+    Other,
 }
 
-/// Reads at most `MAX_BODY + 1` bytes to detect oversize, then decodes.
-///
-/// Reading one byte past the limit is what lets us answer 413 instead of
-/// silently accepting a truncated body. The read is bounded before any large
-/// allocation, and a UTF-8 error is reported rather than panicking.
-fn read_bounded_body<R: std::io::Read>(reader: R) -> std::result::Result<Body, ()> {
-    use std::io::Read as _;
-    let mut buffer = Vec::new();
-    let mut limited = reader.take(MAX_BODY as u64 + 1);
-    limited.read_to_end(&mut buffer).map_err(|_| ())?;
-    if buffer.len() > MAX_BODY {
-        return Ok(Body::TooLarge);
+impl Method {
+    /// Maps a request's method token to the routing enum.
+    fn parse(name: &str) -> Method {
+        match name {
+            "GET" => Method::Get,
+            "POST" => Method::Post,
+            _ => Method::Other,
+        }
     }
-    String::from_utf8(buffer).map(Body::Text).map_err(|_| ())
 }
 
 /// Everything that varies per request, grouped so the routing table stays a
 /// pure function of its inputs.
 struct Request<'a> {
-    method: &'a Method,
+    method: Method,
     path: &'a str,
     host: Option<&'a str>,
     origin: Option<&'a str>,
@@ -436,7 +429,7 @@ fn validate_request(request: &Request<'_>, token_configured: bool) -> Option<Rou
             return Some((403, "text/plain; charset=utf-8", "Invalid origin".into()));
         }
     }
-    if !token_configured && request.method != &Method::Get {
+    if !token_configured && request.method != Method::Get {
         return Some((
             405,
             "text/plain; charset=utf-8",
@@ -570,38 +563,31 @@ fn unauthorized() -> Routed {
     )
 }
 
-/// Response headers applied to every reply, generic over the body type
-/// `tiny_http::Response` wraps.
-fn with_headers<T: std::io::Read>(response: Response<T>) -> Response<T> {
-    response
-        .with_header(Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap())
-        .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
-        .with_header(
-            Header::from_bytes(
-                "Content-Security-Policy",
-                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'",
-            )
-            .unwrap(),
-        )
-}
-
 /// Runs the loopback service until the process is interrupted.
+///
+/// Security headers are applied by the transport on every reply; see
+/// `crate::transport::BoundedConnection::respond`.
 ///
 /// When `instance` carries a token the server publishes its address, accepts
 /// authenticated writes, and clears the published record on shutdown. Without a
 /// token it behaves exactly as the previous read-only design preview.
 pub fn serve(instance: Option<Instance>) -> Result<()> {
-    let server = Server::http(address()).map_err(|e| e.to_string())?;
-    serve_server(server, instance)
+    // Bound through our own transport so every connection carries read and
+    // write deadlines from the moment it is accepted.
+    let listener = std::net::TcpListener::bind(address()).map_err(|e| e.to_string())?;
+    serve_listener(listener, instance)
 }
 
 /// Adopts the startup claim without releasing its bound port.
 pub fn serve_listener(listener: std::net::TcpListener, instance: Option<Instance>) -> Result<()> {
-    let server = Server::from_listener(listener, None).map_err(|e| e.to_string())?;
-    serve_server(server, instance)
+    let listener = crate::transport::BoundedListener::new(listener).map_err(|e| e.to_string())?;
+    serve_server(listener, instance)
 }
 
-fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
+fn serve_server(
+    server: crate::transport::BoundedListener,
+    instance: Option<Instance>,
+) -> Result<()> {
     let token = instance.as_ref().map(|i| i.token.clone());
     if let Some(instance) = &instance {
         service::write_instance(instance)?;
@@ -627,7 +613,7 @@ fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
     if let Activation::Failed(message) = &activation {
         eprintln!("WARNING: the saved binding is not armed: {message}");
     }
-    let result = accept_loop(&server, &token, &mut state, &mut binding, activation);
+    let result = accept_loop(server, &token, &mut state, &mut binding, activation);
     if instance.is_some() {
         let _ = service::clear_instance();
     }
@@ -640,7 +626,7 @@ fn serve_server(server: Server, instance: Option<Instance>) -> Result<()> {
 /// unregistered when the loop exits. `activation` is how the current binding
 /// came to be armed, which status reports honestly.
 fn accept_loop(
-    server: &Server,
+    listener: crate::transport::BoundedListener,
     token: &Option<String>,
     state: &mut Config,
     binding: &mut Option<Binding>,
@@ -659,53 +645,45 @@ fn accept_loop(
             }
             feedback.record(result);
         }
-        let Some(mut request) = server.recv_timeout(std::time::Duration::from_millis(20))? else {
+        // Non-blocking accept keeps this loop responsive to hotkeys and to
+        // shutdown, instead of stalling in accept() or on a slow client.
+        // Hand any pending connections to the bounded I/O pool. This never
+        // blocks: a client that connected but sends nothing stays in the
+        // backlog or with its worker, so it cannot stall hotkeys or shutdown.
+        listener.pump()?;
+        // Take at most one finished request per turn, so the loop keeps
+        // returning to the hotkey pump and to shutdown.
+        let Some(incoming) = listener.next_request() else {
+            std::thread::sleep(std::time::Duration::from_millis(20));
             continue;
         };
-        let owned: Vec<(String, String)> = request
-            .headers()
-            .iter()
-            .map(|h| {
-                (
-                    h.field.as_str().as_str().to_owned(),
-                    h.value.as_str().to_owned(),
-                )
-            })
-            .collect();
-        let headers: Vec<(&str, &str)> = owned
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect();
-        let host = find_header(&headers, "host");
-        let origin = find_header(&headers, "origin");
-        let administrator = service::authorized(&headers, token.as_deref());
-        let browser_scope =
-            request.url() == "/api/config" || request.url().starts_with("/api/actions/");
+        let mut connection = incoming.connection;
+        let mut received = incoming.request;
+        let host = received.header("host").map(str::to_string);
+        let origin = received.header("origin").map(str::to_string);
+        let method = Method::parse(received.method.as_str());
+        let path = received.path.clone();
+        let administrator = service::authorized(&received.headers, token.as_deref());
+        let browser_scope = path == "/api/config" || path.starts_with("/api/actions/");
         let authorized = administrator
-            || (browser_scope && browser_auth.accepts(service::request_token(&headers)));
-        let mut body = String::new();
-        let mut body_rejected = false;
-        if request.method() == &Method::Post {
-            match read_bounded_body(request.as_reader()) {
-                Ok(Body::Text(text)) => body = text,
-                // Too large or not valid UTF-8: reject the request. Never
-                // truncate a String at an arbitrary byte offset — that panics
-                // on a multi-byte character boundary.
-                Ok(Body::TooLarge) | Err(()) => body_rejected = true,
-            }
-        }
-        let is_config_write = request.method() == &Method::Post && request.url() == "/api/config";
+            || (browser_scope && browser_auth.accepts(service::request_token(&received.headers)));
+        // The body was read on the worker, so public endpoints that take their
+        // input in the body (one-use bootstrap code redemption) still work.
+        let body_text = received.body.take();
+        let body_rejected = received.body_rejected;
+        let body = body_text.as_deref().unwrap_or("");
+        let is_config_write = method == Method::Post && path == "/api/config";
         let routed_request = Request {
-            method: request.method(),
-            path: request.url(),
-            host,
-            origin,
+            method,
+            path: &path,
+            host: host.as_deref(),
+            origin: origin.as_deref(),
             authorized,
-            body: &body,
+            body,
             body_rejected,
         };
-        let bootstrap = request.method() == &Method::Post
-            && matches!(request.url(), "/api/bootstrap" | "/api/bootstrap/new");
+        let bootstrap = method == Method::Post
+            && matches!(path.as_str(), "/api/bootstrap" | "/api/bootstrap/new");
         let (mut code, mut mime, mut payload) = if bootstrap {
             bootstrap_route(
                 &routed_request,
@@ -717,7 +695,7 @@ fn accept_loop(
             route(&routed_request, state, token.is_some(), &activation)
         };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
-            match commit_live_patch(state, &body, binding, &mut activation) {
+            match commit_live_patch(state, body, binding, &mut activation) {
                 WriteOutcome::Committed(committed) => {
                     // Only now is the change real: the file is on disk, so
                     // update memory and answer with the committed state.
@@ -755,7 +733,7 @@ fn accept_loop(
                 }
             }
         }
-        if code == 200 && request.url() == "/api/config" {
+        if code == 200 && path == "/api/config" {
             payload = feedback.enrich(&payload);
         }
         let is_shutdown = payload == SHUTDOWN_SENTINEL;
@@ -763,13 +741,9 @@ fn accept_loop(
             payload = "{\"stopping\":true}".to_string();
             mime = "application/json";
         }
-        let response = with_headers(
-            Response::from_data(payload.as_bytes()).with_status_code(StatusCode(code)),
-        )
-        .with_header(Header::from_bytes("Content-Type", mime).unwrap());
-        if let Err(error) = request.respond(response) {
-            eprintln!("Response failed: {error}");
-        }
+        // Written under the connection's write deadline, so a client that does
+        // not read its response cannot hold the service open.
+        connection.respond(code, mime, &payload);
         // Answer first, then stop: the caller gets proof the shutdown was
         // accepted by the instance that owns the token. Returning here lets
         // `serve` drop the listener and clear the instance marker, so a later
@@ -820,14 +794,6 @@ fn bootstrap_route(
             "Browser authorization unavailable".into(),
         ),
     }
-}
-
-/// Case-insensitive header lookup over the collected header list.
-fn find_header<'a>(headers: &'a [(&'a str, &'a str)], name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(key, _)| key.eq_ignore_ascii_case(name))
-        .map(|(_, value)| *value)
 }
 
 #[cfg(test)]
@@ -937,7 +903,7 @@ mod tests {
         let body = serde_json::json!({"code": code}).to_string();
         let host = host();
         let mut request = Request {
-            method: &Method::Post,
+            method: Method::Post,
             path: "/api/bootstrap",
             host: Some(&host),
             origin: Some("https://foreign.example"),
@@ -965,7 +931,7 @@ mod tests {
     /// committed through `commit_patch`. These tests cover route validation
     /// and persistence only; live registration rollback is tested separately.
     fn call(
-        method: &Method,
+        method: Method,
         path: &str,
         host: &str,
         origin: Option<&str>,
@@ -1053,7 +1019,7 @@ mod tests {
     }
 
     /// Routes a request whose body was rejected as oversized or undecodable.
-    fn call_rejected(method: &Method, path: &str, service_mode: bool) -> u16 {
+    fn call_rejected(method: Method, path: &str, service_mode: bool) -> u16 {
         let state = Config::default();
         route(
             &Request {
@@ -1076,43 +1042,27 @@ mod tests {
     fn oversized_or_invalid_body_is_rejected_not_panicking() {
         // An unauthenticated caller sending a huge body must get a clean 413,
         // never a panic on a UTF-8 character boundary.
-        assert_eq!(call_rejected(&Method::Post, "/api/config", true), 413);
-        assert_eq!(call_rejected(&Method::Post, "/unrecognized", true), 413);
-    }
-
-    #[test]
-    fn bounded_reader_accepts_valid_body_and_detects_oversize() {
-        use super::Body;
-        match read_bounded_body("{\"device_id\":\"mic\"}".as_bytes()) {
-            Ok(Body::Text(text)) => assert!(text.contains("mic")),
-            _ => panic!("a valid body must be accepted"),
-        }
-        let huge = "界".repeat(30000);
-        assert!(matches!(
-            read_bounded_body(huge.as_bytes()),
-            Ok(Body::TooLarge)
-        ));
-        // Invalid UTF-8 is an error, not a panic.
-        assert!(read_bounded_body([0xffu8, 0xfe, 0xfd].as_slice()).is_err());
+        assert_eq!(call_rejected(Method::Post, "/api/config", true), 413);
+        assert_eq!(call_rejected(Method::Post, "/unrecognized", true), 413);
     }
 
     #[test]
     fn preview_is_read_only_and_rejects_foreign_hosts() {
         assert_eq!(
-            call(&Method::Get, "/", host().as_str(), None, false, "", false).0,
+            call(Method::Get, "/", host().as_str(), None, false, "", false).0,
             200
         );
         assert_eq!(
-            call(&Method::Post, "/", host().as_str(), None, false, "", false).0,
+            call(Method::Post, "/", host().as_str(), None, false, "", false).0,
             405
         );
         assert_eq!(
-            call(&Method::Get, "/", "evil.example", None, false, "", false).0,
+            call(Method::Get, "/", "evil.example", None, false, "", false).0,
             403
         );
         assert_eq!(
             call(
-                &Method::Get,
+                Method::Get,
                 "/missing",
                 host().as_str(),
                 None,
@@ -1124,7 +1074,7 @@ mod tests {
             404
         );
         assert!(call(
-            &Method::Get,
+            Method::Get,
             "/health",
             host().as_str(),
             None,
@@ -1138,7 +1088,7 @@ mod tests {
 
     #[test]
     fn health_reports_platform_audio_support() {
-        let (_, body) = call(&Method::Get, "/health", &host(), None, true, "", true);
+        let (_, body) = call(Method::Get, "/health", &host(), None, true, "", true);
         let health: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(health["audio_control"], cfg!(windows));
     }
@@ -1146,7 +1096,7 @@ mod tests {
     #[test]
     fn service_mode_reports_service_and_accepts_writes() {
         assert!(call(
-            &Method::Get,
+            Method::Get,
             "/health",
             host().as_str(),
             None,
@@ -1158,7 +1108,7 @@ mod tests {
         .contains("\"mode\":\"service\""));
         assert_eq!(
             call(
-                &Method::Post,
+                Method::Post,
                 "/api/config",
                 host().as_str(),
                 None,
@@ -1175,22 +1125,13 @@ mod tests {
     fn writes_require_authentication() {
         for path in ["/api/config", "/api/actions/echo"] {
             assert_eq!(
-                call(
-                    &Method::Post,
-                    path,
-                    host().as_str(),
-                    None,
-                    false,
-                    "{}",
-                    true
-                )
-                .0,
+                call(Method::Post, path, host().as_str(), None, false, "{}", true).0,
                 401
             );
         }
         assert_eq!(
             call(
-                &Method::Get,
+                Method::Get,
                 "/api/config",
                 host().as_str(),
                 None,
@@ -1207,7 +1148,7 @@ mod tests {
     fn foreign_origin_is_rejected() {
         assert_eq!(
             call(
-                &Method::Post,
+                Method::Post,
                 "/api/config",
                 host().as_str(),
                 Some("http://evil.example"),
@@ -1220,7 +1161,7 @@ mod tests {
         );
         assert_eq!(
             call(
-                &Method::Post,
+                Method::Post,
                 "/api/config",
                 host().as_str(),
                 Some("http://127.0.0.1:43128"),
@@ -1282,7 +1223,7 @@ mod tests {
     fn invalid_patch_is_rejected_with_400() {
         assert_eq!(
             call(
-                &Method::Post,
+                Method::Post,
                 "/api/config",
                 host().as_str(),
                 None,
@@ -1303,7 +1244,7 @@ mod tests {
         let state = Config::default();
         let (code, mime, payload) = route(
             &Request {
-                method: &Method::Post,
+                method: Method::Post,
                 path: "/api/config",
                 host: Some(host().as_str()),
                 origin: None,
@@ -1353,7 +1294,7 @@ mod tests {
         // answer 200, so a foreign process on the port cannot impersonate it.
         assert_eq!(
             call(
-                &Method::Get,
+                Method::Get,
                 "/instance",
                 host().as_str(),
                 None,
@@ -1366,7 +1307,7 @@ mod tests {
         );
         assert_eq!(
             call(
-                &Method::Get,
+                Method::Get,
                 "/instance",
                 host().as_str(),
                 None,
@@ -1385,7 +1326,7 @@ mod tests {
         // challenge: it must never be mistaken for a reusable service.
         assert_eq!(
             call(
-                &Method::Get,
+                Method::Get,
                 "/instance",
                 host().as_str(),
                 None,
@@ -1415,7 +1356,7 @@ mod tests {
         });
         for attempt in 0..25 {
             let (code, payload) = call(
-                &Method::Post,
+                Method::Post,
                 "/api/config",
                 host().as_str(),
                 Some("http://127.0.0.1:43128"),
@@ -1441,7 +1382,7 @@ mod tests {
             "/api/actions/command",
         ] {
             assert_eq!(
-                call(&Method::Post, path, host().as_str(), None, true, "{}", true).0,
+                call(Method::Post, path, host().as_str(), None, true, "{}", true).0,
                 404
             );
         }
@@ -1450,11 +1391,13 @@ mod tests {
     #[test]
     fn unknown_methods_are_rejected() {
         assert_eq!(
-            call(&Method::Put, "/", host().as_str(), None, true, "", true).0,
+            // PUT and DELETE are not distinguished: both arrive as Other and
+            // must be rejected with 405, never routed.
+            call(Method::Other, "/", host().as_str(), None, true, "", true).0,
             405
         );
         assert_eq!(
-            call(&Method::Delete, "/", host().as_str(), None, true, "", true).0,
+            call(Method::Other, "/", host().as_str(), None, true, "", true).0,
             405
         );
     }
