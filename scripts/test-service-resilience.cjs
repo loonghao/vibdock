@@ -146,6 +146,13 @@ async function req(route, options = {}) {
       auth: true,
     },
     {
+      name: "trickled authorized content-length",
+      path: "/api/config",
+      chunked: false,
+      auth: true,
+      trickle: true,
+    },
+    {
       name: "unauthorized chunked",
       path: "/api/config",
       chunked: true,
@@ -166,6 +173,7 @@ async function req(route, options = {}) {
     },
   ]) {
     const socket = net.createConnection({ host: "127.0.0.1", port });
+    let trickleTimer;
     let finished = false;
     socket.on("error", () => {
       finished = true;
@@ -187,6 +195,11 @@ async function req(route, options = {}) {
       socket.write(
         `${item.method || "POST"} ${item.path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n${framing}\r\n${item.auth ? "Authorization: Bearer " + token + "\r\n" : ""}Connection: close\r\n\r\n${item.chunked ? "1000\r\n{" : "{"}`,
       );
+      if (item.trickle) {
+        trickleTimer = setTimeout(() => {
+          if (!socket.destroyed) socket.write("x");
+        }, 4000);
+      }
       await pause(80);
       const began = performance.now();
       assert.equal((await req("/health")).status, 200);
@@ -208,6 +221,7 @@ async function req(route, options = {}) {
       failures.push(`${item.name}: ${error.name}: ${error.message}`);
       console.error(`FAIL ${failures.at(-1)}`);
     } finally {
+      clearTimeout(trickleTimer);
       socket.destroy();
     }
     await pause(80);
