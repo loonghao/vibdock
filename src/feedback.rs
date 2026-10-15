@@ -40,6 +40,78 @@ pub struct FeedbackConfig {
     pub target_label: String,
 }
 
+/// Environment variable that turns the indicator on.
+///
+/// The feature is opt-in, so there must be a real way to opt in. This is the
+/// smallest entry point: one documented variable, checked once at startup,
+/// with no new configuration framework.
+pub const ENABLED_ENV: &str = "VIBDOCK_OVERLAY";
+
+/// Values of [`ENABLED_ENV`] that enable the indicator.
+///
+/// Compared case-insensitively so `1`, `on`, and `true` all work; anything
+/// else — including an unset or empty variable — leaves it off.
+const ENABLED_VALUES: [&str; 4] = ["1", "on", "true", "yes"];
+
+/// Corner names accepted by the placement variable.
+const CORNER_VALUES: [(&str, Corner); 4] = [
+    ("bottom-right", Corner::BottomRight),
+    ("bottom-left", Corner::BottomLeft),
+    ("top-right", Corner::TopRight),
+    ("top-left", Corner::TopLeft),
+];
+
+/// Reads the indicator's opt-in state from the environment.
+///
+/// Pure with respect to its argument so it can be verified without touching
+/// the process environment: tests pass an explicit value instead.
+fn enabled_from(raw: Option<&str>) -> bool {
+    let Some(raw) = raw else {
+        // Unset: the default, and the state the feature ships in.
+        return false;
+    };
+    ENABLED_VALUES.contains(&raw.trim().to_ascii_lowercase().as_str())
+}
+
+/// Reads the configured corner from the environment.
+///
+/// An unrecognised name falls back to the default corner rather than failing
+/// startup: placement is a preference, not a precondition.
+fn corner_from(raw: Option<&str>) -> Corner {
+    let Some(raw) = raw else {
+        return Corner::default();
+    };
+    let cleaned = raw.trim().to_ascii_lowercase();
+    CORNER_VALUES
+        .iter()
+        .find(|(name, _)| *name == cleaned)
+        .map(|(_, corner)| *corner)
+        .unwrap_or_default()
+}
+
+/// Resolves the indicator's settings from the process environment.
+///
+/// The only reachable opt-in path for this slice. Both lookups take explicit
+/// values so the resolution is testable without mutating global state.
+pub fn config_from_env(enabled_raw: Option<&str>, corner_raw: Option<&str>) -> FeedbackConfig {
+    FeedbackConfig {
+        enabled: enabled_from(enabled_raw),
+        corner: corner_from(corner_raw),
+        target_label: String::new(),
+    }
+}
+
+/// Resolves the settings from this process's actual environment.
+///
+/// Thin wrapper over [`config_from_env`] so the accept loop has one call and
+/// every rule above stays testable.
+pub fn config_from_process_env() -> FeedbackConfig {
+    config_from_env(
+        std::env::var(ENABLED_ENV).ok().as_deref(),
+        std::env::var("VIBDOCK_OVERLAY_CORNER").ok().as_deref(),
+    )
+}
+
 /// How the last completed action stands.
 ///
 /// Every variant carries both an icon and text. Colour alone is never the
@@ -261,6 +333,72 @@ mod tests {
     fn the_selected_target_stays_visible_in_every_frame() {
         let frame = frame_from(&LastActionView::default(), &config());
         assert_eq!(frame.target, "Shure MV7");
+    }
+
+    #[test]
+    fn the_indicator_is_off_unless_the_environment_opts_in() {
+        // The default must stay off: an unset, empty, or unrecognised value
+        // never draws a window on the user's desktop.
+        for raw in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("off"),
+            Some("false"),
+            Some("no"),
+        ] {
+            assert!(
+                !config_from_env(raw, None).enabled,
+                "{raw:?} must not enable the indicator"
+            );
+        }
+        assert!(!FeedbackConfig::default().enabled);
+    }
+
+    #[test]
+    fn documented_values_enable_the_indicator() {
+        // A reachable opt-in: each accepted spelling actually turns it on, and
+        // case and surrounding whitespace must not matter.
+        for raw in ["1", "on", "true", "yes", "ON", " True ", "YES"] {
+            assert!(
+                config_from_env(Some(raw), None).enabled,
+                "{raw:?} must enable the indicator"
+            );
+        }
+    }
+
+    #[test]
+    fn every_corner_name_resolves_to_its_corner() {
+        for (name, expected) in [
+            ("bottom-right", Corner::BottomRight),
+            ("bottom-left", Corner::BottomLeft),
+            ("top-right", Corner::TopRight),
+            ("top-left", Corner::TopLeft),
+        ] {
+            assert_eq!(
+                config_from_env(Some("1"), Some(name)).corner,
+                expected,
+                "{name} resolved to the wrong corner"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_corner_falls_back_to_the_default() {
+        // Placement is a preference: an unrecognised name must not prevent the
+        // indicator from starting.
+        assert_eq!(
+            config_from_env(Some("1"), Some("middle")).corner,
+            Corner::default()
+        );
+        assert_eq!(config_from_env(Some("1"), None).corner, Corner::default());
+    }
+
+    #[test]
+    fn the_opt_in_variable_has_a_stable_documented_name() {
+        // The documented entry point. Changing it silently would strand users
+        // who already set it.
+        assert_eq!(ENABLED_ENV, "VIBDOCK_OVERLAY");
     }
 
     #[test]

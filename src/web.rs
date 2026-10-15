@@ -5,8 +5,10 @@
 //! headers. Writes additionally require the bearer token this instance
 //! generated, so a browser page from another origin cannot mutate state.
 
+#[cfg(windows)]
+use crate::feedback::{frame_from, LastActionView};
 use crate::{
-    feedback::{frame_from, FeedbackConfig, LastActionView},
+    feedback::FeedbackConfig,
     service::{self, Config, Instance},
     Result,
 };
@@ -405,17 +407,34 @@ fn start_overlay_if_enabled(_config: &FeedbackConfig) -> Option<OverlayPlacehold
 #[cfg(not(windows))]
 struct OverlayPlaceholder;
 
+/// What the indicator was last asked to show.
+///
+/// Used to enqueue only on a real change. The accept loop runs continuously,
+/// so without this the same frame would be queued on every iteration and the
+/// overlay woken for nothing.
+#[derive(Default, PartialEq, Eq)]
+struct OverlayCursor {
+    sequence: u64,
+    target: String,
+}
+
 /// Renders the latest completed action into the indicator, if one is running.
 ///
 /// Pure view over state the service already recorded: this never performs an
 /// action and never queries the platform. The target label is resolved from
 /// the configured device id so the indicator always says which microphone an
 /// action applied to rather than showing a bare state.
+///
+/// Enqueues only when the sequence or the target changed, so an idle loop
+/// costs one comparison per iteration instead of a queue send and a thread
+/// wake. Actions are never dropped: `sequence` advances on every action, so a
+/// changed sequence always enqueues.
 #[cfg(windows)]
 fn show_latest_frame(
     overlay: Option<&crate::feedback_windows::OverlayHandle>,
     feedback: &ActionFeedback,
     device_id: Option<&str>,
+    cursor: &mut OverlayCursor,
 ) {
     let Some(overlay) = overlay else {
         return;
@@ -430,6 +449,12 @@ fn show_latest_frame(
         })
         .unwrap_or("No target selected")
         .to_string();
+    // Nothing changed since the last enqueue: skip the send and the wake.
+    if cursor.sequence == feedback.sequence && cursor.target == target {
+        return;
+    }
+    cursor.sequence = feedback.sequence;
+    cursor.target = target.clone();
     let config = FeedbackConfig {
         enabled: true,
         target_label: target,
@@ -449,6 +474,7 @@ fn show_latest_frame(
     _overlay: Option<&OverlayPlaceholder>,
     _feedback: &ActionFeedback,
     _device_id: Option<&str>,
+    _cursor: &mut OverlayCursor,
 ) {
 }
 
@@ -714,10 +740,12 @@ fn accept_loop(
 ) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut feedback = ActionFeedback::default();
-    // The indicator is opt-in. When it is off, no overlay thread starts and no
-    // window is ever created, so the default is observationally identical to
-    // the service as it was before this feature existed.
-    let overlay = start_overlay_if_enabled(&FeedbackConfig::default());
+    // The indicator is opt-in, resolved from the documented environment
+    // variable. When it is off, no overlay thread starts and no window is ever
+    // created, so the default is observationally identical to the service as
+    // it was before this feature existed.
+    let overlay = start_overlay_if_enabled(&crate::feedback::config_from_process_env());
+    let mut overlay_cursor = OverlayCursor::default();
     loop {
         // Deliver any hotkey press that arrived since the last request. A
         // Win32 binding only reaches us through this thread's message queue,
@@ -729,10 +757,16 @@ fn accept_loop(
             }
             feedback.record(result);
         }
-        // Repaint the indicator from the completed action. This renders only
-        // the latest frame, which coalesces paint work; every action has
-        // already advanced the sequence above, so none is ever dropped here.
-        show_latest_frame(overlay.as_ref(), &feedback, state.device_id.as_deref());
+        // Repaint the indicator from the completed action. This enqueues only
+        // when the sequence or target changed, and the overlay coalesces
+        // pending frames to the newest; every action has already advanced the
+        // sequence above, so none is ever dropped here.
+        show_latest_frame(
+            overlay.as_ref(),
+            &feedback,
+            state.device_id.as_deref(),
+            &mut overlay_cursor,
+        );
         // Non-blocking accept keeps this loop responsive to hotkeys and to
         // shutdown, instead of stalling in accept() or on a slow client.
         // Hand any pending connections to the bounded I/O pool. This never
