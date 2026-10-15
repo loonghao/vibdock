@@ -17,8 +17,8 @@
 //!
 //! A request that exceeds a deadline is answered with an error status and the
 //! connection is dropped. Nothing here spawns unbounded threads or forgets a
-//! blocking task: each connection is handled to completion on the calling
-//! thread, within its deadlines, and then closed.
+//! blocking task: a fixed worker pool owns socket I/O while the action thread
+//! routes requests and enqueues responses.
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -87,20 +87,45 @@ pub struct BoundedListener {
     /// its own deadlines on the stream it takes.
     pending: std::sync::mpsc::SyncSender<std::net::TcpStream>,
     /// Fully read requests, ready for the action loop.
-    ready: std::sync::mpsc::Receiver<Incoming>,
+    ready: std::sync::mpsc::Receiver<ReadyRequest>,
     /// Signals the workers to stop when the listener is dropped.
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A request that has been fully read and is ready to route.
 ///
-/// The connection travels with it so the action loop can write the response
-/// without ever performing a blocking read itself.
+/// The worker retains the connection while the action loop prepares its reply.
 pub struct Incoming {
     /// The parsed request head and body.
     pub request: Received,
     /// The live connection, for writing the reply.
     pub connection: BoundedConnection,
+}
+
+/// A complete request and its nonblocking response handoff.
+pub struct ReadyRequest {
+    pub request: Received,
+    pub connection: Reply,
+}
+
+/// One response slot; shutdown can wait for its worker to finish before exit.
+pub struct Reply {
+    sender: std::sync::mpsc::SyncSender<(u16, String, String)>,
+    completed: std::sync::mpsc::Receiver<()>,
+}
+
+impl Reply {
+    pub fn respond(&mut self, status: u16, mime: &str, payload: &str) {
+        let _ = self
+            .sender
+            .try_send((status, mime.to_string(), payload.to_string()));
+    }
+
+    pub fn finish(&self) -> std::io::Result<()> {
+        self.completed
+            .recv_timeout(WRITE_TIMEOUT)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::TimedOut, error))
+    }
 }
 
 impl BoundedListener {
@@ -109,15 +134,14 @@ impl BoundedListener {
         listener.set_nonblocking(true)?;
         let (pending_tx, pending_rx) =
             std::sync::mpsc::sync_channel::<std::net::TcpStream>(QUEUE_DEPTH);
-        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Incoming>(QUEUE_DEPTH);
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<ReadyRequest>(QUEUE_DEPTH);
         let pending_rx = std::sync::Arc::new(std::sync::Mutex::new(pending_rx));
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         for _ in 0..MAX_WORKERS {
             let pending_rx = pending_rx.clone();
             let ready_tx = ready_tx.clone();
             let stop = stop.clone();
-            // Each worker is a named thread with one job: read a single
-            // connection to completion, under deadlines, then hand it over.
+            // Socket reads and writes stay on the same bounded worker.
             std::thread::Builder::new()
                 .name("vibdock-io".to_string())
                 .spawn(move || {
@@ -135,11 +159,27 @@ impl BoundedListener {
                             continue;
                         };
                         if let Some(incoming) = connection.read_fully() {
-                            // If the action loop is gone the connection is
-                            // dropped here, which closes the socket.
-                            if ready_tx.send(incoming).is_err() {
+                            let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+                            let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+                            let mut connection = incoming.connection;
+                            if ready_tx
+                                .send(ReadyRequest {
+                                    request: incoming.request,
+                                    connection: Reply {
+                                        sender: reply_tx,
+                                        completed: done_rx,
+                                    },
+                                })
+                                .is_err()
+                            {
                                 return;
                             }
+                            if let Ok((status, mime, payload)) =
+                                reply_rx.recv_timeout(WRITE_TIMEOUT)
+                            {
+                                connection.respond(status, &mime, &payload);
+                            }
+                            let _ = done_tx.send(());
                         }
                     }
                 })
@@ -178,8 +218,8 @@ impl BoundedListener {
     /// Takes the next fully read request, or `None` if none is ready.
     ///
     /// Never blocks on a client: the read already happened on a worker thread,
-    /// so the action loop only routes and writes.
-    pub fn next_request(&self) -> Option<Incoming> {
+    /// so the action loop only routes and enqueues its response.
+    pub fn next_request(&self) -> Option<ReadyRequest> {
         self.ready.try_recv().ok()
     }
 }
@@ -317,7 +357,7 @@ impl BoundedConnection {
         })
     }
 
-    /// Reads the body, but only after the caller has authorized the request.
+    /// Reads the body under the connection's remaining read deadline.
     ///
     /// Bounded by both the byte cap and the remaining read deadline. A body
     /// that is absent, oversized, not valid UTF-8, or too slow is reported as
@@ -388,27 +428,21 @@ fn read_until_blank_line<R: BufRead>(
                 "connection closed before the request head ended",
             ));
         }
-        // Find the blank line that ends the head. `consumed` counts bytes taken
-        // from the buffer, including the terminating CRLF CRLF, so the body
-        // that follows is left intact for the next read.
-        let mut consumed = available.len();
+        let mut consumed = 0;
         let mut done = false;
-        for (index, window) in available.windows(4).enumerate() {
-            if window == b"\r\n\r\n" {
-                out.extend_from_slice(&available[..index + 4]);
-                consumed = index + 4;
+        for byte in available {
+            out.push(*byte);
+            consumed += 1;
+            if out.len() > limit {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "request head too large",
+                ));
+            }
+            if out.ends_with(b"\r\n\r\n") {
                 done = true;
                 break;
             }
-        }
-        if !done {
-            out.extend_from_slice(available);
-        }
-        if out.len() > limit {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "request head too large",
-            ));
         }
         reader.consume(consumed);
         if done {
@@ -594,6 +628,49 @@ fn read_line<R: Read>(reader: &mut R, out: &mut Vec<u8>, started: Instant) -> st
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn split_header_terminators_preserve_the_body() {
+        let mut head = b"GET / HTTP/1.1\r\nX-Pad: ".to_vec();
+        head.resize(8190, b'x');
+        head.extend_from_slice(b"\r\n\r\n");
+        let mut input = head.clone();
+        input.extend_from_slice(b"BODY");
+        for capacity in [1, 2, 3, 4, 8192] {
+            let mut reader = BufReader::with_capacity(capacity, Cursor::new(&input));
+            let mut actual = Vec::new();
+            read_until_blank_line(&mut reader, &mut actual, MAX_HEAD).unwrap();
+            assert_eq!(actual, head);
+            let mut body = Vec::new();
+            reader.read_to_end(&mut body).unwrap();
+            assert_eq!(body, b"BODY");
+        }
+    }
+
+    #[test]
+    fn response_handoff_does_not_wait_for_a_nonreading_client() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let transport = BoundedListener::new(listener).unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let started = Instant::now();
+        let mut request = loop {
+            transport.pump().unwrap();
+            if let Some(request) = transport.next_request() {
+                break request;
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let payload = "x".repeat(8 * 1024 * 1024);
+        let started = Instant::now();
+        request.connection.respond(200, "text/plain", &payload);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        client.shutdown(std::net::Shutdown::Both).unwrap();
+    }
 
     #[test]
     fn expired_read_deadline_does_not_wait_for_a_socket() {

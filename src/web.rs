@@ -741,14 +741,14 @@ fn accept_loop(
             payload = "{\"stopping\":true}".to_string();
             mime = "application/json";
         }
-        // Written under the connection's write deadline, so a client that does
-        // not read its response cannot hold the service open.
+        // Socket writes run on the worker; routing never waits for the client.
         connection.respond(code, mime, &payload);
         // Answer first, then stop: the caller gets proof the shutdown was
         // accepted by the instance that owns the token. Returning here lets
         // `serve` drop the listener and clear the instance marker, so a later
         // launch does not see a stale record for a port nobody holds.
         if is_shutdown {
+            connection.finish()?;
             return Ok(());
         }
     }
