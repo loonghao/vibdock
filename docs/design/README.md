@@ -31,7 +31,7 @@ Meeting presets should let a user mute an agent's playback while continuing Slac
 
 Distinguish trigger received, action pending, verified success, shortcut dispatched without state verification, and failure. Keep the controlled target visible. A desktop overlay must be non-focus-stealing and mouse-transparent; the current prototype simulates it inside the browser only.
 
-Status: the corner status indicator is implemented on Windows behind an explicit opt-in that defaults to off. Enable it with `VIBDOCK_OVERLAY=1` (`on`, `true`, `yes` accepted); `VIBDOCK_OVERLAY_CORNER` chooses `bottom-right` (default), `bottom-left`, `top-right`, or `top-left`. It is a separate non-activating, mouse-transparent window showing the last completed action (`LIVE`, `MUTED`, a real failure, or unknown) together with the selected target. It renders state the service already recorded and never performs or invents an action; a status reports success only from a verified platform readback. The optional breathing border remains **planned** and is not implemented.
+Status: the corner status indicator is implemented on Windows behind an explicit opt-in that defaults to off. Enable it with `VIBDOCK_OVERLAY=1` (`on`, `true`, `yes` accepted); `VIBDOCK_OVERLAY_CORNER` chooses `bottom-right` (default), `bottom-left`, `top-right`, or `top-left`. It is a separate non-activating, mouse-transparent window showing the last completed action (`LIVE`, `MUTED`, a real failure, or unknown) together with the target captured when that action completed. It renders state the service already recorded and never performs or invents an action; a status reports success only from a verified platform readback. The optional breathing border remains **planned** and is not implemented.
 
 It is placed in the taskbar-free work area of the primary monitor, so a left, top, or bottom taskbar is excluded. That work area is a preference, not a guarantee: if `SPI_GETWORKAREA` cannot be read the window falls back to the full monitor rectangle, which spans any taskbar band, on the grounds that a misplaced indicator is still better than one that never appears. Multi-monitor placement is not handled — only the primary monitor is considered.
 
@@ -43,7 +43,7 @@ Adapters declare actions, scope, prerequisites, and state-query capability. CLI 
 
 ## Prototype limits
 
-Design-preview mode uses mock devices and browser-local drafts. Authenticated service mode can read real Windows capture devices and persist configuration. Platform integrations and global hotkey activation remain pending.
+Design-preview mode uses mock devices and browser-local drafts. Authenticated service mode can read real Windows capture devices, persist configuration, and register a configurable Windows global shortcut. Physical hardware delivery and platform voice integrations remain unverified.
 
 Bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`, so they survive a reload or reopen in the same browser. This is a draft, not the authoritative configuration: it is per-browser and is not shared with the resident service.
 
