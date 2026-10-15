@@ -28,4 +28,4 @@ Exit 0 means all checks passed; exit 1 means a failed acceptance case; exit 2 me
 
 ## Current baseline
 
-Before the bounded transport fix, the original nine cases had three passing controls and six failures. The latest candidate passes those nine, but the added trickle case fails: a fresh socket timeout extends the total request deadline. Keep the test change in draft until the transport candidate passes every case independently, then add it to the Windows CI gate. Ordinary Rust unit tests or static platform checks do not replace this boundary check.
+Before the bounded transport fix, the original nine cases had three passing controls and six failures. The added trickle case exposed a renewed socket timeout extending the total deadline; the total-deadline fix passes all ten locally. Windows CI runs this script against its freshly built release executable. Hosted execution still requires successful job results; local tests do not prove hosted CI passed. Ordinary Rust unit tests or static platform checks do not replace this boundary check.
