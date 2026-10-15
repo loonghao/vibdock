@@ -197,10 +197,32 @@ impl Drop for BoundedListener {
 /// socket and all under the same read deadline.
 pub struct BoundedConnection {
     stream: std::net::TcpStream,
-    reader: Option<BufReader<std::net::TcpStream>>,
+    reader: Option<BufReader<DeadlineReader>>,
     /// Headers from the head, available before the body is read.
     head_headers: Vec<(String, String)>,
     started: Instant,
+}
+
+struct DeadlineReader {
+    stream: std::net::TcpStream,
+    started: Instant,
+}
+
+impl Read for DeadlineReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        // A per-read timeout must never renew the request's total budget.
+        let remaining = READ_TIMEOUT
+            .checked_sub(self.started.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "request read deadline exceeded",
+                )
+            })?;
+        self.stream.set_read_timeout(Some(remaining))?;
+        self.stream.read(buffer)
+    }
 }
 
 impl BoundedConnection {
@@ -254,7 +276,10 @@ impl BoundedConnection {
         let Ok(clone) = self.stream.try_clone() else {
             return Handled::Skip;
         };
-        let mut reader = BufReader::new(clone);
+        let mut reader = BufReader::new(DeadlineReader {
+            stream: clone,
+            started: self.started,
+        });
         // Read the request line plus headers, bounded by head size.
         let mut head = Vec::new();
         let head_ok = read_until_blank_line(&mut reader, &mut head, MAX_HEAD);
@@ -569,6 +594,21 @@ fn read_line<R: Read>(reader: &mut R, out: &mut Vec<u8>, started: Instant) -> st
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn expired_read_deadline_does_not_wait_for_a_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = DeadlineReader {
+            stream,
+            started: Instant::now() - READ_TIMEOUT,
+        };
+        assert_eq!(
+            reader.read(&mut [0]).unwrap_err().kind(),
+            std::io::ErrorKind::TimedOut
+        );
+    }
 
     /// (method, path, headers) parsed from an in-memory request head.
     type ParsedHead = (String, String, Vec<(String, String)>);
