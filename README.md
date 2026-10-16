@@ -194,10 +194,10 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 - **State is unknown:** check that the service is running. The page resumes polling after a timeout; reopening it renews authorization when needed.
 - **Another application owns the port:** resolve that conflict or explicitly choose a different `VIBDOCK_PORT`. Startup will not terminate the other application or silently select another port.
 
-## Application playback controls (pending Windows source)
+## Application playback controls (unreleased Windows source)
 
-These commands are an unreleased implementation under review. Live mutation
-acceptance is on hold; the existing preview download does not include them.
+These commands are implemented in current source. Representative live mutation
+acceptance remains pending; the published v0.1.0 download does not include them.
 
 Application playback sessions are separate from microphone mute: they let one
 program's audio be silenced while everything else keeps playing.
@@ -274,7 +274,7 @@ as unknown or unverified rather than claiming a working application connection.
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
-- Silence an agent's output during a meeting without changing meeting audio. Application playback commands are implemented in pending Windows source. Hardware bindings, service API access, and accepted two-application isolation tests remain open.
+- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. Hardware bindings for these playback actions and accepted two-application isolation tests remain open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
