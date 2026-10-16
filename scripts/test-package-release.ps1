@@ -40,6 +40,12 @@ function New-Case([string]$Name, [string]$Target) {
     $release = Join-Path $dir "target/$Target/release"
     New-Item -ItemType Directory -Path $release -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $dir 'README.md') -Value 'VibDock' -NoNewline
+    Set-Content -LiteralPath (Join-Path $dir 'LICENSE') -Value 'MIT fixture' -NoNewline
+    foreach ($folder in @('assets', 'docs')) {
+        $nested = Join-Path $dir $folder
+        New-Item -ItemType Directory -Path $nested -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $nested 'fixture.txt') -Value 'fixture' -NoNewline
+    }
     return $dir
 }
 
@@ -93,7 +99,7 @@ $winTarget = 'x86_64-pc-windows-msvc'
 $unixTarget = 'x86_64-unknown-linux-gnu'
 
 # 1. Windows complete: both entry points + README, correct subsystems, LF sidecar.
-Assert-Case 'windows complete archive includes both entries + README' {
+Assert-Case 'windows complete archive includes entries, license, assets and docs' {
     $dir = New-Case 'win-complete' $winTarget
     $rel = Join-Path $dir "target/$winTarget/release"
     New-PeStub (Join-Path $rel 'vibdock.exe') 3
@@ -105,9 +111,14 @@ Assert-Case 'windows complete archive includes both entries + README' {
     $extract = Join-Path $dir 'extract'
     Expand-Archive -LiteralPath $zip -DestinationPath $extract
     $entries = Get-ChildItem -LiteralPath $extract -Name | Sort-Object
-    $expected = @('README.md', 'vibdock-launcher.exe', 'vibdock.exe') | Sort-Object
+    $expected = @('README.md', 'LICENSE', 'assets', 'docs', 'vibdock-launcher.exe', 'vibdock.exe') | Sort-Object
     if (($entries -join ',') -ne ($expected -join ',')) {
         return @{ Success = $false; Detail = "entries: $($entries -join ',')" }
+    }
+    foreach ($folder in @('assets', 'docs')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $extract "$folder/fixture.txt") -PathType Leaf)) {
+            return @{ Success = $false; Detail = "nested $folder content missing" }
+        }
     }
     $bytes = [IO.File]::ReadAllBytes("$zip.sha256")
     if ($bytes[-1] -ne 0x0A -or $bytes[-2] -eq 0x0D) { return @{ Success = $false; Detail = 'sidecar not LF-terminated' } }
@@ -156,6 +167,15 @@ Assert-Case 'windows non-PE CLI is rejected' {
     New-PeStub (Join-Path $rel 'vibdock-launcher.exe') 2
     $run = Invoke-Package $dir $winTarget 'vibdock.exe' 'vibdock-launcher.exe'
     return Assert-FailsWith $run 'DOS executable header'
+}
+
+Assert-Case 'windows missing LICENSE is rejected' {
+    $dir = New-Case 'win-missing-license' $winTarget
+    New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock.exe") 3
+    New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock-launcher.exe") 2
+    Remove-Item -LiteralPath (Join-Path $dir 'LICENSE')
+    $run = Invoke-Package $dir $winTarget 'vibdock.exe' 'vibdock-launcher.exe'
+    return Assert-FailsWith $run 'LICENSE'
 }
 
 # 6. Windows missing README must fail.
@@ -256,6 +276,7 @@ function New-WindowsArchive([string]$Out, [bool]$WithLauncher, [int]$LauncherSub
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     New-PeStub (Join-Path $stage 'vibdock.exe') 3
     if ($WithLauncher) { New-PeStub (Join-Path $stage 'vibdock-launcher.exe') $LauncherSubsystem }
+    Set-Content -LiteralPath (Join-Path $stage 'LICENSE') -Value 'MIT fixture' -NoNewline
     if ($WithReadme) { Set-Content -LiteralPath (Join-Path $stage 'README.md') -Value 'VibDock' -NoNewline }
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $Out -Force
     Remove-Item -Recurse -Force -LiteralPath $stage

@@ -8,7 +8,7 @@ workflow on all three targets and runnable offline for fixture acceptance when
 hosted Actions are unavailable.
 
 On a Windows target the archive contains BOTH entry points - the console CLI
-(vibdock.exe) and the GUI launcher (vibdock-launcher.exe) - plus README.md, and
+(vibdock.exe) and the GUI launcher (vibdock-launcher.exe) - plus README.md, LICENSE, assets, docs, and
 packaging fails if any is missing. Each Windows executable is verified against
 its PE subsystem: the CLI must be the console subsystem (3) and the launcher the
 GUI subsystem (2), so a miscompiled launcher can never ship as a flashing
@@ -175,6 +175,14 @@ try {
     }
     Copy-Item -LiteralPath $readme -Destination $packagePath
 
+    # Preserve software license notices and all local README links, including
+    # the owner's original artwork provenance and desktop acceptance limits.
+    foreach ($name in @('LICENSE', 'assets', 'docs')) {
+        $source = Join-Path $outputRoot $name
+        if (-not (Test-Path -LiteralPath $source)) { throw "Required release notice/content is missing: $name" }
+        Copy-Item -LiteralPath $source -Destination $packagePath -Recurse
+    }
+
     # Console CLI must be subsystem 3; GUI launcher must be subsystem 2.
     if ($isWindowsTarget) {
         $cliSubsystem = Get-PeSubsystem (Join-Path $packagePath $CliExecutable)
@@ -200,7 +208,7 @@ try {
     # keeps `sha256sum -c` working on every platform.
     "$digest  $archiveName`n" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii -NoNewline
 
-    Write-Output "Packaged $archiveName (entries: $($artifacts -join ', '), README.md)"
+    Write-Output "Packaged $archiveName (entries: $($artifacts -join ', '), README.md, LICENSE, assets, docs)"
 }
 finally {
     # Remove only the unique staging directory created above, and only after

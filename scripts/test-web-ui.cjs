@@ -48,6 +48,7 @@ async function unusedPort() {
       const replay=await fetch(`${origin}/api/bootstrap`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
       assert.equal(replay.status,401,'browser code was reusable');
       const storage=await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}));
+      assert.equal(storage,'{}','fresh browser context persisted data, potentially a session credential');
       for(const secret of redact)assert(!storage.includes(secret),'credential persisted in browser storage');
       const logo = page.getByRole('img',{name:'VibDock 标志'}); await logo.waitFor();
       assert(await logo.evaluate(img=>img.complete&&img.naturalWidth===512),'original SVG did not render');
@@ -77,7 +78,7 @@ async function unusedPort() {
     await page.setContent(`<html><body style="margin:0;display:flex">${images.map(({name,source})=>`<section style="background:${name==='light'?'#10233a':'#faf9f6'};width:400px;height:400px;display:grid;place-content:center"><img alt="VibDock ${name}" width="256" height="256" src="data:image/svg+xml;base64,${source}"></section>`).join('')}</body></html>`);
     for(const image of await page.locator('img').all())assert(await image.evaluate(img=>img.complete&&img.naturalWidth===512));
     await page.screenshot({path:path.join(output,'original-logo-light-dark.png')});
-    fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({sourceRevision:process.env.GITHUB_SHA||null,binarySHA256:crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),browser:await browser.version(),service:'real isolated process',mockedRoutes:false,oneUseHandoff:true,credentialStorage:false,idleShortcutSavedAndReopened:true,results,exclusions:['native Windows launcher','actual audio/hardware','macOS menu bar']},null,2));
+    fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({sourceRevision:process.env.VIBDOCK_SOURCE_REVISION||process.env.GITHUB_SHA||null,binarySHA256:crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),browser:await browser.version(),service:'real isolated process',mockedRoutes:false,oneUseHandoff:true,credentialStorage:false,idleShortcutSavedAndReopened:true,results,exclusions:['native Windows launcher','actual audio/hardware','macOS menu bar']},null,2));
     console.log(`PASS: real service homepage at 1280/390/320px; original logo bytes, alt text, no external requests or JS errors. Browser ${await browser.version()}`);
   } finally {
     if(browser)await browser.close();

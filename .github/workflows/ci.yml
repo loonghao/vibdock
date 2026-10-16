@@ -21,11 +21,14 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      VIBDOCK_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
@@ -49,6 +52,27 @@ jobs:
           fc-match :lang=zh
           npm install --prefix work/browser --no-package-lock --ignore-scripts playwright@1.60.0
           PLAYWRIGHT_MODULE="$PWD/work/browser/node_modules/playwright" CHROMIUM_PATH="$(command -v google-chrome)" node scripts/test-web-ui.cjs target/release/vibdock
+      - name: Verify packaging and create Windows candidate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/test-package-release.ps1
+          $target = 'x86_64-pc-windows-msvc'
+          $release = "target/$target/release"
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          Copy-Item target/release/vibdock.exe,target/release/vibdock-launcher.exe -Destination $release
+          $tag = 'candidate-' + $env:VIBDOCK_SOURCE_REVISION.Substring(0, 12)
+          ./scripts/package-release.ps1 -Tag $tag -Target $target -CliExecutable vibdock.exe -LauncherExecutable vibdock-launcher.exe
+          ./scripts/verify-windows-package.ps1 -Archive "vibdock-$tag-$target.zip" -EvidenceDirectory work/package-check
+      - name: Upload Windows candidate archive
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vibdock-windows-candidate
+          path: |
+            vibdock-candidate-*.zip
+            vibdock-candidate-*.zip.sha256
+          if-no-files-found: error
       - name: Upload desktop and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
