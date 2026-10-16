@@ -92,12 +92,14 @@ impl Poller {
             .spawn(move || {
                 while !worker_stop.load(Ordering::Relaxed) {
                     let port = service::live_instance().map(|instance| instance.port);
-                    match sender.try_send(Observation {
-                        port,
-                        checked: Instant::now(),
-                    }) {
-                        Err(mpsc::TrySendError::Disconnected(_)) => break,
-                        _ => {}
+                    if matches!(
+                        sender.try_send(Observation {
+                            port,
+                            checked: Instant::now()
+                        }),
+                        Err(mpsc::TrySendError::Disconnected(_))
+                    ) {
+                        break;
                     }
                     for _ in 0..10 {
                         if worker_stop.load(Ordering::Relaxed) {
@@ -276,8 +278,8 @@ unsafe fn child(
     SendMessageW(
         window,
         WM_SETFONT,
-        WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize),
-        LPARAM(1),
+        Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
+        Some(LPARAM(1)),
     );
     Ok(())
 }

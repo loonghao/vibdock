@@ -36,3 +36,24 @@ jobs:
       - name: Verify Windows service resilience
         if: runner.os == 'Windows'
         run: node scripts/test-service-resilience.cjs target/release/vibdock.exe
+      - name: Verify native Windows resident panel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-desktop.ps1
+      - name: Verify homepage in a real browser
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          npm install --prefix work/browser --no-package-lock --ignore-scripts playwright@1.60.0
+          PLAYWRIGHT_MODULE="$PWD/work/browser/node_modules/playwright" CHROMIUM_PATH="$(command -v google-chrome)" node scripts/test-web-ui.cjs target/release/vibdock
+      - name: Upload desktop and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-evidence-${{ matrix.os }}
+          path: |
+            work/windows-desktop/*.png
+            work/windows-desktop/report.json
+            work/web-ui/*.png
+            work/web-ui/report.json
+          if-no-files-found: ignore
