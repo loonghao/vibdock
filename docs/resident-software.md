@@ -70,3 +70,7 @@ packaging/signing and actual macOS GUI acceptance before claiming parity. The
 Windows CoreAudio implementation is not used as a macOS substitute. Formal release
 readiness still requires representative real Windows playback and software-state
 acceptance; this increment is a candidate, not a full voice-control release.
+
+The separate [macOS adapter plan](macos-resident-plan.md) names the native APIs,
+identity differences, bundle and logged-in GUI acceptance gates. It is not shipped
+macOS functionality.

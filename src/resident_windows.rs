@@ -670,7 +670,7 @@ impl<'a> PeResources<'a> {
 
     fn rva_bytes(&self, rva: u32, length: usize) -> Option<&'a [u8]> {
         let mut found = None;
-        for section in self.sections.chunks_exact(40) {
+        for section in self.sections.as_chunks::<40>().0.iter() {
             let virtual_address = u32_at(section, 12)?;
             let raw_length = u32_at(section, 16)? as usize;
             let raw_address = u32_at(section, 20)? as usize;
@@ -702,7 +702,7 @@ impl<'a> PeResources<'a> {
             .root
             .get(start..start.checked_add(count.checked_mul(8)?)?)?;
         let mut numeric = BTreeSet::new();
-        for (index, entry) in entries.chunks_exact(8).enumerate() {
+        for (index, entry) in entries.as_chunks::<8>().0.iter().enumerate() {
             let name = u32_at(entry, 0)?;
             if index < names {
                 if name & 0x8000_0000 == 0 {
@@ -725,7 +725,9 @@ impl<'a> PeResources<'a> {
 
     fn id_entry(&self, directory: usize, id: u16) -> Option<u32> {
         self.directory(directory)?
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .find_map(|entry| {
                 (u32_at(entry, 0)? == u32::from(id))
                     .then(|| u32_at(entry, 4))
@@ -753,9 +755,15 @@ impl<'a> PeResources<'a> {
     fn icon(&self) -> Option<Vec<u8>> {
         let groups = Self::subdirectory(self.id_entry(0, 14)?)?; // RT_GROUP_ICON
         let icons = Self::subdirectory(self.id_entry(0, 3)?)?; // RT_ICON
-        for group in self.directory(groups)?.chunks_exact(8).take(MAX_GROUPS) {
+        for group in self
+            .directory(groups)?
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .take(MAX_GROUPS)
+        {
             let languages = Self::subdirectory(u32_at(group, 4)?)?;
-            for language in self.directory(languages)?.chunks_exact(8).take(4) {
+            for language in self.directory(languages)?.as_chunks::<8>().0.iter().take(4) {
                 let language_id = u16::try_from(u32_at(language, 0)?).ok()?;
                 let group = self.resource(u32_at(language, 4)?, 6 + 14 * MAX_ICON_ENTRIES)?;
                 if let Some(icon) = single_ico(group, |id| {
@@ -781,7 +789,7 @@ fn single_ico<'a>(group: &[u8], read: impl Fn(u16) -> Option<&'a [u8]>) -> Optio
         return None;
     }
     let mut best: Option<(&[u8], &[u8], usize)> = None;
-    for entry in group[6..].chunks_exact(14) {
+    for entry in group[6..].as_chunks::<14>().0.iter() {
         let width = usize::from(entry[0]);
         let height = usize::from(entry[1]);
         let length = u32_at(entry, 8)? as usize;

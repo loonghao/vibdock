@@ -252,7 +252,7 @@ pub fn run() -> crate::Result<()> {
                     SetWindowLongPtrW(
                         icon,
                         GWL_STYLE,
-                        (WS_CHILD | WINDOW_STYLE(SS_ICON)).0 as isize,
+                        (WS_CHILD | WINDOW_STYLE(0x0000_0003)/* SS_ICON */).0 as isize,
                     );
                 }
                 child(
