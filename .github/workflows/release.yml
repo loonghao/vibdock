@@ -67,6 +67,7 @@ jobs:
       - run: cargo test --locked --all-targets --target ${{ matrix.target }}
       - run: cargo build --locked --release --target ${{ matrix.target }}
       - name: Package and checksum
+        if: runner.os != 'macOS'
         shell: pwsh
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
@@ -82,6 +83,18 @@ jobs:
             -Target $env:RELEASE_TARGET `
             -CliExecutable $env:CLI_EXECUTABLE `
             -LauncherExecutable $env:LAUNCHER_EXECUTABLE
+      - name: Package macOS native application
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          VIBDOCK_SOURCE_REVISION: ${{ needs.release-please.outputs.sha }}
+        run: |
+          python3 scripts/test-macos-package.py
+          python3 scripts/package-macos.py --tag "$RELEASE_TAG" --target "$RELEASE_TARGET" --binary-directory "target/$RELEASE_TARGET/release"
+          python3 scripts/test-macos-desktop.py
+          cp work/macos-package/vibdock-*.zip work/macos-package/vibdock-*.zip.sha256 .
       - name: Upload binaries
         shell: pwsh
         env:
@@ -90,6 +103,6 @@ jobs:
           RELEASE_TARGET: ${{ matrix.target }}
         run: |
           $package = "vibdock-$env:RELEASE_TAG-$env:RELEASE_TARGET"
-          $archive = if ($IsWindows) { "$package.zip" } else { "$package.tar.gz" }
+          $archive = if ($IsWindows -or $IsMacOS) { "$package.zip" } else { "$package.tar.gz" }
           gh release upload "$env:RELEASE_TAG" $archive "$archive.sha256" --clobber
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

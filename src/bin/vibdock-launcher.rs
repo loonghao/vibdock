@@ -1,5 +1,4 @@
-//! Windows launcher/tray entry point: a GUI-subsystem executable with no
-//! console flash on double-click.
+//! Native desktop entry: Windows panel/tray and macOS AppKit panel/menu bar.
 //!
 //! This binary is deliberately thin. It ensures a resident service is running
 //! (reusing an authenticated one if there is), shows an interactive floating panel, and stays in the notification area.
@@ -26,7 +25,16 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        let acceptance = args.len() == 1 && args[0] == "--macos-native-acceptance";
+        if !args.is_empty() && !acceptance {
+            return Err("Unsupported VibDock launcher argument.".into());
+        }
+        vibdock::macos_launcher::run(acceptance)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         // No notification area to host the tray, so the launcher cannot
         // fulfil its contract here. Saying so is honest; pretending to start
@@ -114,6 +122,20 @@ fn wait_for_service() -> Result<()> {
 
 /// Shows an error dialog, since a GUI-subsystem binary has no console.
 fn report_error(message: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        // Acceptance must fail with a bounded process result, never a modal
+        // dialog waiting for a person on a hosted runner.
+        if std::env::var("VIBDOCK_NATIVE_ACCEPTANCE").as_deref() == Ok("1")
+            || std::env::args_os()
+                .skip(1)
+                .any(|arg| arg == "--macos-native-acceptance")
+        {
+            eprintln!("ERROR: {message}");
+        } else {
+            vibdock::macos_resident::report_error(message);
+        }
+    }
     #[cfg(windows)]
     {
         use windows::{
@@ -131,7 +153,7 @@ fn report_error(message: &str) {
             );
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         eprintln!("ERROR: {message}");
     }

@@ -9,7 +9,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, saved read-only software observations, two executable entry points, and dual-entry packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, saved read-only Windows software observations, a macOS native menu-bar/Dock/panel shell, and native desktop packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline does not validate the later desktop panel. New desktop candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
@@ -23,7 +23,20 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 | --- | --- | --- |
 | Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, launcher/tray, persistent read-only software entries, dual-entry archive |
 | Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
-| macOS Apple silicon | Design preview | Local configuration service; audio and global shortcuts unsupported |
+| macOS Apple silicon | Design preview | Native .app, menu bar/Dock and floating panel, authenticated local configuration; audio and global shortcuts unsupported |
+
+## macOS native candidate
+
+Current source also packages `VibDock.app`: open it for the original-logo menu
+bar, Dock entry and a small resident panel. Use Settings for the proved local
+configuration page; closing the panel hides it, and Quit stops the verified
+service. Repeated launches restore the same panel, including direct binary
+launches from a second installed copy.
+
+Candidates are not Developer ID signed or notarized. Hosted checks distinguish
+real AppKit own-view rendering from a full desktop/pointer test. macOS per-app
+pinning/icons, audio, voice control and global shortcuts remain unavailable.
+See [macOS native behavior and acceptance](docs/macos-desktop.md) for limits.
 
 ## Configure a hardware shortcut (pending Windows source)
 

@@ -18,6 +18,10 @@ pub mod feedback;
 mod feedback_windows;
 mod instance_proof;
 mod integrations;
+#[cfg(target_os = "macos")]
+pub mod macos_launcher;
+#[cfg(target_os = "macos")]
+pub mod macos_resident;
 pub mod resident_apps;
 #[cfg(windows)]
 mod resident_windows;
