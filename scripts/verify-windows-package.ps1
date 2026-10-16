@@ -5,7 +5,7 @@ Acceptance check for a built VibDock Windows release archive.
 .DESCRIPTION
 Independent of the packaging step: given a Windows release ZIP, extract it and
 assert it contains the console CLI (vibdock.exe), the GUI launcher
-(vibdock-launcher.exe) and README.md, then verify each executable's PE subsystem
+(vibdock-launcher.exe), README.md and LICENSE, then verify each executable's PE subsystem
 (CLI console = 3, launcher GUI = 2). Throws on the first missing artifact or
 wrong subsystem, so a launcher-less or miscompiled archive is rejected.
 
@@ -46,7 +46,7 @@ $inspect = Join-Path $EvidenceDirectory ('inspect-' + [guid]::NewGuid().ToString
 New-Item -ItemType Directory -Path $inspect | Out-Null
 Expand-Archive -LiteralPath $Archive -DestinationPath $inspect -Force
 
-foreach ($name in @('vibdock.exe', 'vibdock-launcher.exe', 'README.md')) {
+foreach ($name in @('vibdock.exe', 'vibdock-launcher.exe', 'README.md', 'LICENSE')) {
     if (-not (Test-Path -LiteralPath (Join-Path $inspect $name) -PathType Leaf)) {
         throw "Windows release archive is missing $name; extracted evidence: $inspect"
     }
@@ -77,4 +77,4 @@ if ($cli -ne 3) { throw "CLI entry must use the console subsystem (3); got $cli"
 $launcher = Get-PeSubsystem (Join-Path $inspect 'vibdock-launcher.exe')
 if ($launcher -ne 2) { throw "Launcher entry must use the GUI subsystem (2); got $launcher" }
 
-Write-Output "PASS: Windows archive includes vibdock.exe (subsystem $cli), vibdock-launcher.exe (subsystem $launcher), and README.md. Evidence: $inspect"
+Write-Output "PASS: Windows archive includes vibdock.exe (subsystem $cli), vibdock-launcher.exe (subsystem $launcher), README.md, and LICENSE. Evidence: $inspect"

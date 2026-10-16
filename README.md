@@ -272,9 +272,9 @@ Conventional Commits on `main` feed release-please. It opens a version/changelog
 
 With the default GitHub token, bot-created release PRs do not automatically trigger PR workflows. Dispatch CI on the release branch and wait for all checks at its current head before merging. A scoped GitHub App token can automate this later. Repository Actions settings must permit workflow-created pull requests.
 
-### Launch behavior planned for the product
+### Resident launch behavior
 
-Double-click to start one resident local service and open the Web settings. Close the page to keep hardware/agent connections alive; use the tray menu to reopen settings or exit. Repeated launches reuse the running instance. The CLI, the tray entry, and the authenticated shutdown that backs the tray Exit item are implemented; a packaged double-click launcher executable is not published yet.
+Double-click to start or reuse one resident service and show its floating control panel. Open Settings from the panel or tray. Closing the panel/page keeps the service alive; Exit VibDock stops it. Repeated launches restore the same panel. The CLI, the tray entry, and the authenticated shutdown that backs the tray Exit item are implemented; a packaged double-click launcher executable is not published yet.
 
 WeChat Input and Codex/Mini are the first integration priorities. WorkBuddy and meeting-friendly per-application audio controls follow; Slack and Tencent Meeting scenarios remain integration-specific acceptance work.
 
