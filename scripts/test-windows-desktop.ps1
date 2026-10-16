@@ -44,7 +44,8 @@ public class VibDockNative {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint index, StringBuilder text, int count, uint flags);
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
   [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr hwnd, string text);
+  [DllImport("user32.dll", EntryPoint="SendMessageW", CharSet=CharSet.Unicode)] public static extern IntPtr SendText(IntPtr hwnd, uint msg, IntPtr w, string text);
+  [DllImport("user32.dll", EntryPoint="SendMessageW", CharSet=CharSet.Unicode)] public static extern IntPtr ReadText(IntPtr hwnd, uint msg, IntPtr w, StringBuilder text);
 }
 '@
 function Start-Entry([string]$Name, [string]$Argument = '') {
@@ -134,12 +135,19 @@ try {
     $resultStyle = [VibDockNative]::GetWindowLongPtr($resultControl, -16).ToInt64()
     if (($resultStyle -band 0x00200804) -ne 0x00200804) { throw 'Playback result is not a scrollable read-only multiline control' }
     $longFixture = "Synthetic overflow fixture; no audio action occurred.`r`n" + (("Fixture line, not a live action result.`r`n") * 14) + 'END OF SYNTHETIC FIXTURE'
-    [void][VibDockNative]::SetWindowText($resultControl, $longFixture)
+    # SetWindowText cannot set a control in another process. WM_SETTEXT and
+    # WM_GETTEXT are system-marshalled messages; confirm the exact fixture is
+    # present before treating a scroll result as native layout evidence.
+    if ([VibDockNative]::SendText($resultControl, 0x000C, [IntPtr]::Zero, $longFixture) -eq [IntPtr]::Zero) { throw 'Synthetic receipt text was not accepted' }
+    $fixtureReadback = [Text.StringBuilder]::new($longFixture.Length + 1)
+    [void][VibDockNative]::ReadText($resultControl, 0x000D, [IntPtr]$fixtureReadback.Capacity, $fixtureReadback)
+    if ($fixtureReadback.ToString() -cne $longFixture) { throw 'Synthetic receipt readback did not match its full text' }
+    if ([VibDockNative]::SendMessage($resultControl, 0x00BA, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -lt 16) { throw 'Synthetic receipt did not produce enough multiline content' } # EM_GETLINECOUNT
     [void][VibDockNative]::SendMessage($resultControl, 0x00B1, [IntPtr]$longFixture.Length, [IntPtr]$longFixture.Length) # EM_SETSEL
     [void][VibDockNative]::SendMessage($resultControl, 0x00B7, [IntPtr]::Zero, [IntPtr]::Zero) # EM_SCROLLCARET
     if ([VibDockNative]::SendMessage($resultControl, 0x00CE, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -le 0) { throw 'Long playback receipt cannot scroll to its final lines' } # EM_GETFIRSTVISIBLELINE
     Save-Window $window 'resident-result-overflow-fixture.png'
-    [void][VibDockNative]::SetWindowText($resultControl, 'No playback action requested.')
+    if ([VibDockNative]::SendText($resultControl, 0x000C, [IntPtr]::Zero, 'No playback action requested.') -eq [IntPtr]::Zero) { throw 'Synthetic receipt cleanup failed' }
 
     [void][VibDockNative]::PostMessage($window, 0x007B, $window, [IntPtr](-1)) # WM_CONTEXTMENU
     $menuWindow = [IntPtr]::Zero
