@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/loonghao/vibdock/compare/v0.2.0...v0.3.0) (2026-10-16)
+
+
+### Features
+
+* add app microphone bindings and software status indicators ([#33](https://github.com/loonghao/vibdock/issues/33)) ([14b7369](https://github.com/loonghao/vibdock/commit/14b7369299a854bbd4104d08e2aac838db92310d))
+
 ## [0.2.0](https://github.com/loonghao/vibdock/compare/v0.1.0...v0.2.0) (2026-10-16)
 
 
