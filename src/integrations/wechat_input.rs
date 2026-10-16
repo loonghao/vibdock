@@ -4,14 +4,12 @@
 //! so no result here implies the local environment was examined. Nothing in the
 //! [`Probe`] output may describe the machine it runs on.
 //!
-//! Evidence basis differs from [`crate::integrations::codex::Codex`] in one
-//! important way: no official source could be retrieved for WeChat Input. The
-//! official site <https://shurufa.weixin.qq.com/> did not resolve, and no
-//! official-domain documentation established a voice shortcut or an automation
-//! API. Under the rule stated in [`crate::capabilities`], a probe that works
-//! purely from documentation must report [`Support::Unknown`] for anything the
-//! documentation does not describe. Here there is no documentation at all, so
-//! every capability sits at [`Support::Unknown`].
+//! Evidence basis differs from [`crate::integrations::codex::Codex`]: no
+//! official source was retrieved during the 2026-10-15 check of
+//! <https://shurufa.weixin.qq.com/>. This is a dated evidence gap, not a claim
+//! about current site availability or the contents of unretrieved documents.
+//! Under [`crate::capabilities`], a documentation-only probe reports
+//! [`Support::Unknown`] when its evidence does not describe a capability.
 //!
 //! A dated, read-only snapshot was taken on one developer host, but it is
 //! historical single-host evidence held in `docs/integrations/wechat-input.md`,
@@ -32,6 +30,7 @@ pub struct WeChatInput;
 /// Official source consulted. Unreachable at the time of writing; recorded so
 /// the gap is traceable rather than silently omitted.
 const SOURCE: &str = "https://shurufa.weixin.qq.com/";
+const SOURCE_CHECK: &str = "No official source was retrieved during the 2026-10-15 check";
 
 const NOT_INSPECTED: &str = "no installed-client capability inspection performed";
 
@@ -49,46 +48,43 @@ impl Probe for WeChatInput {
     fn probe(&self, capability: Capability) -> Finding {
         let detail = match capability {
             Capability::Show => format!(
-                "{SOURCE} was unreachable and no official-domain documentation described a \
-                 programmatic show or focus API. Undocumented, not disproven; {NOT_INSPECTED}. \
+                "{SOURCE_CHECK} ({SOURCE}); a programmatic show or focus API is not \
+                 established by this evidence. Undocumented, not disproven; {NOT_INSPECTED}. \
                  {NO_LOCAL_STATE}."
             ),
             Capability::StartVoice => format!(
                 "A configured trigger must be supplied by the user from their own client \
                  settings; no trigger may be hard-coded, and no default is asserted here. \
-                 {SOURCE} was unreachable and no official source documented a default voice \
-                 shortcut or an external start API, so neither a specific trigger nor \
+                 {SOURCE_CHECK} ({SOURCE}), so neither a specific trigger nor \
                  user-configurability is established by this declaration. Undocumented, not \
                  disproven; {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::EndVoice => format!(
-                "{SOURCE} was unreachable and no official source documented how an in-progress \
-                 voice session ends, or any external API for ending one. Undocumented, not \
-                 disproven; {NOT_INSPECTED}. {NO_LOCAL_STATE}."
+                "{SOURCE_CHECK} ({SOURCE}); how a voice session ends and any external end \
+                 API remain unresolved. Undocumented, not disproven; {NOT_INSPECTED}. \
+                 {NO_LOCAL_STATE}."
             ),
             Capability::AudioIdentity => format!(
-                "Target audio identity requires live readback from an installed client. {SOURCE} \
-                 was unreachable and no public API is documented. Undocumented, not disproven; \
-                 {NOT_INSPECTED}. {NO_LOCAL_STATE}."
+                "Target audio identity requires live readback from an installed client. \
+                 {SOURCE_CHECK} ({SOURCE}); a native API remains unresolved. Undocumented, \
+                 not disproven; {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::InputMute => format!(
                 "Microphone input mute is handled by the device endpoint rather than by this \
-                 integration. {SOURCE} was unreachable and a WeType-native input mute is \
-                 undocumented, not disproven. {NOT_INSPECTED}. {NO_LOCAL_STATE}."
+                 integration. {SOURCE_CHECK} ({SOURCE}); a WeType-native input mute remains \
+                 unresolved. Undocumented, not disproven; {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::AppMute => format!(
-                "{SOURCE} was unreachable and no official source documented an output-mute API \
-                 or a dedicated mute shortcut for this client. Undocumented is not absent; a \
-                 WeType-native output mute remains unverified rather than unsupported. \
-                 {NOT_INSPECTED}. {NO_LOCAL_STATE}."
+                "{SOURCE_CHECK} ({SOURCE}); an output-mute API or dedicated mute shortcut \
+                 remains unresolved. Undocumented is not absent; a WeType-native output mute \
+                 is unknown rather than unsupported. {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::PlaybackSessionMute => format!(
                 "Windows application-playback-session mute is a separate Windows session CLI \
                  under native acceptance hold, out of scope for this integration and carrying \
-                 no WeType action integration; {SOURCE} was unreachable and no official source \
-                 described a WeType-native equivalent. Undocumented, not disproven. Not \
-                 conflated with any WeType-native mute control. {NOT_INSPECTED}. \
-                 {NO_LOCAL_STATE}."
+                 no WeType action integration. {SOURCE_CHECK} ({SOURCE}); a WeType-native \
+                 equivalent remains unresolved. Undocumented, not disproven. Not conflated \
+                 with any WeType-native mute control. {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
         };
         Finding {
@@ -197,7 +193,7 @@ mod tests {
         let report = inspect(&WeChatInput);
         for finding in &report.findings {
             assert!(
-                finding.detail.contains(SOURCE),
+                finding.detail.contains(SOURCE) && finding.detail.contains(SOURCE_CHECK),
                 "{} must cite the official source it could not retrieve",
                 finding.capability.as_str()
             );
