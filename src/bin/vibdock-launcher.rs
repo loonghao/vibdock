@@ -2,9 +2,9 @@
 //! console flash on double-click.
 //!
 //! This binary is deliberately thin. It ensures a resident service is running
-//! (reusing an authenticated one if there is), opens that service's actual
-//! bound URL, and then stays in the notification area as the way back to the
-//! page and the way to stop the service. Closing the browser leaves the
+//! (reusing an authenticated one if there is), shows an interactive floating panel, and stays in the notification area.
+//! Settings opens the service's proved address with a one-use browser code.
+//! Closing the panel or browser leaves the
 //! service running; only the tray Exit item stops it.
 
 // The launcher is GUI-subsystem: double-clicking must not flash a console.
@@ -44,8 +44,6 @@ fn run() -> Result<()> {
         // startup; this process only waits for a service to prove itself.
         start_detached_service()?;
         wait_for_service()?;
-        let url = vibdock::configuration_url()?;
-        open_url(&url);
         tray::run()
     }
 }
@@ -104,44 +102,14 @@ fn sibling_cli() -> Result<std::path::PathBuf> {
 /// Waits until the service we just started is answering.
 #[cfg(windows)]
 fn wait_for_service() -> Result<()> {
-    for _ in 0..100 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
         if vibdock::service::live_instance().is_some() {
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     Err("The resident service did not start.".into())
-}
-
-/// Opens a URL in the user's default browser.
-///
-/// Failure is not fatal: the tray remains, so the user can still open the page
-/// from there or exit.
-#[cfg(windows)]
-fn open_url(url: &str) {
-    #[cfg(windows)]
-    {
-        use windows::{
-            core::PCWSTR,
-            Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-        };
-        let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
-        let verb: Vec<u16> = "open\0".encode_utf16().collect();
-        unsafe {
-            let _ = ShellExecuteW(
-                None,
-                PCWSTR(verb.as_ptr()),
-                PCWSTR(wide.as_ptr()),
-                None,
-                None,
-                SW_SHOWNORMAL,
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = url;
-    }
 }
 
 /// Shows an error dialog, since a GUI-subsystem binary has no console.

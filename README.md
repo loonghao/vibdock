@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/vibdock-symbol-light.svg">
+  <img src="assets/brand/vibdock-symbol.svg" alt="VibDock logo: diamond with a negative-space voice channel" width="88" height="88">
+</picture>
+
 # VibDock
 
 A local-first bridge between hardware controls, voice workflows, and personal AI agents.
