@@ -19,12 +19,13 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     outputs:
       created: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
       sha: ${{ steps.release.outputs.sha }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: release
         with:
           config-file: release-please-config.json
@@ -39,23 +40,25 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            executable: vibdock.exe
+            cli: vibdock.exe
+            launcher: vibdock-launcher.exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            executable: vibdock
+            cli: vibdock
           - os: macos-latest
             target: aarch64-apple-darwin
-            executable: vibdock
+            cli: vibdock
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
       # GITHUB_TOKEN-created tags do not trigger another workflow: publish here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.release-please.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: ${{ matrix.target }}
           components: rustfmt, clippy
@@ -68,24 +71,17 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
           RELEASE_TARGET: ${{ matrix.target }}
-          EXECUTABLE: ${{ matrix.executable }}
+          CLI_EXECUTABLE: ${{ matrix.cli }}
+          LAUNCHER_EXECUTABLE: ${{ matrix.launcher }}
         run: |
-          $package = "vibdock-$env:RELEASE_TAG-$env:RELEASE_TARGET"
-          New-Item -ItemType Directory -Path $package | Out-Null
-          Copy-Item "target/$env:RELEASE_TARGET/release/$env:EXECUTABLE" "$package/"
-          Copy-Item README.md "$package/"
-          if ($IsWindows) {
-            $archive = "$package.zip"
-            Compress-Archive -Path "$package/*" -DestinationPath $archive
-          } else {
-            $archive = "$package.tar.gz"
-            tar -czf $archive -C $package .
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          $digest = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          # Force a single LF terminator so `sha256sum -c` accepts the sidecar on
-          # every platform; Set-Content would emit CRLF on the Windows runner.
-          "$digest  $archive`n" | Set-Content "$archive.sha256" -Encoding ascii -NoNewline
+          # Windows target packages vibdock.exe + vibdock-launcher.exe + README.md,
+          # fails on any missing artifact, and verifies the console/GUI subsystems.
+          # Unix targets package the CLI entry only; the launcher is Windows-only.
+          ./scripts/package-release.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -Target $env:RELEASE_TARGET `
+            -CliExecutable $env:CLI_EXECUTABLE `
+            -LauncherExecutable $env:LAUNCHER_EXECUTABLE
       - name: Upload binaries
         shell: pwsh
         env:

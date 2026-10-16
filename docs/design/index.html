@@ -1,29 +1,407 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VibDock · 本地交互工作台</title>
 <style>
-:root{color-scheme:dark;--bg:#17191b;--panel:#202325;--line:#34383b;--text:#eeeae2;--muted:#a0a49f;--amber:#e8bd72;--live:#83d4ba}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px 'Segoe UI','Microsoft YaHei',sans-serif}button,select,input{font:inherit}button{cursor:pointer;color:inherit;background:#282c2e;border:1px solid var(--line);border-radius:8px;padding:10px 14px}button:hover{border-color:var(--amber)}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:3px}.primary{background:var(--amber);color:#211b12;border-color:var(--amber);font-weight:600}header{height:76px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 30px}.brand{font-size:25px;letter-spacing:-1px;font-weight:650}.brand span{color:var(--amber)}small,.muted{color:var(--muted)}.tag{font-size:12px;padding:5px 9px;border:1px solid var(--line);border-radius:5px;color:var(--amber)}.shell{display:grid;grid-template-columns:182px 1fr;min-height:calc(100vh - 76px)}nav{padding:28px 16px;border-right:1px solid var(--line)}nav button{width:100%;text-align:left;margin:0 0 8px;border-color:transparent;background:transparent}nav button[aria-selected=true]{background:#343027;color:var(--amber)}nav small{display:block;padding:18px 14px}main{padding:30px;max-width:1600px;width:100%;margin:auto}h1{font-size:27px;margin:0 0 8px;letter-spacing:-.7px}h2{font-size:17px;margin:0 0 15px}p{line-height:1.7}.intro{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:24px}.steps{display:flex;gap:20px;color:var(--muted);font-size:12px;padding:14px 0 22px}.steps b{color:var(--amber)}.workspace{display:grid;grid-template-columns:minmax(390px,1.25fr) minmax(300px,1fr);border:1px solid var(--line);border-radius:12px;overflow:hidden}.device-area{background:#1c1f21;padding:24px;position:relative}.panel-title{display:flex;justify-content:space-between;align-items:center}.device-stage{display:flex;align-items:center;justify-content:center;gap:26px;min-height:420px}.hardware{width:136px;padding:22px 14px 18px;background:linear-gradient(110deg,#c9ccca,#f0efea 48%,#b6bab8);border-radius:21px;box-shadow:0 20px 40px #0007,inset 0 0 0 1px #fff8;color:#424743;text-align:center}.hardware small{color:#626863;letter-spacing:2px}.grille{height:26px;margin:16px 10px;background:repeating-linear-gradient(90deg,#555 0 3px,transparent 3px 10px);border-radius:8px}.dial{width:104px;height:104px;border-radius:50%;border:2px solid #a8aca8;background:linear-gradient(130deg,#f5f5ef,#bfc4bf);color:#515953;font-size:28px;padding:0;margin-bottom:14px}.key{display:block;width:78px;height:64px;margin:8px auto;border-radius:13px;color:#48504a;border:1px solid #b0b6b0;background:linear-gradient(130deg,#eeeee8,#c5cac5);font-size:22px;box-shadow:0 3px 2px #8f978c}.key.selected{outline:3px solid var(--amber);outline-offset:3px}.key.fired{outline-color:var(--live)}.bindings{display:grid;gap:14px;min-width:170px}.binding{border-bottom:1px solid var(--line);padding:12px 0}.binding:first-child{margin-top:100px}.binding strong{display:block;font-weight:500;margin-bottom:6px}.binding.selected strong{color:var(--amber)}kbd{font:11px Consolas,monospace;color:var(--muted)}.hint{border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12px}.editor{padding:26px;background:var(--panel);border-left:1px solid var(--line)}label{display:block;color:var(--muted);font-size:12px;margin:20px 0 8px}select,input{width:100%;padding:12px;background:#191c1e;border:1px solid #3c4143;border-radius:7px;color:var(--text)}.capture{display:flex;align-items:center;gap:10px}.capture button{white-space:nowrap}.scope{padding:12px;border-left:2px solid var(--amber);background:#e8bd7208;color:#c8c2b6;font-size:12px;line-height:1.7;margin-top:16px}.actions{display:flex;gap:10px;margin-top:24px}.status{margin-top:20px;color:var(--live);min-height:24px;line-height:1.7}.foot{display:flex;justify-content:space-between;gap:20px;margin-top:18px;color:var(--muted);font-size:12px}.view[hidden]{display:none}.rows{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:25px}.row{display:flex;align-items:center;justify-content:space-between;padding:22px;background:var(--panel);border-bottom:1px solid var(--line);gap:20px}.row:last-child{border-bottom:0}.row p{margin:6px 0 0;color:var(--muted);font-size:12px}.row strong{font-size:16px}.preview{position:fixed;right:24px;bottom:24px;background:#252c29;border:1px solid var(--live);padding:18px 24px;border-radius:12px;box-shadow:0 12px 35px #0008;z-index:10}.preview[hidden]{display:none}.edge{position:fixed;inset:0;border:3px solid var(--live);pointer-events:none;z-index:9;animation:breathe 1.2s ease-in-out infinite}.edge[hidden]{display:none}@keyframes breathe{50%{opacity:.25}}.check{display:flex;align-items:center;gap:10px}.check input{width:auto}footer{margin-top:32px;font:11px Consolas,monospace;color:#737c76}@media(max-width:1000px){.workspace{grid-template-columns:1fr}.editor{border-left:0;border-top:1px solid var(--line)}.shell{grid-template-columns:135px 1fr}main{padding:20px}.device-stage{gap:20px}}@media(max-width:600px){header{padding:0 16px}.shell{display:block}nav{display:flex;padding:10px;overflow:auto;border-bottom:1px solid var(--line)}nav button{width:auto;white-space:nowrap;margin:0}nav small{display:none}.intro{align-items:flex-start}.device-area{padding:16px}.device-stage{gap:14px}.bindings{min-width:130px}.steps{gap:10px}.foot{flex-direction:column}}@media(prefers-reduced-motion:reduce){.edge{animation:none}}
+:root{color-scheme:dark;--bg:#17191b;--panel:#202325;--line:#34383b;--text:#eeeae2;--muted:#a0a49f;--amber:#e8bd72;--live:#83d4ba;--bad:#ed9f91}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px 'Segoe UI','Microsoft YaHei',sans-serif}button,select,input{font:inherit}button{cursor:pointer;color:inherit;background:#282c2e;border:1px solid var(--line);border-radius:8px;padding:10px 14px}button:hover{border-color:var(--amber)}button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--amber);outline-offset:3px}.primary{background:var(--amber);color:#211b12;border-color:var(--amber);font-weight:600}.subtle{background:transparent}header{height:76px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 30px;gap:16px}.brand{font-size:25px;letter-spacing:-1px;font-weight:650}.brand span{color:var(--amber)}small,.muted{color:var(--muted)}.tag{font-size:12px;padding:5px 9px;border:1px solid var(--line);border-radius:5px;color:var(--amber)}.shell{display:grid;grid-template-columns:182px 1fr;min-height:calc(100vh - 76px)}nav{padding:28px 16px;border-right:1px solid var(--line)}nav button{width:100%;text-align:left;margin:0 0 8px;border-color:transparent;background:transparent}nav button[aria-selected=true]{background:#343027;color:var(--amber)}nav small{display:block;padding:18px 14px}.conn{font-size:12px;padding:5px 9px;border-radius:5px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}.conn[data-state=live]{color:var(--live);border-color:var(--live)}.conn[data-state=bad]{color:var(--bad);border-color:var(--bad)}main{padding:30px;max-width:1600px;width:100%;margin:auto}h1{font-size:27px;margin:0 0 8px;letter-spacing:-.7px}h2{font-size:17px;margin:0 0 15px}p{line-height:1.7}.intro{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:24px}.steps{display:flex;gap:20px;color:var(--muted);font-size:12px;padding:14px 0 22px;flex-wrap:wrap}.steps span[data-active=true]{color:var(--amber)}.steps span[data-done=true]{color:var(--text)}.workspace{display:grid;grid-template-columns:minmax(390px,1.25fr) minmax(300px,1fr);border:1px solid var(--line);border-radius:12px;overflow:hidden}.device-area{background:#1c1f21;padding:24px;position:relative}.panel-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.device-stage{display:flex;align-items:center;justify-content:center;gap:26px;min-height:420px;flex-wrap:wrap}.hardware{width:136px;padding:22px 14px 18px;background:linear-gradient(110deg,#c9ccca,#f0efea 48%,#b6bab8);border-radius:21px;box-shadow:0 20px 40px #0007,inset 0 0 0 1px #fff8;color:#424743;text-align:center}.hardware small{color:#626863;letter-spacing:2px}.grille{height:26px;margin:16px 10px;background:repeating-linear-gradient(90deg,#555 0 3px,transparent 3px 10px);border-radius:8px}.dial{width:104px;height:104px;border-radius:50%;border:2px solid #a8aca8;background:linear-gradient(130deg,#f5f5ef,#bfc4bf);color:#515953;font-size:28px;padding:0;margin-bottom:14px}.key{display:block;width:78px;height:64px;margin:8px auto;border-radius:13px;color:#48504a;border:1px solid #b0b6b0;background:linear-gradient(130deg,#eeeee8,#c5cac5);font-size:22px;box-shadow:0 3px 2px #8f978c}.key.selected{outline:3px solid var(--amber);outline-offset:3px}.key.fired{outline-color:var(--live)}.bindings{display:grid;gap:14px;min-width:170px}.binding{border-bottom:1px solid var(--line);padding:12px 0}.binding:first-child{margin-top:100px}.binding strong{display:block;font-weight:500;margin-bottom:6px}.binding.selected strong{color:var(--amber)}.binding button{border:0;background:transparent;padding:0;text-align:left;width:100%}.binding button:hover strong{color:var(--amber)}kbd{font:11px Consolas,monospace;color:var(--muted)}.hint{border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12px}.editor{padding:26px;background:var(--panel);border-left:1px solid var(--line)}label{display:block;color:var(--muted);font-size:12px;margin:20px 0 8px}select,input{width:100%;padding:12px;background:#191c1e;border:1px solid #3c4143;border-radius:7px;color:var(--text)}.field-error{color:var(--bad);font-size:12px;margin:8px 0 0;min-height:18px}.capture{display:flex;align-items:center;gap:10px}.capture button{white-space:nowrap}.capture input[aria-invalid=true]{border-color:var(--bad)}.scope{padding:12px;border-left:2px solid var(--amber);background:#e8bd7208;color:#c8c2b6;font-size:12px;line-height:1.7;margin-top:16px}.scope b{color:var(--amber);font-weight:600}.actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}.status{margin-top:20px;color:var(--live);min-height:24px;line-height:1.7}.status[data-kind=error]{color:var(--bad)}.status[data-kind=idle]{color:var(--muted)}.foot{display:flex;justify-content:space-between;gap:20px;margin-top:18px;color:var(--muted);font-size:12px}.view[hidden]{display:none}.rows{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:25px}.row{display:flex;align-items:center;justify-content:space-between;padding:22px;background:var(--panel);border-bottom:1px solid var(--line);gap:20px}.row:last-child{border-bottom:0}.row p{margin:6px 0 0;color:var(--muted);font-size:12px}.row strong{font-size:16px}.preview{position:fixed;right:24px;bottom:24px;background:#252c29;border:1px solid var(--live);padding:18px 24px;border-radius:12px;box-shadow:0 12px 35px #0008;z-index:10}.preview[hidden]{display:none}.preview[data-kind=error]{border-color:var(--bad)}.edge{position:fixed;inset:0;border:3px solid var(--live);pointer-events:none;z-index:9;animation:breathe 1.2s ease-in-out infinite}.edge[hidden]{display:none}@keyframes breathe{50%{opacity:.25}}.check{display:flex;align-items:center;gap:10px}.check input{width:auto}footer{margin-top:32px;font:11px Consolas,monospace;color:#737c76}.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:20px;font-size:12px}.legend span{display:flex;align-items:center;gap:7px}.dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--muted)}.dot[data-state=live]{background:var(--live)}.dot[data-state=mock]{border:2px solid var(--amber);background:transparent}.dot[data-state=bad]{background:var(--bad)}.dot[data-state=pending]{border:2px dashed var(--muted);background:transparent}.dot[data-state=off]{border:2px solid var(--muted);background:transparent}.banner{border:1px solid var(--line);border-left:2px solid var(--amber);background:#e8bd7208;color:#c8c2b6;padding:14px 18px;border-radius:8px;margin-bottom:22px;font-size:12px;line-height:1.7}.auth[hidden]{display:none}.auth{border:1px solid var(--line);border-left:2px solid var(--live);background:#83d4ba08;padding:14px 18px;border-radius:8px;margin-bottom:22px}.auth label{margin-top:0}.svcbind[hidden]{display:none}.svcbind{margin-top:24px;border-top:1px solid var(--line);padding-top:16px}.svcbind h2{font-size:15px;margin:0 0 10px}.svcbind .row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;background:transparent;border:0;font-size:13px}@media(max-width:1000px){.workspace{grid-template-columns:1fr}.editor{border-left:0;border-top:1px solid var(--line)}.shell{grid-template-columns:135px 1fr}main{padding:20px}.device-stage{gap:20px}.binding:first-child{margin-top:0}}@media(max-width:600px){header{padding:0 16px;flex-wrap:wrap;height:auto;min-height:76px}.shell{display:block}nav{display:flex;padding:10px;overflow:auto;border-bottom:1px solid var(--line)}nav button{width:auto;white-space:nowrap;margin:0}nav small{display:none}.intro{align-items:flex-start}.device-area{padding:16px}.device-stage{gap:14px}.bindings{min-width:130px}.steps{gap:10px}.foot{flex-direction:column}.row{flex-direction:column;align-items:flex-start}}@media(prefers-reduced-motion:reduce){.edge{animation:none}}
 </style>
-<header><div class="brand">▦ Vib<span>Dock</span> <small style="font-size:12px;letter-spacing:0;margin-left:18px">本地交互工作台</small></div><span class="tag">交互设计稿 · 演示数据</span></header>
-<div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">▦　按键绑定</button><button data-view="audio" aria-selected="false">◉　音频设备</button><button data-view="apps" aria-selected="false">◇　应用集成</button><button data-view="feedback" aria-selected="false">◎　状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>本稿未连接后台</small></nav><main>
-<section class="view" id="bindings"><div class="intro"><div><h1>按一下，把动作连起来。</h1><small>从设备上的一个按键开始，不需要记住命令。</small></div><button id="setup">快速配置</button></div><div class="steps"><b>01 识别按键</b><span>02 选择动作</span><span>03 测试并保存</span></div>
-<div class="workspace"><div class="device-area"><div class="panel-title"><h2>Ulanzi Vibe Key</h2><span class="tag">设备示意 · 未连接</span></div><div class="device-stage"><div class="hardware"><small>VIBE KEY</small><div class="grille"></div><button class="dial" data-key="旋钮按下" aria-label="选择旋钮按下">↻</button><button class="key selected" data-key="语音键" aria-label="选择语音键">♩</button><button class="key" data-key="确认键" aria-label="选择确认键">✓</button><button class="key" data-key="取消键" aria-label="选择取消键">×</button></div><div class="bindings"><div class="binding selected"><strong id="bindingLabel">麦克风静音切换</strong><kbd id="bindingShortcut">Ctrl + Alt + Shift + F9</kbd></div><div class="binding"><strong>确认键 · 尚未绑定</strong><small>选择按键后配置</small></div><div class="binding"><strong>取消键 · 尚未绑定</strong><small>选择按键后配置</small></div></div></div><div class="hint">点击左侧按键选择配置。真实设备来源只有后台识别后才能确认。</div></div>
-<div class="editor"><span class="tag" id="selectedKey">语音键</span><h2 style="margin-top:18px">这个按键要做什么？</h2><label for="shortcut">触发快捷键</label><div class="capture"><input id="shortcut" value="Ctrl + Alt + Shift + F9" readonly><button id="record">录入按键</button></div><small id="captureHelp">设计稿仅捕获当前网页内的键盘事件。</small><label for="target">控制对象</label><select id="target"><option value="mic">Ulanzi 麦克风（演示）</option value="codex">Codex / Mini（演示）</option><option value="workbuddy">WorkBuddy（演示）</option><option value="wechat">微信输入法（演示）</option></select><label for="action">执行动作</label><select id="action"></select><div class="scope" id="scope"></div><div class="actions"><button id="test">▷ 测试反馈</button><button class="primary" id="save">保存绑定</button></div><div class="status" role="status" id="status">尚未连接设备。测试只模拟交互反馈。</div></div></div><div class="foot"><span>输入静音与输出静音独立配置</span><span>演示配置只保存在当前页面内存，刷新恢复</span></div></section>
-<section class="view" id="audio" hidden><h1>选对设备，再开始说话。</h1><p class="muted">设备级静音与应用级输出分开显示。以下均为设计示例。</p><div class="rows"><div class="row"><div><strong>Ulanzi 麦克风</strong><p>输入设备 · 演示设备，未连接 · 不自动替换为其他麦克风</p></div><span class="tag">等待连接</span></div><div class="row"><div><strong>Codex 播放声音</strong><p>应用音频会话 · 演示 · 需要后台枚举真实会话</p></div><span class="tag">未验证</span></div><div class="row"><div><strong>WorkBuddy 播放声音</strong><p>应用音频会话 · 演示 · 输入设备切换能力需单独验证</p></div><span class="tag">未验证</span></div></div></section>
-<section class="view" id="apps" hidden><h1>每个应用，明确自己的能力。</h1><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p><div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>计划支持：唤起入口、应用输出静音。内部语音控制接口待验证。</p></div><span class="tag">规划中</span></div><div class="row"><div><strong>微信输入法</strong><p>通过用户录入的快捷键触发。发送成功不代表语音已开启。</p></div><span class="tag">规划中</span></div><div class="row"><div><strong>WorkBuddy</strong><p>快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag">规划中</span></div></div></section>
-<section class="view" id="feedback" hidden><h1>知道按下去了，也知道生效没有。</h1><p class="muted">默认短提示不抢焦点；持续收音标识由真实状态驱动。</p><div class="rows"><div class="row"><div><strong>屏幕角落提示</strong><p>显示动作、控制对象和结果，颜色之外保留文字。</p></div><button id="previewToast">预览提示</button></div><div class="row"><div><strong>呼吸边框</strong><p>可选；跟随系统减少动画设置。这里仅预览网页边框。</p></div><label class="check"><input id="border" type="checkbox">启用预览</label></div><div class="row"><div><strong>失败状态</strong><p>设备断开或动作失败时，不显示成功。</p></div><button id="previewError">预览失败</button></div></div></section>
-<footer>VIBDOCK / LOCAL WEB CONCEPT / 01 — 非运行状态面板</footer></main></div><div class="edge" id="edge" hidden></div><div class="preview" id="toast" role="status" hidden></div>
+<header><div class="brand">▦ Vib<span>Dock</span> <small style="font-size:12px;letter-spacing:0;margin-left:18px">本地交互工作台</small></div><span class="conn" id="conn" data-state="unknown">检查服务</span></header>
+<div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">▦　按键绑定</button><button data-view="audio" aria-selected="false">◉　音频设备</button><button data-view="apps" aria-selected="false">◇　应用集成</button><button data-view="feedback" aria-selected="false">◎　状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>绑定保存在<br>此浏览器本机</small></nav><main>
+<div class="banner" id="banner">尚未连接后台服务。当前为交互设计稿：设备、应用与会话均为演示数据，动作只预览反馈，不会真正执行。</div>
+<div class="auth" id="authRow" hidden><label for="token">本机服务令牌</label><div class="capture"><input id="token" type="password" placeholder="粘贴服务状态文件中的令牌" autocomplete="off" spellcheck="false"><button id="authorize">授权</button></div><small><b>临时手工方式，不是最终流程。</b>最终由启动入口以一次性引导码打开本页并自动换取会话令牌，无需复制粘贴。令牌只保留在本页内存中，不写入浏览器存储。</small><p class="field-error" id="authError" role="alert"></p></div>
+<section class="view" id="bindings"><div class="intro"><div><h1>按一下，把动作连起来。</h1><small>从设备上的一个按键开始，不需要记住命令。</small></div><button id="setup">快速配置</button></div><div class="steps" id="steps"><span data-step="1" data-active="true">01 录入按键</span><span data-step="2">02 选择动作</span><span data-step="3">03 测试并保存</span></div>
+<div class="workspace"><div class="device-area"><div class="panel-title"><h2>Ulanzi Vibe Key</h2><span class="tag" id="deviceTag">设备示意 · 未连接</span></div><div class="device-stage"><div class="hardware"><small>VIBE KEY</small><div class="grille"></div><button class="dial" data-key="旋钮按下" aria-label="选择旋钮按下">↻</button><button class="key selected" data-key="语音键" aria-label="选择语音键">♩</button><button class="key" data-key="确认键" aria-label="选择确认键">✓</button><button class="key" data-key="取消键" aria-label="选择取消键">×</button></div><div class="bindings" id="bindings-list"></div></div>
+<div class="svcbind" id="svcBind"><h2>后台保存的绑定</h2><p id="sbStatus" role="status" aria-live="polite" class="muted">尚未读取运行状态。</p><p id="sbLastAction" role="status" aria-live="polite" class="muted">尚无按键执行记录。</p><p id="sbEmpty" class="muted">服务中还没有保存任何绑定。</p><div id="sbSet" hidden><div class="row"><span class="muted">麦克风</span><kbd id="sbDevice"></kbd></div><div class="row"><span class="muted">快捷键</span><kbd id="sbHotkey"></kbd></div><p class="muted">后台目前只保存一组「设备 + 快捷键」，不按硬件按键分别存储。上面的设备按键仅用于选择要编辑哪个草稿。</p></div></div>
+<div class="hint">点击左侧按键或右侧列表选择配置。演示数据无法确认物理设备来源，真实来源需后台识别。</div></div>
+<div class="editor"><span class="tag" id="selectedKey">语音键</span><h2 style="margin-top:18px">这个按键要做什么？</h2>
+<div id="editor-body">
+<label for="shortcut">触发快捷键</label><div class="capture"><input id="shortcut" placeholder="尚未录入" readonly aria-describedby="captureHelp" autocomplete="off"><button id="record">录入按键</button></div><small id="captureHelp">设计稿仅捕获当前网页内的键盘事件，且无法识别来源设备。</small><p class="field-error" id="shortcutError" role="alert"></p>
+<label for="device">麦克风（来自服务）</label><select id="device"><option value="">服务未返回设备</option></select><small id="deviceHelp">服务模式下由后台枚举真实采集设备；设计稿模式下列表为空。</small>
+<label for="target">控制对象</label><select id="target"><option value="mic">麦克风设备（服务支持）</option><option value="codex">Codex / Mini（未支持）</option><option value="workbuddy">WorkBuddy（未支持）</option><option value="wechat">微信输入法（未支持）</option></select>
+<label for="action">执行动作</label><select id="action"></select>
+<div class="scope" id="scope"></div>
+<div class="actions"><button id="test">▷ 测试反馈</button><button class="primary" id="save">保存绑定</button><button class="subtle" id="revert" hidden>放弃修改</button></div>
+<div class="status" role="status" id="status" data-kind="idle">尚未连接设备。测试只模拟交互反馈。</div>
+</div>
+<div id="conflictView" hidden><h2>这个按键已经有绑定了</h2><p class="muted" id="conflictText"></p><div class="actions"><button class="primary" id="conflictReplace">替换原有绑定</button><button id="conflictCancel">改用其他按键</button></div></div>
+</div></div><div class="foot"><span>输入静音与输出静音独立配置</span><span id="persistNote">演示配置保存在此浏览器本机，刷新后保留；未写入后台</span></div></section>
+<section class="view" id="audio" hidden><h1>选对设备，再开始说话。</h1><p class="muted">设备级静音与应用级输出分开显示。以下均为设计示例。</p>
+<div class="rows"><div class="row"><div><strong>Ulanzi 麦克风</strong><p>输入设备 · 演示设备，未连接 · 不自动替换为其他麦克风</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div><div class="row"><div><strong>Codex 播放声音</strong><p>应用音频会话 · 演示 · 需要后台枚举真实会话</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div><div class="row"><div><strong>WorkBuddy 播放声音</strong><p>应用音频会话 · 演示 · 输入设备切换能力需单独验证</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div></div>
+<div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
+<section class="view" id="apps" hidden><h1>每个应用，明确自己的能力。</h1><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p>
+<div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>计划支持：唤起入口、应用输出静音。内部语音控制接口待验证。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>微信输入法</strong><p>通过用户录入的快捷键触发。发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>WorkBuddy</strong><p>快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div></div>
+<div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
+<section class="view" id="feedback" hidden><h1>知道按下去了，也知道生效没有。</h1><p class="muted">默认短提示不抢焦点；持续收音标识由真实状态驱动。</p>
+<div class="rows"><div class="row"><div><strong>触发已收到</strong><p>按键被识别，动作尚未执行。</p></div><button id="previewReceived">预览</button></div><div class="row"><div><strong>动作执行中</strong><p>已发出请求，等待真实状态回读。</p></div><button id="previewPending">预览</button></div><div class="row"><div><strong>已验证成功</strong><p>后台读回真实状态并确认生效。</p></div><button id="previewVerified">预览</button></div><div class="row"><div><strong>已发送但未验证</strong><p>快捷键已发出，不代表对方状态已改变。</p></div><button id="previewDispatched">预览</button></div><div class="row"><div><strong>屏幕角落提示</strong><p>显示动作、控制对象和结果，颜色之外保留文字。</p></div><button id="previewToast">预览提示</button></div><div class="row"><div><strong>呼吸边框</strong><p>可选；跟随系统减少动画设置。这里仅预览网页边框。</p></div><label class="check"><input id="border" type="checkbox">启用预览</label></div><div class="row"><div><strong>失败状态</strong><p>设备断开或动作失败时，不显示成功。</p></div><button id="previewError">预览失败</button></div></div></section>
+<footer>VIBDOCK / LOCAL WEB CONCEPT / 02 — 非运行状态面板</footer></main></div><div class="edge" id="edge" hidden></div><div class="preview" id="toast" role="status" hidden></div>
 <script>
-const $=id=>document.getElementById(id);let selected='语音键',recording=false,timer,toastTimer;const saved=new Map();
-const actions={mic:[['toggle','麦克风静音切换'],['mute','麦克风静音'],['unmute','麦克风取消静音']],codex:[['show','唤起 Mini / Pet'],['output','应用输出静音切换']],workbuddy:[['shortcut','发送自定义快捷键'],['output','应用输出静音切换']],wechat:[['shortcut','发送语音输入快捷键']]};
-function refresh(){ $('action').replaceChildren(...actions[$('target').value].map(([value,text])=>new Option(text,value))); scope(); }
-function scope(){const mic=$('target').value==='mic';$('scope').textContent=mic?'作用范围：整台输入设备。其他使用此麦克风的应用也会受到影响。':'平台集成尚未实现。快捷键动作只能确认已发送；应用输出静音需要真实音频会话回读。';}
-function toast(text,error=false){clearTimeout(toastTimer);$('toast').textContent=text;$('toast').style.borderColor=error?'#ed9f91':'var(--live)';$('toast').hidden=false;$('edge').hidden=!$('border').checked||error;toastTimer=setTimeout(()=>{$('toast').hidden=true;$('edge').hidden=true},2800)}
-function stopRecord(){recording=false;clearTimeout(timer);$('record').textContent='录入按键'}
-document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{stopRecord();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==button.dataset.view)});
-document.querySelectorAll('[data-key]').forEach(button=>button.onclick=()=>{stopRecord();selected=button.dataset.key;$('selectedKey').textContent=selected;document.querySelectorAll('[data-key]').forEach(b=>b.classList.toggle('selected',b===button));const binding=saved.get(selected);$('target').value=binding?.target||'mic';refresh();if(binding)$('action').value=binding.action;$('shortcut').value=binding?.shortcut||'';$('status').textContent=binding?'已载入页面内存中的绑定。':'请录入快捷键并选择动作。';});
-$('target').onchange=refresh;$('action').onchange=scope;
-$('record').onclick=()=>{if(recording){stopRecord();return}recording=true;$('record').textContent='取消录入';$('status').textContent='请在本页按下组合键；Esc 取消，10 秒后超时。';timer=setTimeout(()=>{stopRecord();$('status').textContent='未收到按键。可以先在 Ulanzi Studio 设置独立快捷键。'},10000)};
-document.addEventListener('keydown',e=>{if(!recording)return;if(e.key==='Escape'){e.preventDefault();stopRecord();$('status').textContent='已取消录入。';return}if(['Control','Alt','Shift','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');if(e.metaKey)parts.push('Win');parts.push(e.key===' '?'Space':e.key.toUpperCase());$('shortcut').value=parts.join(' + ');stopRecord();$('status').textContent='已识别组合键；网页无法确认来源设备。';});
-$('save').onclick=()=>{if(!$('shortcut').value){$('status').textContent='请先录入快捷键。';return}for(const [key,binding] of saved){if(key!==selected&&binding.shortcut===$('shortcut').value){$('status').textContent='快捷键已分配给'+key+'，请使用其他组合键。';return}}saved.set(selected,{target:$('target').value,action:$('action').value,shortcut:$('shortcut').value});$('bindingLabel').textContent=selected+' · '+$('action').selectedOptions[0].textContent;$('bindingShortcut').textContent=$('shortcut').value;$('status').textContent='已保存到本页内存；尚未写入后台配置。';};
-$('test').onclick=()=>{toast('演示 · '+$('action').selectedOptions[0].textContent+' · 未执行真实动作');const key=document.querySelector('[data-key].selected');key?.classList.add('fired');setTimeout(()=>key?.classList.remove('fired'),1000);$('status').textContent='反馈预览完成。真实设备、音频与平台均未调用。'};
-$('setup').onclick=()=>{$('status').textContent='第 1 步：点击录入按键，再按设备映射的组合键。';$('record').click()};$('previewToast').onclick=()=>toast('演示 · 麦克风已静音');$('previewError').onclick=()=>toast('演示 · 麦克风已断开，操作未执行',true);$('border').onchange=()=>{if($('border').checked)toast('演示 · 呼吸边框预览');else $('edge').hidden=true};refresh();
+const $=id=>document.getElementById(id);
+const STORE='vibdock.design.bindings.v2';
+const actions={mic:[['toggle','麦克风静音切换','切换这台输入设备的静音状态'],['mute','麦克风静音','静音这台输入设备'],['unmute','麦克风取消静音','取消这台输入设备的静音']],codex:[['show','唤起 Mini / Pet','发送快捷键唤起入口'],['output','应用输出静音切换','仅静音该应用的播放会话']],workbuddy:[['shortcut','发送自定义快捷键','向目标发送已录入的快捷键'],['output','应用输出静音切换','仅静音该应用的播放会话']],wechat:[['shortcut','发送语音输入快捷键','发送快捷键；不保证语音已开启']]};
+const scopeText={mic:['作用范围：整台输入设备','其他使用此麦克风的应用也会同时被静音，不只是当前选中的目标。'],codex:['作用范围：该应用的播放会话','仅影响 Codex / Mini 自己的输出，会议与系统主输出不受影响。'],workbuddy:['作用范围：该应用的播放会话','仅影响 WorkBuddy 自己的输出，会议与系统主输出不受影响。'],wechat:['作用范围：快捷键发送','只确认快捷键已发出，不验证对方语音状态是否改变。']};
+const KEYS=['语音键','确认键','取消键','旋钮按下'];
+let selected='语音键',recording=false,timer,toastTimer,saved=load(),conflict=null,actionChosen=false;
+function load(){try{const raw=JSON.parse(localStorage.getItem(STORE)||'{}');const out=new Map();
+for(const [key,value] of Object.entries(raw)){if(!KEYS.includes(key)||!value||typeof value.shortcut!=='string'||!actions[value.target]||!actions[value.target].some(a=>a[0]===value.action))continue;out.set(key,{target:value.target,action:value.action,shortcut:value.shortcut});}
+return out;}catch{return new Map();}}
+function persist(){try{localStorage.setItem(STORE,JSON.stringify(Object.fromEntries(saved)));return true;}catch{return false;}}
+function actionLabel(target,action){return actions[target]?.find(a=>a[0]===action)?.[1]||'未配置';}
+function refresh(){const list=actions[$('target').value]||[];$('action').replaceChildren(...list.map(([value,text])=>new Option(text,value)));scope();markDirty();}
+function scope(){const [title,body]=scopeText[$('target').value]||scopeText.mic;$('scope').innerHTML='';const b=document.createElement('b');b.textContent=title;$('scope').append(b,document.createElement('br'),document.createTextNode(body));}
+function dirty(){const current={target:$('target').value,action:$('action').value,shortcut:$('shortcut').value.trim()};const base=saved.get(selected);if(!base){return current.shortcut!=='';}
+return base.target!==current.target||base.action!==current.action||base.shortcut!==current.shortcut;}
+function markDirty(){$('revert').hidden=!dirty();markStep();}
+function markStep(){const b=saved.get(selected);const s1=$('shortcut').value.trim()!=='';const s2=s1&&actionChosen;$('steps').children[0].dataset.done=String(s1);$('steps').children[0].dataset.active=String(!s1);$('steps').children[1].dataset.done=String(s2);$('steps').children[1].dataset.active=String(s1&&!s2);$('steps').children[2].dataset.done=String(!!b);$('steps').children[2].dataset.active=String(s2&&!b);}
+function say(text,kind='idle'){$('status').textContent=text;$('status').dataset.kind=kind;}
+function renderBindings(){const list=$('bindings-list');list.innerHTML='';for(const key of KEYS){const binding=saved.get(key);const row=document.createElement('div');row.className='binding'+(key===selected?' selected':'');const button=document.createElement('button');button.type='button';button.dataset.key=key;const strong=document.createElement('strong');strong.textContent=binding?key+' · '+actionLabel(binding.target,binding.action):key+' · 尚未绑定';
+button.append(strong);const hint=document.createElement('div');const kbd=document.createElement('kbd');kbd.textContent=binding?binding.shortcut:'选择后配置';hint.append(kbd);button.append(hint);button.onclick=()=>selectKey(key);row.append(button);list.append(row);}}
+function loadEditor(){const binding=saved.get(selected);$('target').value=binding?.target||'mic';actionChosen=!!binding;refresh();if(binding)$('action').value=binding.action;$('shortcut').value=binding?.shortcut||'';$('shortcutError').textContent='';$('shortcut').setAttribute('aria-invalid','false');showEditor();markDirty();}
+function selectKey(key){if(key!==selected&&dirty()&&!confirm('「'+selected+'」有未保存的修改，切换后将丢失。要继续切换吗？'))return;stopRecord();selected=key;$('selectedKey').textContent=key;document.querySelectorAll('.hardware [data-key]').forEach(b=>b.classList.toggle('selected',b.dataset.key===key));renderBindings();loadEditor();say(saved.get(key)?'已载入此浏览器中保存的绑定。':'请录入快捷键并选择动作。','idle');}
+function showEditor(){$('editor-body').hidden=false;$('conflictView').hidden=true;}
+function toast(text,kind='ok'){clearTimeout(toastTimer);$('toast').textContent=text;$('toast').dataset.kind=kind==='error'?'error':'ok';$('toast').hidden=false;$('edge').hidden=!$('border').checked||kind==='error';toastTimer=setTimeout(()=>{$('toast').hidden=true;$('edge').hidden=true},2800)}
+function stopRecord(){recording=false;clearTimeout(timer);$('record').textContent='录入按键';$('record').setAttribute('aria-pressed','false');}
+function normalize(text){return text.split('+').map(p=>p.trim()).filter(Boolean).map(p=>p==='WIN'?'Win':p.toLowerCase()).sort().join('+');}
+function conflictFor(shortcut,key){for(const [other,binding] of saved){if(other!==key&&normalize(binding.shortcut)===normalize(shortcut))return other;}return null;}
+function save(){const shortcut=$('shortcut').value.trim();if(!shortcut){$('shortcutError').textContent='请先录入快捷键。';$('shortcut').setAttribute('aria-invalid','true');say('保存失败：还没有录入触发快捷键。','error');return;}
+const other=conflictFor(shortcut,selected);if(other){conflict={target:$('target').value,action:$('action').value,shortcut};$('conflictText').textContent=shortcut+' 已分配给「'+other+'」。替换后该按键的旧绑定会被移除。';$('editor-body').hidden=true;$('conflictView').hidden=false;$('conflictReplace').focus();return;}
+commit({target:$('target').value,action:$('action').value,shortcut},'已保存到本浏览器；尚未写入后台配置。');}
+function commit(binding,message){if(conflictFor(binding.shortcut,selected))saved.delete(conflictFor(binding.shortcut,selected));
+saved.set(selected,binding);const ok=persist();conflict=null;renderBindings();loadEditor();
+if(ok)say(message,'ok');else say('已更新当前页面，但此浏览器拒绝写入本地存储，刷新后不会保留。','error');}
+// Device list comes from the service action endpoint; empty in preview mode.
+async function loadDevices(){
+  const select=$('device'),help=$('deviceHelp');
+  if(!(mode==='service'&&serviceToken)){
+    select.replaceChildren(new Option('服务未返回设备',''));
+    select.disabled=true;help.textContent='设计稿模式或尚未授权：没有真实设备可列。';
+    return;
+  }
+  help.textContent='正在读取服务设备列表…';
+  try{
+    const response=await api('/api/actions/devices',{method:'POST',body:''});
+    const body=await response.text();
+    if(!response.ok)throw new Error(serviceError(response,body));
+    const data=JSON.parse(body);
+    const devices=Array.isArray(data&&data.devices)?data.devices:[];
+    if(!devices.length){
+      select.replaceChildren(new Option('服务未返回设备',''));
+      select.disabled=true;help.textContent='服务未返回任何采集设备。请确认麦克风已连接且未禁用。';
+      return;
+    }
+    select.replaceChildren(...devices.map(d=>new Option(d.name||d.id,d.id)));
+    select.disabled=false;
+    help.textContent='共 '+devices.length+' 个采集设备，来自后台服务。';
+    if(serviceConfig&&serviceConfig.device_id)select.value=serviceConfig.device_id;
+  }catch(error){
+    select.replaceChildren(new Option('服务未返回设备',''));
+    select.disabled=true;help.textContent='读取设备失败：'+error.message;
+  }
+}
+function updateModeLabels(){
+  // Keep unsupported integrations visibly labelled rather than implying they work.
+  const supported=mode==='service'&&serviceToken;
+  for(const option of $('target').options){
+    // Only the microphone device is backed by the service today; integrations
+    // stay unavailable so a selection can never imply support that is not there.
+    if(option.value!=='mic')option.disabled=true;
+  }
+  if(!supported&&$('target').value!=='mic')$('target').value='mic';
+  loadDevices();
+}
+// Service-backed save: the backend is the source of truth. The local draft is
+// updated only after the service confirms the write, so a failed save never
+// replaces what is actually configured.
+async function saveBinding(){
+  if(mode==='service'&&!serviceToken){say('保存失败：页面未授权，请从托盘重新打开配置或重新授权。','error');return;}
+
+  const shortcut=$('shortcut').value.trim();
+  if(!shortcut){$('shortcutError').textContent='请先录入快捷键。';$('shortcut').setAttribute('aria-invalid','true');say('保存失败：还没有录入触发快捷键。','error');return;}
+  const other=conflictFor(shortcut,selected);
+  if(other){conflict={target:$('target').value,action:$('action').value,shortcut};$('conflictText').textContent=shortcut+' 已分配给「'+other+'」。替换后该按键的旧绑定会被移除。';$('editor-body').hidden=true;$('conflictView').hidden=false;$('conflictReplace').focus();return;}
+  if(mode==='service'&&serviceToken){
+    const deviceId=$('device').value||'';
+    if(!deviceId){say('保存失败：请先在服务返回的设备列表中选择一个麦克风。','error');return;}
+    $('save').disabled=true;
+    say('正在写入服务配置…','idle');
+    try{
+      // Config is a patch: name only the fields being changed.
+      await saveToService({device_id:deviceId,hotkey:shortcut});
+      // saveToService replaces serviceConfig with the committed body, so the
+      // authoritative binding row is refreshed here rather than left stale.
+      applyServiceConfig();
+      saved.set(selected,{target:'mic',action:'toggle',shortcut,deviceId});
+      persist();conflict=null;renderBindings();loadEditor();
+      say('已写入后台服务，配置已持久化（服务重启后仍保留）。','ok');
+    }catch(error){
+      // Keep the saved config intact; report honestly rather than pretending.
+      say('保存失败，配置未改动：'+error.message,'error');
+    }finally{
+      $('save').disabled=false;
+    }
+    return;
+  }
+  commit({target:$('target').value,action:$('action').value,shortcut},'已保存到本浏览器草稿；尚未写入后台配置（服务未授权）。');
+}
+document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{stopRecord();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));document.querySelectorAll('.view').forEach(v=>{v.hidden=v.id!==button.dataset.view});});
+document.querySelectorAll('.hardware [data-key]').forEach(button=>button.onclick=()=>selectKey(button.dataset.key));
+$('target').onchange=()=>{actionChosen=true;refresh();};$('action').onchange=()=>{actionChosen=true;scope();markDirty();};
+$('record').onclick=()=>{if(recording){stopRecord();say('已取消录入。','idle');return}recording=true;$('record').textContent='取消录入';$('record').setAttribute('aria-pressed','true');say('请在本页按下组合键；Esc 取消，10 秒后超时。','idle');timer=setTimeout(()=>{stopRecord();say('未收到按键。可以先在 Ulanzi Studio 设置独立快捷键。','error')},10000)};
+document.addEventListener('keydown',e=>{if(!recording)return;if(e.key==='Escape'){e.preventDefault();stopRecord();say('已取消录入。','idle');return}if(['Control','Alt','Shift','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');if(e.metaKey)parts.push('Win');parts.push(e.key===' '?'Space':e.key==='+'?'Plus':e.key.length===1?e.key.toUpperCase():e.key);$('shortcut').value=parts.join(' + ');$('shortcutError').textContent='';$('shortcut').setAttribute('aria-invalid','false');stopRecord();say('已识别组合键；网页无法确认来源设备。','idle');markDirty();});
+$('save').onclick=saveBinding;
+$('revert').onclick=()=>{loadEditor();say('已放弃未保存的修改。','idle');};
+$('conflictCancel').onclick=()=>{conflict=null;showEditor();say('请改用其他组合键，或选择别的按键。','idle');$('record').focus();};
+$('conflictReplace').onclick=()=>{if(!conflict)return;$('editor-body').hidden=false;$('conflictView').hidden=true;saved.delete(conflictFor(conflict.shortcut,selected));conflict=null;saveBinding();};
+$('test').onclick=async ()=>{if(mode==='service'&&!serviceToken){say('测试失败：页面未授权，请重新打开配置。','error');return;}const label=actionLabel($('target').value,$('action').value);
+if(mode==='service'&&serviceToken){
+  const deviceId=$('device').value||'';
+  if(!deviceId){toast('测试失败 · 请先选择麦克风','error');say('测试失败：尚未选择服务返回的麦克风。','error');return;}
+  const action=$('action').value;
+  if(!['toggle','mute','unmute','status'].includes(action)){
+    toast('预览 · '+label+' · 服务尚不支持该动作','error');
+    say('该动作后台尚未支持，仅预览反馈。','idle');return;
+  }
+  say('已发送动作请求，等待服务回读状态…','idle');
+  try{
+    const response=await api('/api/actions/'+action,{method:'POST',body:JSON.stringify({device_id:deviceId})});
+    const body=await response.text();
+    if(!response.ok){
+      toast('动作失败 · '+serviceError(response,body),'error');
+      say('动作失败：'+serviceError(response,body),'error');return;
+    }
+    const data=JSON.parse(body);
+    // Status/toggle/mute/unmute all read back the real mute state, so a 200
+    // with `muted` is a verified outcome rather than a dispatched guess.
+    if(data&&typeof data.muted==='boolean'){
+      const state=data.muted?'已静音':'未静音';
+      toast('已验证 · 麦克风当前'+state);
+      say('已验证：服务回读该麦克风当前'+state+'。','ok');
+    }else{
+      toast('已发送但未验证状态');
+      say('服务已接受请求，但未返回可验证状态。','idle');
+    }
+  }catch(error){
+    toast('动作失败 · 无法连接服务','error');
+    say('动作失败：'+error.message,'error');
+  }
+  return;
+}
+toast('预览 · '+label+' · 未执行真实动作');
+const key=document.querySelector('.hardware [data-key].selected');key?.classList.add('fired');setTimeout(()=>key?.classList.remove('fired'),1000);say('反馈预览完成。真实设备、音频与平台均未调用。','idle');};
+$('setup').onclick=()=>{say('第 1 步：点击录入按键，再按设备映射的组合键。','idle');$('record').click()};
+$('previewReceived').onclick=()=>toast('触发已收到 · 麦克风静音切换');
+$('previewPending').onclick=()=>toast('动作执行中 · 等待状态回读');
+$('previewVerified').onclick=()=>toast('已验证 · 麦克风当前为静音');
+$('previewDispatched').onclick=()=>toast('快捷键已发送 · 未验证语音状态');
+$('previewToast').onclick=()=>toast('预览 · 麦克风已静音');
+$('previewError').onclick=()=>toast('失败 · 麦克风已断开，操作未执行','error');
+$('border').onchange=()=>{if($('border').checked)toast('预览 · 呼吸边框');else $('edge').hidden=true};
+// ---- Service client -------------------------------------------------------
+// Conversation with the Rust loopback service. The token lives only in module
+// scope: never in localStorage, never in a URL, never logged.
+let serviceToken=null,mode='design-preview',serviceConfig=null;
+
+function authHeaders(extra){
+  const headers=Object.assign({'Content-Type':'application/json'},extra||{});
+  // The service accepts a bare token or a "Bearer " prefix on either header.
+  if(serviceToken)headers['X-Vibdock-Token']=serviceToken;
+  return headers;
+}
+async function api(path,options){
+  const response=await fetch(path,Object.assign({cache:'no-store',headers:authHeaders(),redirect:'error'},options||{}));
+  return response;
+}
+async function readJson(response){
+  const text=await response.text();
+  try{return JSON.parse(text);}catch{return null;}
+}
+function serviceError(response,body){
+  if(response.status===401)return '未授权：服务要求有效的本机令牌。';
+  if(response.status===405)return '服务处于只读设计稿模式，不能保存配置。';
+  if(response.status===413)return '请求体过大或不是合法 UTF-8。';
+  if(response.status===502&&body)return '动作执行失败：'+body.replace(/^Action failed:\s*/,'');
+  if(response.status===409){try{const message=JSON.parse(body).message;if(typeof message==='string'&&message.trim())return '快捷键未生效：'+message;}catch{}return '快捷键注册失败，请换一个组合键。';}
+  if(response.status===500)return '配置写入失败，原配置保留。';
+  if(response.status===404)return '服务没有这个接口。';
+  return '服务返回 '+response.status+'。';
+}
+async function probe(){
+  const tag=$('conn');
+  try{
+    const response=await api('/health');
+    if(!response.ok)throw new Error('bad status');
+    const data=await readJson(response)||{};
+    mode=data.mode||'design-preview';
+    if(mode==='service'){
+      tag.dataset.state='live';
+      tag.textContent='服务运行中 · 待授权';
+      $('banner').textContent='后台服务已连接，但页面还没有写入授权。要保存真实配置，请在下方粘贴本机令牌完成一次授权；令牌只保留在内存中。';
+      $('authRow').hidden=false;
+    }else{
+      tag.dataset.state='pending';
+      tag.textContent='服务运行中 · 设计稿模式';
+      $('banner').textContent='后台服务已连接，但当前是只读设计稿模式：设备、应用与会话均为演示数据，动作只预览反馈，不会真正执行。';
+      $('authRow').hidden=true;
+    }
+    $('authError').textContent='';
+  }catch{
+    mode='offline';tag.dataset.state='bad';tag.textContent='未连接后台';
+    $('banner').textContent='尚未连接后台服务。当前为交互设计稿：设备、应用与会话均为演示数据，动作只预览反馈，不会真正执行。';
+    $('authRow').hidden=true;
+  }
+  updateModeLabels();
+}
+// Authorization.
+//
+// Preferred path: the launcher opens this page with a one-use bootstrap code
+// that the page immediately exchanges for a scoped session token. The code
+// never appears in the URL bar (it is consumed and erased on first use), the
+// session token is held in memory only, and nothing is written to storage.
+//
+// The bootstrap endpoint is service-owned; until it exists the page falls back
+// to a clearly-labelled manual paste so the flow stays usable without
+// pretending the manual route is the finished result.
+async function redeemBootstrap(code){
+  const response=await fetch('/api/bootstrap',{method:'POST',cache:'no-store',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+  if(!response.ok)return null;
+  const data=await readJson(response);
+  return data&&data.token?data.token:null;
+}
+// Returns true only when the service actually accepted the token and the live
+// config was read. Callers must not treat a failure as authorized: hiding the
+// authorization UI on a failed exchange would leave the page looking ready
+// while every save silently fails.
+async function authorizeWith(token){
+  serviceToken=token;
+  try{
+    const response=await api('/api/config');
+    if(response.status===401||response.status===403){serviceToken=null;$('authError').textContent='引导码无效或已过期，服务拒绝了这次请求。';return false;}
+    if(!response.ok){serviceToken=null;$('authError').textContent=serviceError(response,'');return false;}
+    serviceConfig=await readJson(response);
+    applyServiceConfig();
+    startBindingStatusPoll();
+    $('authRow').hidden=true;$('token').value='';
+    $('conn').dataset.state='live';
+    $('conn').textContent='服务运行中 · 已授权';
+    updateModeLabels();
+    $('banner').textContent='已连接并通过鉴权的后台服务。设备列表与配置来自服务；保存会先写入服务，成功后再更新页面。';
+    say('已授权。已从服务载入设备与配置。','ok');
+    return true;
+  }catch{
+    serviceToken=null;$('authError').textContent='无法连接服务，请确认服务仍在运行。';
+    return false;
+  }
+}
+$('authorize').onclick=async ()=>{
+  const token=$('token').value.trim();
+  $('authError').textContent='';
+  if(!token){$('authError').textContent='请先粘贴本机令牌。';return;}
+  if(!/^[0-9a-fA-F]+$/.test(token)){$('authError').textContent='令牌格式应为十六进制字符串。';return;}
+  await authorizeWith(token);
+};
+function applyServiceConfig(){
+  // The backend holds exactly one binding: a device plus a hotkey. It is not
+  // per-key, so it is shown as its own row rather than attributed to whichever
+  // hardware button happens to be selected.
+  const config=serviceConfig||{};
+  if(config.device_id||config.hotkey){
+    $('sbDevice').textContent=config.device_id||'（未设置）';
+    $('sbHotkey').textContent=config.hotkey||'（未设置）';
+    $('sbEmpty').hidden=true;$('sbSet').hidden=false;
+  }else{
+    $('sbEmpty').hidden=false;$('sbSet').hidden=true;
+  }
+  renderBindingStatus(config);
+  renderBindings();loadEditor();
+}
+let bindingPollStarted=false;
+let lastActionSequence=null;
+function renderBindingStatus(config){
+  const status=$('sbStatus');
+  if(config.hotkey_live===true){status.textContent='快捷键已注册 · 等待按键';status.dataset.state='live';}
+  else if(config.activation_error){status.textContent='快捷键未生效：'+config.activation_error;status.dataset.state='error';}
+  else{status.textContent='配置已读取 · 快捷键运行状态尚未确认';status.dataset.state='unknown';}
+  const last=$('sbLastAction');
+  last.textContent='尚无按键执行记录。';last.dataset.state='unknown';
+  const action=config.last_action;
+  if(!action||!Number.isSafeInteger(action.sequence)||action.sequence<0)return;
+  const fresh=lastActionSequence!==null&&action.sequence>lastActionSequence;
+  lastActionSequence=action.sequence;
+  if(action.sequence===0||config.hotkey_live!==true)return;
+  if(action.error){
+    last.textContent='上次按键执行失败：'+action.error;last.dataset.state='error';
+    if(fresh)say(last.textContent,'error');
+  }else if(action.state==='LIVE'||action.state==='MUTED'){
+    last.textContent='上次按键结果：'+(action.state==='LIVE'?'麦克风已开启':'麦克风已静音');last.dataset.state='live';
+    if(fresh)say(last.textContent,'ok');
+  }
+}
+function expireBrowserSession(){
+  serviceToken=null;
+  bindingPollStarted=false;
+  $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';
+  $('authRow').hidden=false;
+  $('authError').textContent='会话已过期或服务已重启，请从托盘重新打开配置页。';
+  $('sbStatus').textContent='运行状态未知 · 页面未授权';$('sbStatus').dataset.state='unknown';
+  $('device').disabled=true;
+}
+function startBindingStatusPoll(){
+  if(bindingPollStarted)return;
+  bindingPollStarted=true;
+  async function tick(){
+    if(!serviceToken){bindingPollStarted=false;return;}
+    if(!document.hidden){
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),5000);
+      try{
+        const response=await api('/api/config',{signal:controller.signal});
+        if(response.status===401||response.status===403){expireBrowserSession();return;}
+        if(!response.ok)throw new Error('服务未确认状态');
+        renderBindingStatus(await readJson(response));
+      }catch{
+        $('sbStatus').textContent='运行状态未知 · 无法读取服务';
+        $('sbStatus').dataset.state='unknown';
+      }finally{
+        clearTimeout(timeout);
+      }
+    }
+    setTimeout(tick,1000);
+  }
+  setTimeout(tick,1000);
+}
+async function saveToService(patch){
+  const response=await api('/api/config',{method:'POST',body:JSON.stringify(patch)});
+  const body=await response.text();
+  if(!response.ok){
+    if(response.status===409){try{const failure=JSON.parse(body);if(failure.binding)renderBindingStatus(failure.binding);}catch{}}
+    throw new Error(serviceError(response,body));
+  }
+  // A successful POST returns the committed config body.
+  const committed=JSON.parse(body);
+  if(committed&&typeof committed==='object')serviceConfig=committed;
+  return true;
+}
+// One-use bootstrap. The launcher opens the page with `#bootstrap=<code>`; the
+// code is copied into memory and wiped from the fragment *before* any async
+// exchange so it cannot be replayed from a shared link or a screenshot. There
+// is deliberately no query-string credential support.
+async function tryBootstrap(){
+  const code=new URLSearchParams(location.hash.slice(1)).get('bootstrap');
+  if(!code)return false;
+  history.replaceState({},document.title,location.pathname+location.search);
+  try{
+    const token=await redeemBootstrap(code);
+    if(!token)return false;
+    const authorized=await authorizeWith(token);
+    return authorized;
+  }catch{return false;}
+}
+renderBindings();loadEditor();
+probe().then(async ()=>{
+  if(mode!=='service')return;
+  const ok=await tryBootstrap();
+  if(ok){$('authRow').hidden=true;return;}
+  // A plain URL carries no code, and a replayed or expired one is rejected by
+  // the service. Either way the fix is the same and must be stated plainly:
+  // reopen the page from the tray so it arrives with a fresh single-use code.
+  $('authRow').hidden=false;
+  $('authError').textContent='请通过托盘的「打开配置」重新进入本页，链接会自带一次性引导码。手动粘贴仅用于排查，不作为正常入口。';
+});
 </script></html>
