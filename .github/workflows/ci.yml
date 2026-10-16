@@ -36,6 +36,27 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - run: cargo build --locked --release
+      - name: Verify macOS package contracts
+        run: python3 scripts/test-macos-package.py
+      - name: Package native macOS candidate
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          target=$(rustc -vV | sed -n 's/^host: //p')
+          python3 scripts/package-macos.py --target "$target" --tag "candidate-${VIBDOCK_SOURCE_REVISION:0:12}"
+          plutil -lint work/macos-package/VibDock.app/Contents/Info.plist
+      - name: Verify native macOS resident lifecycle
+        if: runner.os == 'macOS'
+        run: python3 scripts/test-macos-desktop.py
+      - name: Upload macOS candidate archive
+        if: runner.os == 'macOS' && success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vibdock-macos-candidate
+          path: |
+            work/macos-package/vibdock-candidate-*.zip
+            work/macos-package/vibdock-candidate-*.zip.sha256
+          if-no-files-found: error
       - name: Verify Windows service resilience
         if: runner.os == 'Windows'
         run: node scripts/test-service-resilience.cjs target/release/vibdock.exe
@@ -83,4 +104,6 @@ jobs:
             work/windows-desktop/report.json
             work/web-ui/*.png
             work/web-ui/report.json
+            work/macos-desktop/*.png
+            work/macos-desktop/report*.json
           if-no-files-found: ignore

@@ -1,8 +1,13 @@
-# macOS resident adapter plan (not implemented)
+# macOS resident roadmap
+
+The native AppKit shell, original-logo menu-bar/Dock entry, floating panel,
+service lifecycle and .app packaging are now implemented in source. See
+[the native candidate contract](macos-desktop.md) for verification boundaries.
+The application-observation/persistence scope below remains a later increment.
 
 ## First native slice
 
-Use AppKit on its main event loop, through narrowly enabled `objc2` /
+The implemented shell uses AppKit on its main event loop, through narrowly enabled `objc2` /
 `objc2-app-kit` bindings. Reuse the existing proved loopback service and one-use
 Settings handoff. Keep one `NSStatusItem` with the original supplied VibDock logo,
 a menu with pinned software icons/status, Show panel, Settings and Quit. Retain and
@@ -29,9 +34,9 @@ until a supported, explicitly reviewed backend can provide that evidence.
 
 ## Packaging and acceptance gates
 
-1. Add an isolated macOS module and an actual .app bundle/Info.plist with supplied
-   artwork and notices. Pin compatible crate versions in Cargo.lock after checking
-   the selected bindings' licenses. No macOS dependencies are added by this plan.
+1. Keep the isolated macOS module and actual .app bundle/Info.plist with supplied
+   artwork and notices. Direct bindings are pinned with their selected licenses
+   documented in docs/licenses; candidate checks verify their packaged notices.
 2. Hosted macOS checks cover build, contracts, bundle contents and deterministic
    fixture states. They do not prove a logged-in menu-bar or Dock experience.
 3. A logged-in macOS GUI test must observe double-click launch, one resident
