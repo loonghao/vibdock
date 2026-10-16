@@ -110,5 +110,20 @@ fn a_real_service_is_discovered_reused_and_stopped_with_a_fresh_proof() {
     let stopped = fixture.run_short("service-stop");
     assert!(stopped.status.success());
     assert!(String::from_utf8_lossy(&stopped.stdout).contains("Service stopped"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = fixture.service.as_mut().unwrap().try_wait().unwrap() {
+            assert!(
+                status.success(),
+                "service must exit naturally after shutdown"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "service did not exit after accepting shutdown"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(!fixture.root.join("VibDock/service.json").exists());
 }

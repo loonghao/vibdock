@@ -610,9 +610,8 @@ fn route(
             )
         }
         (Method::Get, "/instance") => {
-            // Instance challenge for single-instance detection. Requiring the
-            // token is the point: a 200 proves the listener on this port is
-            // our service and not an unrelated process that inherited the port.
+            // Legacy authenticated liveness endpoint. HTTP 200 alone is not
+            // ownership evidence; discovery uses /instance/challenge.
             if !request.authorized {
                 return unauthorized();
             }
@@ -898,7 +897,11 @@ fn accept_loop(
             mime = "application/json";
         }
         // Socket writes run on the worker; routing never waits for the client.
-        connection.respond(code, mime, &payload);
+        if code == 200 && method == Method::Post && path == "/instance/challenge" {
+            connection.respond_keep_alive(code, mime, &payload);
+        } else {
+            connection.respond(code, mime, &payload);
+        }
         // Answer first, then stop: the caller gets proof the shutdown was
         // accepted by the instance that owns the token. Returning here lets
         // `serve` drop the listener and clear the instance marker, so a later

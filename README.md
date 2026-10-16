@@ -74,12 +74,20 @@ challenge at `POST /instance/challenge` with an HMAC-SHA256 proof derived from
 the recorded token. Discovery sends only the random nonce, never the bearer
 token; an HTTP 200 response alone is not ownership evidence. The complete
 challenge has a 700 ms budget and an 8 KiB response limit. Browser-code and
-shutdown control requests have a two-second total budget and the same limit.
+shutdown control requests prove ownership and send their bearer on the same
+pinned IPv4 connection, with a two-second total budget across both exchanges
+and the same response limit. They never reconnect or fall back to IPv6 after
+proof. Only a successful challenge with one valid Content-Length and no
+Transfer-Encoding permits one additional HTTP exchange; chunked or ambiguous
+framing is always closed after its response.
 A stale marker left by a killed service is recovered only after proving no
 owner answers; if an unrelated process holds the port, startup fails with an
 error and leaves the marker alone. Older preview services without challenge
 proofs are not trusted: exit their tray or stop them with their matching older
-CLI before replacing the executables.
+CLI before replacing the executables. Atomic state writes create exclusive
+fresh temporary files before writing; Unix files are created with mode 0600.
+Windows state protection relies on the parent directory's inherited ACLs; an
+explicit per-user ACL guarantee has not been established.
 
 Request bodies are bounded: an oversized or non-UTF-8 body is answered with
 413 rather than read in full. If the OS entropy source fails, the service

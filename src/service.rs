@@ -5,7 +5,7 @@
 //! entry. Audio-device behaviour stays in the platform adapter.
 
 use std::{
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::PathBuf,
 };
@@ -246,130 +246,171 @@ pub(crate) fn instance_answers(port: u16, token: &str) -> bool {
     std::panic::catch_unwind(|| challenge(port, token) == Some(true)).unwrap_or(false)
 }
 
-/// Performs a fresh, non-secret challenge. The response must authenticate the
-/// nonce with the recorded token; a generic 200, echoed nonce, stale proof, or
-/// another instance's proof cannot establish ownership.
-fn challenge(port: u16, token: &str) -> Option<bool> {
-    let nonce = generate_token().ok()?;
-    let body = serde_json::json!({"nonce": nonce}).to_string();
-    let request = format!(
-        "POST /instance/challenge HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\n\
-         Connection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let (status, body) =
-        control_exchange(port, &request, std::time::Duration::from_millis(700)).ok()?;
-    if status != 200 {
-        return Some(false);
-    }
-    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
-    Some(
-        value
-            .get("proof")
-            .and_then(|value| value.as_str())
-            .is_some_and(|proof| crate::instance_proof::verify(token, &nonce, proof)),
-    )
+/// A pinned IPv4 connection with one deadline for proof and control together.
+/// A privileged request must never reconnect after verifying a different socket.
+struct ControlConnection {
+    stream: std::net::TcpStream,
+    port: u16,
+    started: std::time::Instant,
+    timeout: std::time::Duration,
 }
 
-/// Executes one small control request with a single wall-clock budget across
-/// connecting, writing, and every response read. A trickling peer cannot renew
-/// the timeout. Responses are capped and must have an exact HTTP status line,
-/// a complete header terminator, and a matching declared body length.
+impl ControlConnection {
+    fn connect(port: u16, timeout: std::time::Duration) -> io::Result<Self> {
+        let started = std::time::Instant::now();
+        // The service binds IPv4 only. Never fall back to an unrelated ::1 peer.
+        let stream = std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            timeout.min(std::time::Duration::from_millis(150)),
+        )?;
+        Ok(Self {
+            stream,
+            port,
+            started,
+            timeout,
+        })
+    }
+
+    fn remaining(&self) -> io::Result<std::time::Duration> {
+        self.timeout
+            .checked_sub(self.started.elapsed())
+            .filter(|time| !time.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::TimedOut, "control request deadline exceeded")
+            })
+    }
+
+    fn prove_instance(&mut self, token: &str) -> io::Result<bool> {
+        let nonce = generate_token().map_err(|error| io::Error::other(error.to_string()))?;
+        let body = serde_json::json!({"nonce": nonce}).to_string();
+        let request = format!(
+            "POST /instance/challenge HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: keep-alive\r\n\r\n{body}",
+            self.port,
+            body.len()
+        );
+        let (status, body) = self.exchange(&request)?;
+        let value: serde_json::Value = serde_json::from_str(&body)?;
+        Ok(status == 200
+            && value
+                .get("proof")
+                .and_then(|value| value.as_str())
+                .is_some_and(|proof| crate::instance_proof::verify(token, &nonce, proof)))
+    }
+
+    /// Read exactly one framed response, without waiting for EOF or consuming
+    /// the next response. Both exchanges share the original wall-clock budget.
+    fn exchange(&mut self, request: &str) -> io::Result<(u16, String)> {
+        use std::io::Read;
+        let mut unwritten = request.as_bytes();
+        while !unwritten.is_empty() {
+            self.stream.set_write_timeout(Some(self.remaining()?))?;
+            let written = self.stream.write(unwritten)?;
+            if written == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "control request write stopped",
+                ));
+            }
+            unwritten = &unwritten[written..];
+        }
+        let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid control response");
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            if head.len() >= MAX_CHALLENGE_RESPONSE {
+                return Err(invalid());
+            }
+            self.stream.set_read_timeout(Some(self.remaining()?))?;
+            let mut byte = [0];
+            self.stream.read_exact(&mut byte)?;
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).map_err(|_| invalid())?;
+        let mut lines = head[..head.len() - 4].split("\r\n");
+        let mut status_line = lines.next().ok_or_else(invalid)?.splitn(3, ' ');
+        if status_line.next() != Some("HTTP/1.1") {
+            return Err(invalid());
+        }
+        let status = status_line
+            .next()
+            .filter(|value| value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|value| value.parse::<u16>().ok())
+            .ok_or_else(invalid)?;
+        if status_line.next().is_none() {
+            return Err(invalid());
+        }
+        let mut length = None;
+        for line in lines {
+            let (name, value) = line.split_once(':').ok_or_else(invalid)?;
+            if name.eq_ignore_ascii_case("transfer-encoding") {
+                return Err(invalid());
+            }
+            if name.eq_ignore_ascii_case("content-length") {
+                if length.is_some() || !value.trim().bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(invalid());
+                }
+                length = Some(value.trim().parse::<usize>().map_err(|_| invalid())?);
+            }
+        }
+        let length = length
+            .filter(|length| *length <= MAX_CHALLENGE_RESPONSE - head.len())
+            .ok_or_else(invalid)?;
+        let mut body = vec![0; length];
+        let mut unread = body.as_mut_slice();
+        while !unread.is_empty() {
+            self.stream.set_read_timeout(Some(self.remaining()?))?;
+            let count = self.stream.read(unread)?;
+            if count == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "incomplete control response",
+                ));
+            }
+            unread = &mut unread[count..];
+        }
+        Ok((status, String::from_utf8(body).map_err(|_| invalid())?))
+    }
+}
+
+fn challenge(port: u16, token: &str) -> Option<bool> {
+    ControlConnection::connect(port, std::time::Duration::from_millis(700))
+        .ok()?
+        .prove_instance(token)
+        .ok()
+}
+
+fn verified_control_exchange(
+    instance: &Instance,
+    request: &str,
+    timeout: std::time::Duration,
+) -> io::Result<(u16, String)> {
+    let mut connection = ControlConnection::connect(instance.port, timeout)?;
+    if !connection.prove_instance(&instance.token)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "listener failed instance proof",
+        ));
+    }
+    // Keep the very socket that proved ownership; no retry or reconnection may
+    // carry this bearer to a replacement listener, even if this peer exits.
+    connection.exchange(request)
+}
+
+#[cfg(test)]
 fn control_exchange(
     port: u16,
     request: &str,
     timeout: std::time::Duration,
 ) -> io::Result<(u16, String)> {
-    use std::io::Read;
-    use std::time::{Duration, Instant};
-    let started = Instant::now();
-    let remaining = || {
-        timeout
-            .checked_sub(started.elapsed())
-            .filter(|time| !time.is_zero())
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::TimedOut, "control request deadline exceeded")
-            })
-    };
-    let mut stream = std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        remaining()?.min(Duration::from_millis(150)),
-    )
-    .or_else(|_| {
-        std::net::TcpStream::connect_timeout(
-            &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
-            remaining()?.min(Duration::from_millis(150)),
-        )
-    })?;
-    let mut unwritten = request.as_bytes();
-    while !unwritten.is_empty() {
-        stream.set_write_timeout(Some(remaining()?))?;
-        let written = stream.write(unwritten)?;
-        if written == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "control request write stopped",
-            ));
-        }
-        unwritten = &unwritten[written..];
-    }
-    let mut response = Vec::new();
-    loop {
-        stream.set_read_timeout(Some(remaining()?))?;
-        let mut buffer = [0u8; 1024];
-        let count = stream.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        response.extend_from_slice(&buffer[..count]);
-        if response.len() > MAX_CHALLENGE_RESPONSE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "control response is too large",
-            ));
-        }
-    }
-    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid control response");
-    let response = String::from_utf8(response).map_err(|_| invalid())?;
-    let (head, body) = response.split_once("\r\n\r\n").ok_or_else(invalid)?;
-    let mut lines = head.split("\r\n");
-    let mut status_line = lines.next().ok_or_else(invalid)?.splitn(3, ' ');
-    if status_line.next() != Some("HTTP/1.1") {
-        return Err(invalid());
-    }
-    let status = status_line
-        .next()
-        .filter(|value| value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_digit()))
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(invalid)?;
-    if status_line.next().is_none() {
-        return Err(invalid());
-    }
-    let mut length = None;
-    for line in lines {
-        let (name, value) = line.split_once(':').ok_or_else(invalid)?;
-        if name.eq_ignore_ascii_case("transfer-encoding") {
-            return Err(invalid());
-        }
-        if name.eq_ignore_ascii_case("content-length") {
-            if length.is_some() {
-                return Err(invalid());
-            }
-            length = Some(value.trim().parse::<usize>().map_err(|_| invalid())?);
-        }
-    }
-    if length != Some(body.len()) {
-        return Err(invalid());
-    }
-    Ok((status, body.to_owned()))
+    ControlConnection::connect(port, timeout)?.exchange(request)
 }
 
 /// Creates a one-use browser handoff without exposing the service bearer.
 pub(crate) fn browser_code(instance: &Instance) -> Result<String> {
     let request = format!("POST /api/bootstrap/new HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", instance.port, instance.token);
     let (status, body) =
-        control_exchange(instance.port, &request, std::time::Duration::from_secs(2))?;
+        verified_control_exchange(instance, &request, std::time::Duration::from_secs(2))?;
     if status != 200 {
         return Err("Could not authorize the configuration page".into());
     }
@@ -447,7 +488,7 @@ pub(crate) fn request_shutdown() -> std::result::Result<bool, String> {
         instance.port, instance.token
     );
     let (status, body) =
-        control_exchange(instance.port, &request, std::time::Duration::from_secs(2))
+        verified_control_exchange(&instance, &request, std::time::Duration::from_secs(2))
             .map_err(|error| format!("Could not complete the shutdown request: {error}"))?;
     let accepted = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
@@ -671,25 +712,31 @@ pub(crate) fn atomic_write(path: &PathBuf, contents: &[u8]) -> Result<()> {
         .parent()
         .ok_or("Configuration path has no parent directory.")?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    // create_new rejects existing files and symlinks. Unix mode applies before
+    // any secret bytes are written; Windows uses the state directory's ACLs.
     let temp = dir.join(format!(
-        ".{}.{}.tmp",
+        ".{}.{}.{}.tmp",
         path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("vibdock"),
-        std::process::id()
+        std::process::id(),
+        generate_token()?
     ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
     {
-        let mut file = File::create(&temp).map_err(|e| e.to_string())?;
-        file.write_all(contents).map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    match fs::rename(&temp, path) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = fs::remove_file(&temp);
-            Err(error.to_string().into())
-        }
+    let mut file = options.open(&temp)?;
+    let written = file.write_all(contents).and_then(|_| file.sync_all());
+    drop(file);
+    let result = written.and_then(|_| fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
     }
+    result.map_err(Into::into)
 }
 
 /// Persisted service configuration.
@@ -1574,7 +1621,7 @@ mod tests {
         use std::io::Write;
         for response in [
             "HTTP/1.1 2000 OK\r\nContent-Length: 0\r\n\r\n",
-            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nshorter",
+            "HTTP/1.1 200 OK\r\nContent-Length: 5x\r\n\r\nshorter",
             "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nshort",
             "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n",
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n",
@@ -1632,26 +1679,41 @@ mod tests {
         drop(listener);
     }
 
+    fn fixture_proof(stream: &mut std::net::TcpStream, token: &str) {
+        let request = fixture_request(stream);
+        assert!(request.starts_with("POST /instance/challenge "));
+        assert!(!request.contains(token));
+        assert!(!request.contains("Authorization:"));
+        let value: serde_json::Value =
+            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let proof =
+            crate::instance_proof::respond(token, value["nonce"].as_str().unwrap()).unwrap();
+        let body = serde_json::json!({"proof": proof}).to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn browser_handoff_client_authenticates_and_rejects_invalid_codes() {
-        use std::io::{Read, Write};
+    fn browser_handoff_client_authenticates_on_the_same_socket_and_rejects_invalid_codes() {
         for (code, accepted) in [("a".repeat(64), true), ("#invalid".into(), false)] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
             let expected = code.clone();
             let worker = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
-                stream
-                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-                    .unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    let mut byte = [0];
-                    assert_eq!(stream.read(&mut byte).unwrap(), 1);
-                    request.push(byte[0]);
-                    assert!(request.len() < 8192);
+                // Retire the genuine listener before proving ownership. Only
+                // its already accepted connection is allowed to get the bearer.
+                drop(listener);
+                let replacement = std::net::TcpListener::bind(("::1", port)).ok();
+                if let Some(listener) = &replacement {
+                    listener.set_nonblocking(true).unwrap();
                 }
-                let request = String::from_utf8(request).unwrap();
+                fixture_proof(&mut stream, "fixture-admin");
+                let request = fixture_request(&mut stream);
                 assert!(request.starts_with("POST /api/bootstrap/new "));
                 assert!(request.contains("Authorization: Bearer fixture-admin\r\n"));
                 let body = serde_json::json!({"code": expected}).to_string();
@@ -1661,6 +1723,12 @@ mod tests {
                     body.len()
                 )
                 .unwrap();
+                if let Some(listener) = replacement {
+                    assert_eq!(
+                        listener.accept().unwrap_err().kind(),
+                        io::ErrorKind::WouldBlock
+                    );
+                }
             });
             let result = browser_code(&Instance {
                 port,
@@ -1672,6 +1740,108 @@ mod tests {
             }
             worker.join().unwrap();
         }
+    }
+
+    #[test]
+    fn a_closed_proof_socket_never_reconnects_to_an_ipv6_replacement() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            drop(listener);
+            let replacement = std::net::TcpListener::bind(("::1", port)).ok();
+            if let Some(listener) = &replacement {
+                listener.set_nonblocking(true).unwrap();
+            }
+            fixture_proof(&mut stream, "fixture-admin");
+            stream.shutdown(std::net::Shutdown::Both).unwrap();
+            ready_tx.send(replacement).unwrap();
+        });
+        // Proof is valid, but its connection ends before any control response.
+        assert!(browser_code(&Instance {
+            port,
+            token: "fixture-admin".into()
+        })
+        .is_err());
+        let replacement = ready_rx.recv().unwrap();
+        worker.join().unwrap();
+        if let Some(listener) = replacement {
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+        }
+    }
+
+    #[test]
+    fn failed_proof_receives_no_privileged_request_on_its_connection() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = fixture_request(&mut stream);
+            assert!(!request.contains("fixture-admin"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}",
+                )
+                .unwrap();
+            let mut remainder = String::new();
+            stream.read_to_string(&mut remainder).unwrap();
+            assert!(
+                remainder.is_empty(),
+                "unproved peer received a subsequent request"
+            );
+        });
+        assert!(browser_code(&Instance {
+            port,
+            token: "fixture-admin".into()
+        })
+        .is_err());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn proof_and_control_share_one_total_deadline() {
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            fixture_proof(&mut stream, "fixture-admin");
+            fixture_request(&mut stream);
+            std::thread::sleep(Duration::from_millis(150));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        });
+        let started = Instant::now();
+        assert!(verified_control_exchange(&Instance { port, token: "fixture-admin".into() },
+            "POST /api/shutdown HTTP/1.1\r\nAuthorization: Bearer fixture-admin\r\nContent-Length: 0\r\n\r\n", Duration::from_millis(200)).is_err());
+        assert!(started.elapsed() < Duration::from_millis(750));
+        worker.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_state_files_are_private_on_creation_and_replacement() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("vibdock-private-{}", generate_token().unwrap()));
+        let path = dir.join("service.json");
+        atomic_write(&path, b"synthetic-secret").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        atomic_write(&path, b"replacement-synthetic-secret").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

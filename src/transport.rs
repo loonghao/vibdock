@@ -64,6 +64,35 @@ impl Received {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
     }
+    /// Continuation is restricted to an exact, uniquely framed proof request.
+    /// Chunked requests retain their existing one-response/close behavior;
+    /// their trailer section must never be interpreted as another request.
+    fn can_continue(&self) -> bool {
+        if self.method != "POST"
+            || self.path != "/instance/challenge"
+            || self.body_rejected
+            || self.headers.iter().any(|(name, value)| {
+                name == "transfer-encoding"
+                    || (name == "connection"
+                        && value
+                            .split(',')
+                            .any(|token| token.trim().eq_ignore_ascii_case("close")))
+            })
+        {
+            return false;
+        }
+        let mut lengths = self
+            .headers
+            .iter()
+            .filter(|(name, _)| name == "content-length");
+        let Some((_, value)) = lengths.next() else {
+            return false;
+        };
+        lengths.next().is_none()
+            && !value.is_empty()
+            && value.bytes().all(|byte| byte.is_ascii_digit())
+            && value.parse::<usize>().ok() == Some(self.body.as_ref().map_or(0, String::len))
+    }
 }
 
 /// Outcome of handling one connection.
@@ -110,7 +139,7 @@ pub struct ReadyRequest {
 
 /// One response slot; shutdown can wait for its worker to finish before exit.
 pub struct Reply {
-    sender: std::sync::mpsc::SyncSender<(u16, String, String)>,
+    sender: std::sync::mpsc::SyncSender<(u16, String, String, bool)>,
     completed: std::sync::mpsc::Receiver<()>,
 }
 
@@ -118,7 +147,14 @@ impl Reply {
     pub fn respond(&mut self, status: u16, mime: &str, payload: &str) {
         let _ = self
             .sender
-            .try_send((status, mime.to_string(), payload.to_string()));
+            .try_send((status, mime.to_string(), payload.to_string(), false));
+    }
+
+    /// Only a successful instance proof may request one additional exchange.
+    pub fn respond_keep_alive(&mut self, status: u16, mime: &str, payload: &str) {
+        let _ = self
+            .sender
+            .try_send((status, mime.to_string(), payload.to_string(), true));
     }
 
     pub fn finish(&self) -> std::io::Result<()> {
@@ -155,13 +191,19 @@ impl BoundedListener {
                             guard.recv_timeout(Duration::from_millis(200))
                         };
                         let Ok(stream) = next else { continue };
-                        let Some(connection) = BoundedConnection::from_stream(stream) else {
+                        let Some(mut connection) = BoundedConnection::from_stream(stream) else {
                             continue;
                         };
-                        if let Some(incoming) = connection.read_fully() {
+                        // At most two exchanges: proof, then one control request.
+                        for exchange in 0..2 {
+                            let Some(incoming) = connection.read_fully() else {
+                                break;
+                            };
+
+                            let can_continue = incoming.request.can_continue();
                             let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
                             let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
-                            let mut connection = incoming.connection;
+                            connection = incoming.connection;
                             if ready_tx
                                 .send(ReadyRequest {
                                     request: incoming.request,
@@ -174,10 +216,18 @@ impl BoundedListener {
                             {
                                 return;
                             }
-                            if let Ok((status, mime, payload)) = reply_rx.recv() {
-                                connection.respond(status, &mime, &payload);
-                            }
+                            let Ok((status, mime, payload, keep_alive)) = reply_rx.recv() else {
+                                break;
+                            };
+                            let keep_alive =
+                                keep_alive && exchange == 0 && status == 200 && can_continue;
+                            let retained = connection
+                                .respond_with_keep_alive(status, &mime, &payload, keep_alive);
                             let _ = done_tx.send(());
+                            if !retained {
+                                break;
+                            }
+                            connection.started = Instant::now();
                         }
                     }
                 })
@@ -311,13 +361,18 @@ impl BoundedConnection {
     pub fn read_head(&mut self) -> Handled {
         // The reader takes a clone of the stream so it can be stored on the
         // connection and reused for the body without borrowing the connection.
-        let Ok(clone) = self.stream.try_clone() else {
-            return Handled::Skip;
+        let mut reader = if let Some(reader) = self.reader.take() {
+            reader
+        } else {
+            let Ok(clone) = self.stream.try_clone() else {
+                return Handled::Skip;
+            };
+            BufReader::new(DeadlineReader {
+                stream: clone,
+                started: self.started,
+            })
         };
-        let mut reader = BufReader::new(DeadlineReader {
-            stream: clone,
-            started: self.started,
-        });
+        reader.get_mut().started = self.started;
         // Read the request line plus headers, bounded by head size.
         let mut head = Vec::new();
         let head_ok = read_until_blank_line(&mut reader, &mut head, MAX_HEAD);
@@ -366,8 +421,8 @@ impl BoundedConnection {
         };
         let headers = std::mem::take(&mut self.head_headers);
         let result = read_body(&mut reader, &headers, self.started);
-        // The reader is spent: the body has been consumed to its declared end,
-        // so this connection is finished regardless of the outcome.
+        // Retain buffered bytes for the optional second exchange.
+        self.reader = Some(reader);
         result
     }
 
@@ -376,6 +431,16 @@ impl BoundedConnection {
     /// A client that does not read its response blocks until the deadline, then
     /// the connection is closed; it can never stall the service past it.
     pub fn respond(&mut self, status: u16, mime: &str, payload: &str) {
+        self.respond_with_keep_alive(status, mime, payload, false);
+    }
+
+    fn respond_with_keep_alive(
+        &mut self,
+        status: u16,
+        mime: &str,
+        payload: &str,
+        keep_alive: bool,
+    ) -> bool {
         let reason = match status {
             200 => "OK",
             400 => "Bad Request",
@@ -398,15 +463,22 @@ impl BoundedConnection {
              Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; \
              style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; \
              frame-ancestors 'none'; form-action 'none'; base-uri 'none'\r\n\
-             Connection: close\r\n\r\n",
-            payload.len()
+             Connection: {}\r\n\r\n",
+            payload.len(),
+            if keep_alive { "keep-alive" } else { "close" }
         );
         // Errors are ignored: a client that hangs up mid-response is not a
         // service failure, and the connection is closed either way.
-        let _ = self.stream.write_all(head.as_bytes());
-        let _ = self.stream.write_all(payload.as_bytes());
-        let _ = self.stream.flush();
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        let written = self
+            .stream
+            .write_all(head.as_bytes())
+            .and_then(|_| self.stream.write_all(payload.as_bytes()))
+            .and_then(|_| self.stream.flush())
+            .is_ok();
+        if !keep_alive || !written {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        }
+        keep_alive && written
     }
 }
 
@@ -568,10 +640,16 @@ fn read_chunked_with_deadline<R: Read>(
             }
         };
         if size == 0 {
-            // Trailing CRLF after the final chunk; not needed for our response.
+            // Trailers are not needed for this response. Such requests are
+            // never eligible for continuation; the socket must close.
             return Ok(());
         }
-        if out.len() + size > MAX_BODY + 1 {
+        if out
+            .len()
+            .checked_add(size)
+            .filter(|total| *total <= MAX_BODY + 1)
+            .is_none()
+        {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "chunked body too large",
@@ -652,6 +730,201 @@ mod tests {
         assert!(!policy.contains("connect-src 'none'"));
         assert!(response.contains("Cache-Control: no-store\r\n"));
         assert!(response.contains("X-Content-Type-Options: nosniff\r\n"));
+    }
+
+    #[test]
+    fn keep_alive_is_bounded_to_two_exchanges_even_with_pipelining() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let transport = BoundedListener::new(listener).unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        client.write_all(b"POST /instance/challenge HTTP/1.1\r\nContent-Length: 0\r\n\r\nPOST /instance/challenge HTTP/1.1\r\nContent-Length: 0\r\n\r\nGET /third HTTP/1.1\r\nContent-Length: 0\r\n\r\n").unwrap();
+        for _ in 0..2 {
+            let started = Instant::now();
+            let mut request = loop {
+                transport.pump().unwrap();
+                if let Some(request) = transport.next_request() {
+                    break request;
+                }
+                assert!(started.elapsed() < Duration::from_secs(2));
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            assert_eq!(request.request.path, "/instance/challenge");
+            request
+                .connection
+                .respond_keep_alive(200, "text/plain", "proof");
+            request.connection.finish().unwrap();
+        }
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert_eq!(response.matches("HTTP/1.1 200 OK").count(), 2);
+        assert_eq!(response.matches("Connection: keep-alive").count(), 1);
+        assert_eq!(response.matches("Connection: close").count(), 1);
+        assert!(transport.next_request().is_none());
+    }
+
+    #[test]
+    fn fragmented_proof_and_control_requests_share_one_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let transport = BoundedListener::new(listener).unwrap();
+        let client = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(address).unwrap();
+            stream.set_read_timeout(Some(WRITE_TIMEOUT)).unwrap();
+            for part in
+                b"POST /instance/challenge HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}".chunks(3)
+            {
+                stream.write_all(part).unwrap();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let mut first = Vec::new();
+            while !first.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                first.push(byte[0]);
+            }
+            assert!(String::from_utf8(first)
+                .unwrap()
+                .contains("Connection: keep-alive"));
+            for part in b"POST /api/shutdown HTTP/1.1\r\nContent-Length: 0\r\n\r\n".chunks(3) {
+                stream.write_all(part).unwrap();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let mut final_response = String::new();
+            stream.read_to_string(&mut final_response).unwrap();
+            assert!(final_response.contains("Connection: close"));
+        });
+        for path in ["/instance/challenge", "/api/shutdown"] {
+            let started = Instant::now();
+            let mut request = loop {
+                transport.pump().unwrap();
+                if let Some(request) = transport.next_request() {
+                    break request;
+                }
+                assert!(started.elapsed() < Duration::from_secs(2));
+                std::thread::sleep(Duration::from_millis(2));
+            };
+            assert_eq!(request.request.path, path);
+            request.connection.respond_keep_alive(200, "text/plain", "");
+            request.connection.finish().unwrap();
+        }
+        client.join().unwrap();
+    }
+
+    #[test]
+    fn ambiguous_or_chunked_framing_cannot_continue() {
+        for headers in [
+            vec![("transfer-encoding", "chunked")],
+            vec![("content-length", "2"), ("transfer-encoding", "chunked")],
+            vec![("content-length", "2"), ("content-length", "2")],
+            vec![("content-length", "3")],
+            vec![("content-length", "+2")],
+        ] {
+            let request = Received {
+                method: "POST".into(),
+                path: "/instance/challenge".into(),
+                headers: headers
+                    .into_iter()
+                    .map(|(name, value)| (name.into(), value.into()))
+                    .collect(),
+                body: Some("{}".into()),
+                body_rejected: false,
+            };
+            assert!(!request.can_continue());
+        }
+    }
+
+    #[test]
+    fn explicit_close_tokens_disable_proof_continuation() {
+        for connections in [
+            vec!["close"],
+            vec!["Keep-Alive, CLOSE"],
+            vec!["keep-alive", "upgrade, cLoSe"],
+        ] {
+            let mut headers = vec![("content-length".into(), "2".into())];
+            headers.extend(
+                connections
+                    .into_iter()
+                    .map(|value| ("connection".into(), value.into())),
+            );
+            let request = Received {
+                method: "POST".into(),
+                path: "/instance/challenge".into(),
+                headers,
+                body: Some("{}".into()),
+                body_rejected: false,
+            };
+            assert!(!request.can_continue());
+        }
+    }
+
+    #[test]
+    fn a_close_request_finishes_without_waiting_for_another_exchange() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let transport = BoundedListener::new(listener).unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        client.write_all(b"POST /instance/challenge HTTP/1.1\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+        let started = Instant::now();
+        let mut request = loop {
+            transport.pump().unwrap();
+            if let Some(request) = transport.next_request() {
+                break request;
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        request
+            .connection
+            .respond_keep_alive(200, "text/plain", "proof");
+        request.connection.finish().unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Connection: close"));
+        assert!(response.ends_with("proof"));
+    }
+
+    #[test]
+    fn chunked_proof_closes_instead_of_misreading_trailers_as_another_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let transport = BoundedListener::new(listener).unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        client.write_all(b"POST /instance/challenge HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\nX-Trailer: ignored\r\n\r\nGET /next HTTP/1.1\r\n\r\n").unwrap();
+        let started = Instant::now();
+        let mut request = loop {
+            transport.pump().unwrap();
+            if let Some(request) = transport.next_request() {
+                break request;
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert_eq!(request.request.body.as_deref(), Some("{}"));
+        request
+            .connection
+            .respond_keep_alive(200, "text/plain", "proof");
+        request.connection.finish().unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.contains("Connection: close"));
+        assert!(!response.contains("Connection: keep-alive"));
+        assert!(transport.next_request().is_none());
+    }
+
+    #[test]
+    fn chunk_size_overflow_is_rejected_before_reading_or_allocating() {
+        let payload = format!("1\r\na\r\n{:x}\r\n", usize::MAX);
+        let mut input = Cursor::new(payload.as_bytes());
+        let mut body = Vec::new();
+        let error = read_chunked_with_deadline(&mut input, &mut body, Instant::now()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(body, b"a");
     }
 
     #[test]
