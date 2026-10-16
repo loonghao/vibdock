@@ -75,9 +75,22 @@ def run(app, evidence, system_quit=False):
     try:
         # The launcher starts/proves its own service. The same real UI worker
         # issues Settings handoff and authenticates Quit; no routes are mocked.
-        result = subprocess.run([str(launcher), "--macos-native-acceptance"], env=env,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=40, check=False, text=True)
+        try:
+            result = subprocess.run([str(launcher), "--macos-native-acceptance"], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=40, check=False, text=True)
+        except subprocess.TimeoutExpired as error:
+            stderr = error.stderr or b""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            diagnostic = {"passed": False, "stage": "native-entry-timeout",
+                          "system_termination_path": system_quit,
+                          "stderr": diagnostic_text(stderr),
+                          "stdoutBytes": len(error.stdout or b""),
+                          "privatePortClosed": port_is_closed(port)}
+            (evidence / f"report{suffix}.json").write_text(json.dumps(diagnostic, indent=2) + "\n")
+            raise
+
         reports = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
         if len(reports) != 1:
             diagnostic = {"passed": False, "stage": "native-entry-report",
@@ -116,6 +129,8 @@ def run(app, evidence, system_quit=False):
             raise RuntimeError("Native acceptance exercised the wrong termination path")
         if system_quit and report.get("system_termination_cleaned") is not True:
             raise RuntimeError("System termination did not report pre-exit native cleanup")
+        if system_quit and report.get("system_termination_trigger_deferred") is not True:
+            raise RuntimeError("System termination was not requested outside the worker poll callback")
         for key in REQUIRED + ["configPreserved", "ownedIpcSocketRemoved", "launcherLockReleased"]:
             if report.get(key) is not True:
                 raise RuntimeError(f"Native acceptance missing required check: {key}")
