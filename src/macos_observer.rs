@@ -494,11 +494,12 @@ fn encode_icon_png(premultiplied_rgba: &[u8]) -> Option<Vec<u8>> {
         for pixel in row.as_chunks::<4>().0 {
             let alpha = u32::from(pixel[3]);
             for channel in &pixel[..3] {
-                scanlines.push(if alpha == 0 {
-                    0
-                } else {
-                    ((u32::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8
-                });
+                scanlines.push(
+                    (u32::from(*channel) * 255 + alpha / 2)
+                        .checked_div(alpha)
+                        .unwrap_or(0)
+                        .min(255) as u8,
+                );
             }
             scanlines.push(pixel[3]);
         }
