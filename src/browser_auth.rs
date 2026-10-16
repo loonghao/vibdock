@@ -9,14 +9,19 @@ use crate::{service, Result};
 #[derive(Default)]
 pub(crate) struct BrowserAuth {
     codes: HashMap<String, Instant>,
-    sessions: HashMap<String, Instant>,
+    sessions: HashMap<String, Session>,
+}
+
+struct Session {
+    expires: Instant,
+    principal: String,
 }
 
 impl BrowserAuth {
     fn prune(&mut self) {
         let now = Instant::now();
         self.codes.retain(|_, expires| *expires > now);
-        self.sessions.retain(|_, expires| *expires > now);
+        self.sessions.retain(|_, session| session.expires > now);
     }
 
     pub(crate) fn mint(&mut self) -> Result<String> {
@@ -39,14 +44,26 @@ impl BrowserAuth {
             return Err("Too many active browser sessions".into());
         }
         let token = service::generate_token()?;
+        let principal = service::generate_token()?;
         self.codes.remove(code);
         self.sessions.insert(
             token.clone(),
-            Instant::now() + Duration::from_secs(8 * 3600),
+            Session {
+                expires: Instant::now() + Duration::from_secs(8 * 3600),
+                principal,
+            },
         );
         Ok(Some(token))
     }
 
+    pub(crate) fn principal(&mut self, token: Option<&str>) -> Option<String> {
+        self.prune();
+        self.sessions
+            .get(token?)
+            .map(|session| session.principal.clone())
+    }
+
+    #[cfg(test)]
     pub(crate) fn accepts(&mut self, token: Option<&str>) -> bool {
         self.prune();
         token.is_some_and(|token| self.sessions.contains_key(token))
@@ -65,6 +82,9 @@ mod tests {
         assert!(auth.redeem("wrong").unwrap().is_none());
         let token = auth.redeem(&code).unwrap().unwrap();
         assert!(auth.accepts(Some(&token)));
+        let principal = auth.principal(Some(&token)).unwrap();
+        assert_ne!(principal, token);
+        assert_eq!(auth.principal(Some(&token)), Some(principal));
         assert!(auth.redeem(&code).unwrap().is_none());
         assert!(!BrowserAuth::default().accepts(Some(&token)));
     }
@@ -73,7 +93,13 @@ mod tests {
     fn expired_codes_and_sessions_are_rejected() {
         let mut auth = BrowserAuth::default();
         auth.codes.insert("expired".into(), Instant::now());
-        auth.sessions.insert("expired".into(), Instant::now());
+        auth.sessions.insert(
+            "expired".into(),
+            Session {
+                expires: Instant::now(),
+                principal: "expired-principal".into(),
+            },
+        );
         assert!(auth.redeem("expired").unwrap().is_none());
         assert!(!auth.accepts(Some("expired")));
     }

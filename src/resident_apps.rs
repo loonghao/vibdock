@@ -1,4 +1,4 @@
-//! Persisted software locations and bounded read-only playback observations.
+//! Persisted locations, bounded playback observations and explicit exact-session actions.
 //! A saved path is a correlation location, never authority to execute or mute.
 use serde_json::{json, Value};
 use std::{
@@ -126,6 +126,7 @@ pub(crate) struct Registry {
     selections: BTreeMap<String, Selection>,
     current_choices: Vec<(String, Session)>,
     worker: Option<Worker>,
+    actions: crate::resident_actions::Actions,
 }
 impl Registry {
     pub(crate) fn start(enabled: bool) -> Self {
@@ -167,6 +168,7 @@ impl Registry {
             selections: BTreeMap::new(),
             current_choices: vec![],
             worker: None,
+            actions: crate::resident_actions::Actions::default(),
         }
     }
     fn load(path: PathBuf) -> Self {
@@ -198,6 +200,15 @@ impl Registry {
         state
     }
     pub(crate) fn poll(&mut self) {
+        // Never coalesce action completions with best-effort observation frames.
+        if let Some(worker) = &self.worker {
+            for (id, observed_since, result) in worker.results.try_iter() {
+                self.actions.complete(&id, result, observed_since);
+            }
+            if !worker.alive.load(std::sync::atomic::Ordering::Acquire) {
+                self.actions.owner_stopped();
+            }
+        }
         let next = self
             .worker
             .as_ref()
@@ -259,14 +270,24 @@ impl Registry {
     pub(crate) fn view(&self, summary: bool) -> Value {
         let fresh = self.fresh();
         let entries=self.entries.iter().map(|e| {
-            let sessions:Vec<Value>=if fresh { self.sessions.iter().filter(|s|s.value["endpoint_id"]==e.endpoint && s.value["executable_path"].as_str().is_some_and(|p|same_location(p,&e.executable))).map(Session::public).collect() } else {vec![]};
+            let sessions:Vec<Value>=if fresh { self.sessions.iter().filter(|s|s.value["endpoint_id"]==e.endpoint && s.value["executable_path"].as_str().is_some_and(|p|same_location(p,&e.executable))).map(|session| {
+                let mut v=session.public();
+                if let Some((id,_))=self.current_choices.iter().find(|(id,s)|s.key==session.key && self.selections.get(id).is_some_and(|selection|selection.issued.elapsed()<SELECTION_TTL)) {
+                    v["session_reference"]=json!(id);
+                    v["actions_enabled"]=json!(self.worker.as_ref().is_some_and(|worker|worker.alive.load(std::sync::atomic::Ordering::Acquire)) && self.load_error.is_none() && !self.actions.pending() && self.unique_session(session));
+                }
+                // Creation stamps remain internal action identity, never a browser authority.
+                v.as_object_mut().unwrap().remove("process_started");
+                v
+            }).collect() } else {vec![]};
             let complete=fresh && self.snapshot["endpoints"].as_array().is_some_and(|endpoints|endpoints.iter().any(|v|v["id"]==e.endpoint && v["complete"]==true));
             let state=if !sessions.is_empty(){"connected"}else if complete{"not_connected"}else{"unknown"};
             let icon=sessions.iter().find_map(|s|s.get("icon_b64").and_then(Value::as_str)).map(str::to_owned);
             let playback=if !complete && !sessions.is_empty(){"Partial observation; aggregate playback state unknown"}else if sessions.is_empty(){"Playback state unknown"}else if sessions.iter().any(|s|s["active"]==true){"Playback session active"}else{"Playback session idle"};
             let muted=if !complete || sessions.is_empty(){""}else if sessions.iter().all(|s|s["muted"]==true){"all muted"}else if sessions.iter().all(|s|s["muted"]==false){"not muted"}else{"mixed mute states"};
-            let mut row=json!({"playback_label":format!("{playback}; {muted}"),"id":e.id,"label":e.label,"state":state,"complete":complete,"sessions":sessions,"actions_enabled":false,"identity_kind":"saved_executable_location","icon_b64":icon});
-            if summary {row["sessions"]=json!([]);}
+            let enabled=sessions.iter().any(|s|s["actions_enabled"]==true);
+            let mut row=json!({"playback_label":format!("{playback}; {muted}"),"id":e.id,"label":e.label,"state":state,"complete":complete,"sessions":sessions,"actions_enabled":enabled,"identity_kind":"saved_executable_location","icon_b64":icon});
+            if summary {for session in row["sessions"].as_array_mut().unwrap() {session.as_object_mut().unwrap().remove("icon_b64");}}
             row
         }).collect::<Vec<_>>();
         let choices = if fresh && !summary {
@@ -281,7 +302,171 @@ impl Registry {
         } else {
             vec![]
         };
-        json!({"schema_version":1,"revision":self.revision,"generation":self.generation,"age_ms":self.checked.map(|t|t.elapsed().as_millis().min(u64::MAX as u128) as u64),"skipped":self.snapshot["skipped"],"available":fresh,"complete":fresh&&self.snapshot["complete"]==true,"error":self.load_error.as_deref().or_else(||self.snapshot["error"].as_str()),"storage_writable":self.load_error.is_none(),"entries":entries,"choices":choices,"actions_enabled":false})
+        let actions_enabled = entries.iter().any(|e| e["actions_enabled"] == true);
+        let mut result = json!({"schema_version":1,"platform":if cfg!(windows){"windows"}else{"unsupported"},"revision":self.revision,"generation":self.generation,"age_ms":self.checked.map(|t|t.elapsed().as_millis().min(u64::MAX as u128) as u64),"skipped":self.snapshot["skipped"],"available":fresh,"complete":fresh&&self.snapshot["complete"]==true,"error":self.load_error.as_deref().or_else(||self.snapshot["error"].as_str()),"storage_writable":self.load_error.is_none(),"entries":entries,"choices":choices,"actions_enabled":actions_enabled});
+        // Preserve every exact session reference under the native transport budget.
+        // Duplicate saved locations can expand rows; dropping optional images is
+        // safer than silently dropping sessions or letting a large response stall.
+        if summary && result.to_string().len() > 120_000 {
+            for entry in result["entries"].as_array_mut().unwrap() {
+                entry["icon_b64"] = Value::Null;
+            }
+            result["icons_omitted"] = json!(true);
+        }
+        result
+    }
+    pub(crate) fn action_route(
+        &mut self,
+        post: bool,
+        get: bool,
+        path: &str,
+        body: &str,
+        principal: &str,
+    ) -> (u16, Value) {
+        let fail = |code, error: &str| (code, json!({"error":error}));
+        if !cfg!(windows) {
+            return fail(501, "Playback controls are unavailable on this platform");
+        }
+        if principal.is_empty() {
+            return fail(401, "Authorization is required");
+        }
+        self.poll();
+        match (post, get, path) {
+            (true, _, "/api/apps/actions/prepare") => self.prepare_action(principal, body),
+            (true, _, "/api/apps/actions/execute") => self.execute_action(principal, body),
+            (_, true, _) => {
+                let id = path.trim_start_matches("/api/apps/actions/");
+                if !token(id) {
+                    return fail(404, "Unknown operation");
+                }
+                self.actions.view(principal, id)
+            }
+            _ => fail(404, "Unknown app action route"),
+        }
+    }
+    fn unique_session(&self, session: &Session) -> bool {
+        self.sessions
+            .iter()
+            .filter(|s| {
+                s.value["endpoint_id"] == session.value["endpoint_id"]
+                    && s.value["session_instance_id"] == session.value["session_instance_id"]
+            })
+            .count()
+            == 1
+    }
+    fn exact_current(&self, entry_id: &str, key: &str) -> Option<&Session> {
+        if !self.fresh() || self.load_error.is_some() {
+            return None;
+        }
+        let entry = self.entries.iter().find(|e| e.id == entry_id)?;
+        let mut matched = self.sessions.iter().filter(|s| {
+            s.key == key
+                && s.value["endpoint_id"] == entry.endpoint
+                && s.value["executable_path"] == entry.executable
+        });
+        let session = matched.next()?;
+        (matched.next().is_none() && self.unique_session(session)).then_some(session)
+    }
+    fn prepare_action(&mut self, principal: &str, body: &str) -> (u16, Value) {
+        let fail = |code, error: &str| (code, json!({"error":error}));
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            return fail(400, "Expected a JSON object");
+        };
+        let Some(object) = value.as_object() else {
+            return fail(400, "Expected a JSON object");
+        };
+        if object.len() != 3
+            || object
+                .keys()
+                .any(|key| !matches!(key.as_str(), "entry_id" | "session_reference" | "action"))
+        {
+            return fail(
+                400,
+                "Unexpected action field; runtime targets are server-owned",
+            );
+        }
+        let (Some(entry_id), Some(reference), Some(action)) = (
+            value["entry_id"].as_str(),
+            value["session_reference"].as_str(),
+            value["action"].as_str(),
+        ) else {
+            return fail(
+                400,
+                "Entry, displayed session and fixed action are required",
+            );
+        };
+        let requested = match action {
+            "mute" => true,
+            "unmute" => false,
+            _ => return fail(400, "Only explicit mute or unmute is supported"),
+        };
+        if self
+            .worker
+            .as_ref()
+            .is_none_or(|worker| !worker.alive.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return fail(503, "Native action worker is unavailable");
+        }
+        let Some(selection) = self
+            .selections
+            .get(reference)
+            .filter(|s| s.issued.elapsed() < SELECTION_TTL)
+        else {
+            return fail(409, "Displayed session expired; refresh and select again");
+        };
+        let Some(session) = self.exact_current(entry_id, &selection.session.key) else {
+            return fail(409, "Displayed session changed; refresh and select again");
+        };
+        let key = session.key.clone();
+        let mut target = serde_json::Map::new();
+        for field in [
+            "endpoint_id",
+            "session_instance_id",
+            "process_id",
+            "process_started",
+            "executable_path",
+        ] {
+            target.insert(field.into(), session.value[field].clone());
+        }
+        let label = self
+            .entries
+            .iter()
+            .find(|e| e.id == entry_id)
+            .unwrap()
+            .label
+            .clone();
+        self.actions.prepare(
+            principal,
+            entry_id,
+            &key,
+            Value::Object(target),
+            &label,
+            requested,
+        )
+    }
+    fn execute_action(&mut self, principal: &str, body: &str) -> (u16, Value) {
+        let (id, entry, key, job) = match self.actions.consume(principal, body) {
+            Ok(v) => v,
+            Err(error) => return error,
+        };
+        if self.exact_current(&entry, &key).is_none() {
+            self.actions.reject(&id, "displayed_session_changed");
+        } else if self
+            .worker
+            .as_ref()
+            .is_none_or(|worker| worker.commands.try_send(job).is_err())
+        {
+            self.actions.reject(&id, "action_queue_unavailable");
+        }
+        let (_, receipt) = self.actions.view(principal, &id);
+        (
+            if receipt["state"] == "pending" {
+                202
+            } else {
+                409
+            },
+            receipt,
+        )
     }
     pub(crate) fn mutate(&mut self, operation: &str, body: &str) -> (u16, Value) {
         let fail = |status, message: &str| (status, json!({"error":message}));
@@ -409,6 +594,9 @@ fn unavailable(message: &str) -> Value {
 
 struct Worker {
     receiver: std::sync::mpsc::Receiver<(Instant, Value)>,
+    commands: std::sync::mpsc::SyncSender<Value>,
+    results: std::sync::mpsc::Receiver<(String, Instant, Value)>,
+    alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -437,12 +625,19 @@ impl Worker {
             mpsc, Arc,
         };
         let (sender, receiver) = mpsc::sync_channel(1);
+        let (commands, requests) = mpsc::sync_channel::<Value>(1);
+        let (completions, results) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_flag = alive.clone();
         let executable = std::env::current_exe()?;
         let thread = std::thread::Builder::new()
             .name("app-observer-owner".into())
             .spawn(move || {
+                struct Alive(Arc<AtomicBool>);
+                impl Drop for Alive {fn drop(&mut self){self.0.store(false,Ordering::Release);}}
+                let _alive=Alive(alive_flag);
                 while !flag.load(Ordering::Relaxed) {
                     let collected = Instant::now();
                     let (value, cleanup_confirmed) =
@@ -458,16 +653,32 @@ impl Worker {
                     {
                         break;
                     }
-                    for _ in 0..20 {
-                        if flag.load(Ordering::Relaxed) {
-                            return;
+                    let next_scan=Instant::now()+Duration::from_secs(2);
+                    while Instant::now()<next_scan {
+                        if flag.load(Ordering::Relaxed) {return;}
+                        match requests.recv_timeout(Duration::from_millis(50)) {
+                            Ok(job) => {
+                                let id=job["operation_id"].as_str().unwrap_or("").to_owned();
+                                let observed_since=Instant::now();
+                                let (result,cleaned)=crate::resident_worker::execute(&executable,&flag,&job);
+                                if completions.send((id,observed_since,result)).is_err() {return;}
+                                if !cleaned {
+                                    let _=sender.send((Instant::now(),unavailable("Native helper cleanup is unconfirmed; observation stopped")));
+                                    return;
+                                }
+                                break; // Immediately refresh live state after the completed operation.
+                            },
+                            Err(mpsc::RecvTimeoutError::Timeout)=>{},
+                            Err(mpsc::RecvTimeoutError::Disconnected)=>return,
                         }
-                        std::thread::sleep(Duration::from_millis(100));
                     }
                 }
             })?;
         Ok(Self {
             receiver,
+            commands,
+            results,
+            alive,
             stop,
             thread: Some(thread),
         })
@@ -490,6 +701,30 @@ pub fn print_snapshot() {
     };
     #[cfg(not(windows))]
     let value = unavailable("Native playback observation is unavailable on this platform");
+    println!("{value}");
+}
+
+/// Owned contained helper, activated only after the parent assigns its job.
+#[cfg(windows)]
+pub fn print_action() {
+    use std::io::Read;
+    let mut input = std::io::stdin().lock();
+    let mut gate = [0u8];
+    let mut bytes = Vec::new();
+    let value = if input.read_exact(&mut gate).is_ok()
+        && gate == [0x56]
+        && input
+            .take(crate::resident_action_protocol::MAX_JOB_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .is_ok()
+    {
+        match crate::resident_action_protocol::decode_job(&bytes) {
+            Ok(job) => crate::resident_windows::execute_action(&job),
+            Err(_) => json!({"state":"rejected_before_write","error":"invalid_action_job"}),
+        }
+    } else {
+        json!({"state":"rejected_before_write","error":"helper_not_activated"})
+    };
     println!("{value}");
 }
 
@@ -759,6 +994,9 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         registry.worker = Some(Worker {
             receiver,
+            commands: std::sync::mpsc::sync_channel(1).0,
+            results: std::sync::mpsc::channel().1,
+            alive: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
         });
@@ -779,6 +1017,219 @@ mod tests {
             .values()
             .all(|selection| selection.issued.elapsed() >= SELECTION_TTL));
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+    fn control_fixture() -> (
+        Registry,
+        std::sync::mpsc::Receiver<Value>,
+        std::sync::mpsc::Sender<(String, Instant, Value)>,
+    ) {
+        let path = temp();
+        let mut r = Registry::load(path);
+        let selection = select(&mut r);
+        assert_eq!(
+            r.mutate(
+                "pin",
+                &json!({"revision":0,"selection_id":selection}).to_string()
+            )
+            .0,
+            200
+        );
+        r.observe(snapshot(123, "session-a"), Instant::now());
+        let (commands, requests) = std::sync::mpsc::sync_channel(1);
+        let (completions, results) = std::sync::mpsc::channel();
+        r.worker = Some(Worker {
+            receiver: std::sync::mpsc::channel().1,
+            commands,
+            results,
+            alive: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            thread: None,
+        });
+        (r, requests, completions)
+    }
+    fn prepare_displayed(r: &mut Registry) -> Value {
+        let view = r.view(true);
+        let row = &view["entries"][0];
+        assert_eq!(row["sessions"][0]["actions_enabled"], true);
+        let (code,p)=r.prepare_action("fixture-browser",&json!({"entry_id":row["id"],"session_reference":row["sessions"][0]["session_reference"],"action":"mute"}).to_string());
+        assert_eq!(code, 200);
+        p
+    }
+    fn execute_body(prepared: &Value) -> String {
+        json!({"operation_id":prepared["operation_id"],"capability":prepared["capability"]})
+            .to_string()
+    }
+    fn clean_fixture(r: Registry) {
+        let path = r.path.clone();
+        drop(r);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn displayed_identity_changes_reject_before_dispatch() {
+        for change in [
+            "pid",
+            "start",
+            "instance",
+            "path",
+            "endpoint",
+            "duplicate",
+            "remove",
+            "stale",
+        ] {
+            let (mut r, requests, _) = control_fixture();
+            let prepared = prepare_displayed(&mut r);
+            let mut changed = snapshot(123, "session-a");
+            match change {
+                "pid" => changed["sessions"][0]["process_id"] = json!(999),
+                "start" => changed["sessions"][0]["process_started"] = json!("987654"),
+                "instance" => changed["sessions"][0]["session_instance_id"] = json!("replacement"),
+                "path" => changed["sessions"][0]["executable_path"] = json!("C:\\Other\\App.exe"),
+                "endpoint" => changed["sessions"][0]["endpoint_id"] = json!("other-output"),
+                "duplicate" => {
+                    let mut duplicate = changed["sessions"][0].clone();
+                    duplicate["process_id"] = json!(999);
+                    changed["sessions"].as_array_mut().unwrap().push(duplicate);
+                }
+                "remove" => r.entries.clear(),
+                _ => {}
+            }
+            r.observe(changed, Instant::now());
+            if change == "stale" {
+                r.checked = Some(Instant::now() - Duration::from_secs(7));
+            }
+            let (code, receipt) = r.execute_action("fixture-browser", &execute_body(&prepared));
+            assert_eq!(code, 409, "{change}");
+            assert_eq!(receipt["state"], "rejected_before_write", "{change}");
+            assert!(requests.try_recv().is_err());
+            clean_fixture(r);
+        }
+    }
+    #[test]
+    fn explicit_execute_is_one_use_and_completions_are_not_coalesced() {
+        let (mut r, requests, completions) = control_fixture();
+        let prepared = prepare_displayed(&mut r);
+        let id = prepared["operation_id"].as_str().unwrap();
+        assert!(requests.try_recv().is_err());
+        assert_eq!(
+            r.execute_action("fixture-browser", &execute_body(&prepared))
+                .0,
+            202
+        );
+        let job = requests.try_recv().unwrap();
+        assert_eq!(job["requested_muted"], true);
+        assert_eq!(job["target"]["process_id"], 123);
+        assert_eq!(
+            r.execute_action("fixture-browser", &execute_body(&prepared))
+                .0,
+            409
+        );
+        assert!(requests.try_recv().is_err());
+        let (snapshots, frames) = std::sync::mpsc::channel();
+        r.worker.as_mut().unwrap().receiver = frames;
+        snapshots
+            .send((Instant::now(), snapshot(123, "new-session")))
+            .unwrap();
+        snapshots
+            .send((Instant::now(), snapshot(123, "newer-session")))
+            .unwrap();
+        completions.send((id.into(),Instant::now()-Duration::from_millis(250),json!({"operation_id":id,"requested_muted":true,"state":"verified","observed_muted":true,"error":null}))).unwrap();
+        r.poll();
+        let receipt = r.actions.view("fixture-browser", id).1;
+        assert_eq!(receipt["state"], "verified");
+        assert!(receipt["readback_age_ms"].as_u64().unwrap() >= 250);
+        assert_eq!(r.sessions[0].value["session_instance_id"], "newer-session");
+        clean_fixture(r);
+    }
+    #[test]
+    fn queue_failure_and_owner_stop_are_distinct() {
+        let (mut r, requests, _) = control_fixture();
+        let p = prepare_displayed(&mut r);
+        drop(requests);
+        let receipt = r.execute_action("fixture-browser", &execute_body(&p)).1;
+        assert_eq!(receipt["state"], "rejected_before_write");
+        clean_fixture(r);
+        let (mut r, _requests, _) = control_fixture();
+        let p = prepare_displayed(&mut r);
+        let id = p["operation_id"].as_str().unwrap();
+        assert_eq!(
+            r.execute_action("fixture-browser", &execute_body(&p)).0,
+            202
+        );
+        r.worker
+            .as_ref()
+            .unwrap()
+            .alive
+            .store(false, std::sync::atomic::Ordering::Release);
+        r.poll();
+        let receipt = r.actions.view("fixture-browser", id).1;
+        assert_eq!(receipt["state"], "outcome_unconfirmed");
+        assert_eq!(r.view(false)["entries"][0]["actions_enabled"], false);
+        clean_fixture(r);
+    }
+    #[test]
+    fn action_prepare_rejects_raw_paths_stale_references_and_changed_session() {
+        let (mut r, _requests, _) = control_fixture();
+        let row = r.view(true)["entries"][0].clone();
+        let body = json!({"entry_id":row["id"],"session_reference":row["sessions"][0]["session_reference"],"action":"mute"});
+        for field in [
+            "executable_path",
+            "process_id",
+            "endpoint_id",
+            "requested_muted",
+        ] {
+            let mut altered = body.clone();
+            altered[field] = json!("client-supplied");
+            assert_eq!(
+                r.prepare_action("fixture-browser", &altered.to_string()).0,
+                400
+            );
+        }
+        r.observe(snapshot(999, "session-a"), Instant::now());
+        assert_eq!(
+            r.prepare_action("fixture-browser", &body.to_string()).0,
+            409
+        );
+        clean_fixture(r);
+    }
+    #[test]
+    fn maximum_summary_preserves_sessions_inside_proved_response_budget() {
+        let (mut r, _requests, _) = control_fixture();
+        let base = r.entries[0].clone();
+        r.entries = (0..MAX_ENTRIES)
+            .map(|i| {
+                let mut entry = base.clone();
+                entry.id = format!("{i:064x}");
+                entry.label = "\\".repeat(80);
+                entry
+            })
+            .collect();
+        let mut scan = snapshot(123, "session-a");
+        scan["sessions"] = json!((0..MAX_SESSIONS)
+            .map(|i| {
+                let mut v = snapshot(123, &format!("session-{i}"))["sessions"][0].clone();
+                v["display_name"] = json!("\\".repeat(160));
+                v
+            })
+            .collect::<Vec<_>>());
+        r.observe(scan, Instant::now());
+        // Test the already-validated resource-size upper bound independently of
+        // icon decoding fixtures. Images are optional; identities may not vanish.
+        for session in &mut r.sessions {
+            session.value["icon_b64"] = json!("A".repeat(10924));
+        }
+        let summary = r.view(true);
+        assert!(summary.to_string().len() + 1024 < 128 * 1024);
+        assert_eq!(summary["entries"].as_array().unwrap().len(), MAX_ENTRIES);
+        for row in summary["entries"].as_array().unwrap() {
+            assert_eq!(row["sessions"].as_array().unwrap().len(), MAX_SESSIONS);
+            assert!(row["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|session| session.get("icon_b64").is_none()
+                    && session["session_reference"].is_string()));
+        }
+        clean_fixture(r);
     }
     #[test]
     fn case_sensitive_locations_do_not_merge() {

@@ -36,6 +36,12 @@ use windows::{
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const SHOW_PANEL: u32 = WM_APP + 2;
+const UI_COMMAND: u32 = WM_APP + 3;
+const UI_MENU: u32 = WM_APP + 4;
+const FIRST_SESSION_COMMAND: u32 = 1000;
+const RESULT_LABEL: i32 = 13;
+const ROW_TOP: i32 = 274;
+const PANEL_HEIGHT: i32 = 326;
 const MENU_OPEN: u32 = 101;
 const MENU_STATUS: u32 = 102;
 const MENU_EXIT: u32 = 103;
@@ -72,61 +78,335 @@ impl Drop for TraySingleton {
     }
 }
 
-/// Only the proof result and port reach the UI. No token is copied into window
-/// text, messages, screenshots, or notification tooltips.
+/// Only public observation data and a local generation reach the UI. Bearers
+/// and prepared capabilities remain on the worker, including during retries of
+/// receipt reads (execute itself is never retried).
+#[derive(Clone)]
 struct Observation {
     port: Option<u16>,
     apps: serde_json::Value,
-    checked: Instant,
+    checked: Option<Instant>,
+    generation: u64,
 }
+impl Observation {
+    fn fresh(&self) -> bool {
+        self.port.is_some()
+            && self
+                .checked
+                .is_some_and(|checked| checked.elapsed() < Duration::from_secs(4))
+    }
+    fn unavailable(generation: u64) -> Self {
+        Self {
+            port: None,
+            apps: serde_json::Value::Null,
+            checked: None,
+            generation,
+        }
+    }
+}
+
+fn observation_time(started: Instant, value: &serde_json::Value) -> Option<Instant> {
+    started.checked_sub(Duration::from_millis(value["age_ms"].as_u64()?))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlaybackSelection {
+    generation: u64,
+    entry_id: String,
+    session_reference: String,
+    label: String,
+    process_id: u32,
+    requested_muted: bool,
+}
+
+fn reference_is_current(observation: &Observation, selection: &PlaybackSelection) -> bool {
+    observation.fresh()
+        && observation.generation == selection.generation
+        && observation.apps["entries"].as_array().is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row["id"].as_str() == Some(&selection.entry_id)
+                    && row["actions_enabled"] == true
+                    && row["sessions"].as_array().is_some_and(|sessions| {
+                        sessions.iter().any(|session| {
+                            session["actions_enabled"] == true
+                                && session["session_reference"].as_str()
+                                    == Some(&selection.session_reference)
+                                && session["process_id"].as_u64()
+                                    == Some(u64::from(selection.process_id))
+                        })
+                    })
+            })
+        })
+}
+
+enum WorkerCommand {
+    Playback(PlaybackSelection),
+    Settings,
+    Shutdown,
+}
+enum WorkerEvent {
+    Observation(Observation),
+    ActionResult(String),
+    Notice(String),
+    Shutdown(std::result::Result<bool, String>),
+}
+struct PendingPlayback {
+    client: service::ResidentControlClient,
+    prepared: service::PreparedPlayback,
+    selection: PlaybackSelection,
+    checked: Instant,
+    execute_attempted: bool,
+    started: Instant,
+    next_read: Instant,
+}
+
+/// Important results cannot be displaced by a periodic observation. The queue
+/// is bounded, and waiting for the UI always remains cancellable.
+fn send_worker_event(
+    sender: &mpsc::SyncSender<WorkerEvent>,
+    stop: &AtomicBool,
+    mut event: WorkerEvent,
+) -> bool {
+    while !stop.load(Ordering::Relaxed) {
+        match sender.try_send(event) {
+            Ok(()) => return true,
+            Err(mpsc::TrySendError::Full(returned)) => {
+                event = returned;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return false,
+        }
+    }
+    false
+}
+
+fn action_result(selection: &PlaybackSelection, message: &str) -> WorkerEvent {
+    WorkerEvent::ActionResult(format!(
+        "{} · PID {}\n{message}",
+        selection.label, selection.process_id
+    ))
+}
+
+fn poll_worker(
+    sender: mpsc::SyncSender<WorkerEvent>,
+    commands: mpsc::Receiver<WorkerCommand>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut client: Option<service::ResidentControlClient> = None;
+    let mut latest: Option<Observation> = None;
+    let mut pending: Option<PendingPlayback> = None;
+    let mut generation = 0u64;
+    let mut next_poll = Instant::now();
+    while !stop.load(Ordering::Relaxed) {
+        match commands.recv_timeout(Duration::from_millis(50)) {
+            Ok(WorkerCommand::Playback(selection)) => {
+                if pending.is_some()
+                    || client.is_none()
+                    || !latest
+                        .as_ref()
+                        .is_some_and(|view| reference_is_current(view, &selection))
+                {
+                    if !send_worker_event(&sender, &stop, action_result(&selection, "Selection is stale or unavailable. Refresh and select the exact playback session again.")) { return; }
+                    continue;
+                }
+                let preparation = client.as_ref().unwrap().prepare(
+                    &selection.entry_id,
+                    &selection.session_reference,
+                    selection.process_id,
+                    selection.requested_muted,
+                );
+                match preparation {
+                    Ok(prepared) => {
+                        pending = Some(PendingPlayback {
+                            client: client.take().unwrap(),
+                            prepared,
+                            selection,
+                            checked: latest.as_ref().unwrap().checked.unwrap(),
+                            execute_attempted: false,
+                            started: Instant::now(),
+                            next_read: Instant::now(),
+                        });
+                    }
+                    Err(_) => {
+                        // Preparation never writes. Do not keep actionable data
+                        // after an expired reference, failed proof, or failed read.
+                        client = None;
+                        latest = None;
+                        let _ = send_worker_event(
+                            &sender,
+                            &stop,
+                            WorkerEvent::Observation(Observation::unavailable(generation)),
+                        );
+                        if !send_worker_event(&sender, &stop, action_result(&selection, "Could not prepare this exact playback session. No execute request was sent; refresh and select again.")) { return; }
+                        next_poll = Instant::now();
+                    }
+                }
+            }
+            Ok(WorkerCommand::Settings) => {
+                if let Err(error) = open_configuration() {
+                    if !send_worker_event(&sender, &stop, WorkerEvent::Notice(error)) {
+                        return;
+                    }
+                }
+            }
+            Ok(WorkerCommand::Shutdown) => {
+                // Cancel an unexecuted preparation, or stop polling an executed
+                // request without implying that stopping restores its audio.
+                pending = None;
+                let result = service::request_shutdown();
+                if !send_worker_event(&sender, &stop, WorkerEvent::Shutdown(result)) {
+                    return;
+                }
+                client = None;
+                latest = None;
+                next_poll = Instant::now();
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Some(mut operation) = pending.take() {
+            let mut complete = None;
+            if !operation.execute_attempted {
+                if operation.checked.elapsed() >= Duration::from_secs(4) {
+                    complete = Some("Selection expired before execute. No execute request was sent; refresh and select again.".to_owned());
+                } else {
+                    // Exactly one attempt, even if the server's response is
+                    // lost. Subsequent requests only read this known receipt.
+                    if operation.client.execute(&operation.prepared).is_err() {
+                        latest = None;
+                        let _ = send_worker_event(
+                            &sender,
+                            &stop,
+                            WorkerEvent::Observation(Observation::unavailable(generation)),
+                        );
+                    }
+                    operation.execute_attempted = true;
+                    operation.next_read = Instant::now() + Duration::from_millis(250);
+                }
+            } else if operation.started.elapsed() >= Duration::from_secs(12) {
+                complete = Some("Playback outcome unconfirmed. Audio may have changed; inspect the session before trying again.".to_owned());
+            } else if Instant::now() >= operation.next_read {
+                match operation.client.receipt(operation.prepared.operation_id()) {
+                    Ok(receipt)
+                        if receipt.requested_muted == operation.selection.requested_muted =>
+                    {
+                        if receipt.state != service::PlaybackReceiptState::Pending {
+                            complete = Some(receipt.presentation().to_owned());
+                        }
+                    }
+                    _ => {
+                        latest = None;
+                        let _ = send_worker_event(
+                            &sender,
+                            &stop,
+                            WorkerEvent::Observation(Observation::unavailable(generation)),
+                        );
+                    }
+                }
+                operation.next_read = Instant::now() + Duration::from_millis(500);
+            }
+            if let Some(message) = complete {
+                // Invalidate the pre-action observation even on verified
+                // completion. A receipt is not a continuous/live observation.
+                latest = None;
+                let _ = send_worker_event(
+                    &sender,
+                    &stop,
+                    WorkerEvent::Observation(Observation::unavailable(generation)),
+                );
+                if !send_worker_event(
+                    &sender,
+                    &stop,
+                    action_result(&operation.selection, &message),
+                ) {
+                    return;
+                }
+                client = Some(operation.client);
+                next_poll = Instant::now();
+            } else {
+                pending = Some(operation);
+            }
+            continue;
+        }
+        if Instant::now() < next_poll {
+            continue;
+        }
+        // Age is measured from request start, then source age is subtracted.
+        // Network/queue time must never renew a stale source observation.
+        let started = Instant::now();
+        let result = service::ResidentControlClient::discover().and_then(|candidate| {
+            let apps = candidate.summary()?;
+            Ok((candidate, apps))
+        });
+        let observation = match result {
+            Ok((candidate, apps)) => {
+                if !client
+                    .as_ref()
+                    .is_some_and(|previous| previous.same_instance(&candidate))
+                {
+                    generation = generation.wrapping_add(1);
+                }
+                let observation = Observation {
+                    port: Some(candidate.port()),
+                    checked: observation_time(started, &apps),
+                    apps,
+                    generation,
+                };
+                client = Some(candidate);
+                observation
+            }
+            Err(_) => {
+                client = None;
+                Observation::unavailable(generation)
+            }
+        };
+        latest = Some(observation.clone());
+        match sender.try_send(WorkerEvent::Observation(observation)) {
+            Err(mpsc::TrySendError::Disconnected(_)) => return,
+            // Full status queues never block the next check or accept a stale
+            // click: the worker rechecks its latest reference before prepare.
+            Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+        }
+        next_poll = Instant::now() + Duration::from_secs(1);
+    }
+}
+
 struct Poller {
     stop: Arc<AtomicBool>,
+    commands: mpsc::SyncSender<WorkerCommand>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Poller {
-    fn start() -> crate::Result<(Self, mpsc::Receiver<Observation>)> {
-        let (sender, receiver) = mpsc::sync_channel(1);
+    fn start() -> crate::Result<(Self, mpsc::Receiver<WorkerEvent>)> {
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let (commands, requests) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
             .name("desktop-status".into())
-            .spawn(move || {
-                while !worker_stop.load(Ordering::Relaxed) {
-                    let (port, apps) = match service::resident_app_view() {
-                        Ok((port, apps)) => (Some(port), apps),
-                        Err(_) => (None, serde_json::Value::Null),
-                    };
-                    if matches!(
-                        sender.try_send(Observation {
-                            port,
-                            apps,
-                            checked: Instant::now()
-                        }),
-                        Err(mpsc::TrySendError::Disconnected(_))
-                    ) {
-                        break;
-                    }
-                    for _ in 0..10 {
-                        if worker_stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                }
-            })?;
+            .spawn(move || poll_worker(sender, requests, worker_stop))?;
         Ok((
             Self {
                 stop,
+                commands,
                 thread: Some(thread),
             },
             receiver,
         ))
     }
+    fn request(&self, command: WorkerCommand) -> bool {
+        self.commands.try_send(command).is_ok()
+    }
 }
 impl Drop for Poller {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // Proof + read-only summary has a 2 second total deadline; sleeping checks stop every 100 ms.
+        // No detached request threads. A playback exchange has one two-second
+        // deadline, and every step/queue wait checks stop. Shutdown's existing
+        // bounded release wait is also owned by this worker.
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -179,7 +459,7 @@ pub fn run() -> crate::Result<()> {
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             440,
-            262,
+            PANEL_HEIGHT,
             None,
             None,
             Some(instance),
@@ -210,7 +490,7 @@ pub fn run() -> crate::Result<()> {
                 STATUS_LABEL,
                 false,
             )?;
-            child(window, instance, "STATIC", "Read-only software entries; pin them in Settings.\nPlayback activity does not prove microphone or voice state.", 20, 94, 390, 50, 12, false)?;
+            child(window, instance, "STATIC", "Right-click a software tray icon to choose a playback session.\nPlayback controls never change microphone mute.", 20, 94, 390, 50, 12, false)?;
             child(
                 window,
                 instance,
@@ -235,6 +515,18 @@ pub fn run() -> crate::Result<()> {
                 MENU_HIDE as i32,
                 true,
             )?;
+            child(
+                window,
+                instance,
+                "STATIC",
+                "No playback action requested.",
+                20,
+                206,
+                390,
+                60,
+                RESULT_LABEL,
+                false,
+            )?;
             for index in 0..8 {
                 child(
                     window,
@@ -242,7 +534,7 @@ pub fn run() -> crate::Result<()> {
                     "STATIC",
                     "",
                     20,
-                    210 + index * 40,
+                    ROW_TOP + index * 40,
                     32,
                     32,
                     200 + index * 2,
@@ -261,7 +553,7 @@ pub fn run() -> crate::Result<()> {
                     "STATIC",
                     "",
                     62,
-                    210 + index * 40,
+                    ROW_TOP + index * 40,
                     345,
                     36,
                     201 + index * 2,
@@ -272,9 +564,9 @@ pub fn run() -> crate::Result<()> {
             if SetTimer(Some(window), TIMER, 250, None) == 0 {
                 return Err(windows::core::Error::from_win32().into());
             }
-            let (_poller, receiver) = Poller::start()?;
+            let (poller, receiver) = Poller::start()?;
             let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
-            message_loop(window, receiver)
+            message_loop(window, receiver, &poller)
         })();
         let _ = KillTimer(Some(window), TIMER);
         let _ = Shell_NotifyIconW(NIM_DELETE, &icon(window));
@@ -368,24 +660,210 @@ fn add_icon(window: HWND) -> crate::Result<()> {
     Ok(())
 }
 
-fn show_menu(window: HWND) {
-    unsafe {
-        let Ok(menu) = CreatePopupMenu() else {
-            return;
-        };
-        let items = [
-            (MENU_SHOW, "Show controls"),
-            (MENU_OPEN, "Settings…"),
-            (MENU_STATUS, "Service status"),
-            (MENU_HIDE, "Hide panel (keep running)"),
-            (MENU_EXIT, "Exit VibDock"),
-        ];
-        for (id, label) in items {
-            let label = wide(label);
-            if AppendMenuW(menu, MF_STRING, id as usize, PCWSTR(label.as_ptr())).is_err() {
-                let _ = DestroyMenu(menu);
-                return;
+fn visible_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(100)
+        .collect()
+}
+fn tray_row<'a>(
+    rows: &'a [serde_json::Value],
+    uids: &[u32],
+    uid: usize,
+) -> Option<&'a serde_json::Value> {
+    if uid < 2 {
+        return None;
+    }
+    let index = uids.iter().position(|id| *id as usize == uid)?;
+    rows.get(index)
+}
+
+fn stable_tray_ids(
+    previous: &[serde_json::Value],
+    ids: &[u32],
+    rows: &[serde_json::Value],
+    next: &mut u32,
+) -> Vec<u32> {
+    rows.iter()
+        .map(|row| {
+            previous
+                .iter()
+                .position(|old| old["id"] == row["id"])
+                .and_then(|index| ids.get(index).copied())
+                .unwrap_or_else(|| {
+                    if *next < 2 {
+                        return 0;
+                    }
+                    let id = *next;
+                    // An exhausted ID space uses no actionable ID. Never wrap to
+                    // another row or the main icon after a delayed tray callback.
+                    *next = next.checked_add(1).unwrap_or(0);
+                    id
+                })
+        })
+        .collect()
+}
+
+struct SessionMenuEntry {
+    description: String,
+    mute: PlaybackSelection,
+    unmute: PlaybackSelection,
+}
+fn session_menu_entries(row: &serde_json::Value, generation: u64) -> Vec<SessionMenuEntry> {
+    if row["actions_enabled"] != true {
+        return vec![];
+    }
+    let Some(entry_id) = row["id"].as_str() else {
+        return vec![];
+    };
+    let Some(sessions) = row["sessions"].as_array() else {
+        return vec![];
+    };
+    sessions
+        .iter()
+        .take(32)
+        .enumerate()
+        .filter_map(|(index, session)| {
+            if session["actions_enabled"] != true {
+                return None;
             }
+            let reference = session["session_reference"].as_str()?;
+            if reference.len() != 64 || !reference.bytes().all(|value| value.is_ascii_hexdigit()) {
+                return None;
+            }
+            let process_id = u32::try_from(session["process_id"].as_u64()?)
+                .ok()
+                .filter(|pid| *pid != 0)?;
+            let label = visible_text(row["label"].as_str().unwrap_or("Software"));
+            let display = visible_text(
+                session["display_name"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(&label),
+            );
+            let state = match session["muted"].as_bool() {
+                Some(true) => "muted",
+                Some(false) => "unmuted",
+                None => "mute unknown",
+            };
+            let activity = if session["active"] == true {
+                "active"
+            } else {
+                "inactive"
+            };
+            let mute = PlaybackSelection {
+                generation,
+                entry_id: entry_id.to_owned(),
+                session_reference: reference.to_owned(),
+                label: format!(
+                    "{} / session {}: {}",
+                    label.chars().take(28).collect::<String>(),
+                    index + 1,
+                    display.chars().take(28).collect::<String>()
+                ),
+                process_id,
+                requested_muted: true,
+            };
+            let mut unmute = mute.clone();
+            unmute.requested_muted = false;
+            Some(SessionMenuEntry {
+                description: format!(
+                    "Session {}: {display} · PID {process_id} · {activity}, {state}",
+                    index + 1
+                ),
+                mute,
+                unmute,
+            })
+        })
+        .collect()
+}
+
+enum MenuChoice {
+    Command(u32),
+    Playback(PlaybackSelection),
+}
+
+/// The row mapping and all command bindings are immutable for the entire
+/// TrackPopupMenu call. No periodic observation can retarget an open menu.
+fn show_menu(
+    window: HWND,
+    uid: usize,
+    apps: &AppIcons,
+    observation: Option<&Observation>,
+    busy: bool,
+) -> Option<MenuChoice> {
+    unsafe {
+        let menu = CreatePopupMenu().ok()?;
+        let mut actions = Vec::new();
+        let built = (|| -> windows::core::Result<()> {
+            if uid != 1 {
+                let Some(row) = tray_row(&apps.rows, &apps.uids, uid) else {
+                    return Ok(());
+                };
+                let label = wide(
+                    &visible_text(row["label"].as_str().unwrap_or("Software")).replace('&', "&&"),
+                );
+                AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+                let available = observation.is_some_and(Observation::fresh) && !busy;
+                let sessions = if available {
+                    session_menu_entries(row, observation.unwrap().generation)
+                } else {
+                    vec![]
+                };
+                if sessions.is_empty() {
+                    let label = wide(if busy {
+                        "Playback request pending; controls disabled"
+                    } else {
+                        "No fresh, controllable playback session"
+                    });
+                    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+                }
+                for session in sessions {
+                    let submenu = CreatePopupMenu()?;
+                    // Attach first so DestroyMenu owns it on every later error.
+                    let label = wide(&session.description.replace('&', "&&"));
+                    if let Err(error) =
+                        AppendMenuW(menu, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))
+                    {
+                        let _ = DestroyMenu(submenu);
+                        return Err(error);
+                    }
+                    for (selection, label) in [
+                        (session.mute, "Mute this playback session"),
+                        (session.unmute, "Unmute this playback session"),
+                    ] {
+                        let id = FIRST_SESSION_COMMAND + actions.len() as u32;
+                        let label = wide(label);
+                        AppendMenuW(submenu, MF_STRING, id as usize, PCWSTR(label.as_ptr()))?;
+                        actions.push(selection);
+                    }
+                }
+                if row["sessions"]
+                    .as_array()
+                    .is_some_and(|sessions| sessions.len() > 32)
+                {
+                    let label =
+                        wide("Showing the first 32 sessions; no other session will be changed");
+                    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+                }
+                AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+            }
+            for (id, label) in [
+                (MENU_SHOW, "Show controls"),
+                (MENU_OPEN, "Settings…"),
+                (MENU_STATUS, "Service status"),
+                (MENU_HIDE, "Hide panel (keep running)"),
+                (MENU_EXIT, "Exit VibDock"),
+            ] {
+                let label = wide(label);
+                AppendMenuW(menu, MF_STRING, id as usize, PCWSTR(label.as_ptr()))?;
+            }
+            Ok(())
+        })();
+        if built.is_err() || (uid != 1 && tray_row(&apps.rows, &apps.uids, uid).is_none()) {
+            let _ = DestroyMenu(menu);
+            return None;
         }
         let mut point = POINT::default();
         let _ = GetCursorPos(&mut point);
@@ -400,28 +878,47 @@ fn show_menu(window: HWND) {
             None,
         );
         let _ = DestroyMenu(menu);
-        // Required to reliably dismiss a notification-area menu on outside click.
         let _ = PostMessageW(Some(window), WM_NULL, WPARAM(0), LPARAM(0));
-        if chosen.as_bool() {
-            command(window, chosen.0 as u32);
+        let id = chosen.0 as u32;
+        if id >= FIRST_SESSION_COMMAND {
+            actions
+                .get((id - FIRST_SESSION_COMMAND) as usize)
+                .cloned()
+                .map(MenuChoice::Playback)
+        } else if chosen.as_bool() {
+            Some(MenuChoice::Command(id))
+        } else {
+            None
         }
     }
 }
 
-fn open_configuration() {
-    let result = crate::configuration_url().and_then(|url| {
-        let url = wide(&url); let verb = wide("open");
-        let result = unsafe { ShellExecuteW(None, PCWSTR(verb.as_ptr()), PCWSTR(url.as_ptr()), None, None, SW_SHOWNORMAL) };
-        if result.0 as isize <= 32 { Err("Windows could not open the settings page. Check your default browser and try again.".into()) } else { Ok(()) }
-    });
-    if let Err(error) = result {
-        notify("VibDock settings", &error.to_string(), MB_ICONERROR);
+/// Called exclusively on the poll worker. No network, proof, or browser
+/// authorization is performed by the window procedure or modal menu callbacks.
+fn open_configuration() -> std::result::Result<(), String> {
+    let url = crate::configuration_url().map_err(|_| "Could not authorize Settings with the current service. Try again after its identity is verified.".to_owned())?;
+    let url = wide(&url);
+    let verb = wide("open");
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(url.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize <= 32 {
+        Err("Windows could not open Settings. Check your default browser and try again.".into())
+    } else {
+        Ok(())
     }
 }
 
-fn report_status() {
-    let body = match service::live_instance() {
-        Some(instance) => format!("Connected to the verified VibDock service on port {}.\n\nConnection is not proof of an audio action or an application voice session.", instance.port),
+fn report_status(observation: Option<&Observation>) {
+    let body = match observation.filter(|view| view.fresh()).and_then(|view| view.port) {
+        Some(port) => format!("Connected to the verified VibDock service on port {port}.\n\nConnection is not proof of an audio action or an application voice session."),
         None => "Service unavailable: no current instance proof. Open VibDock again to restart the service.".into(),
     };
     notify("VibDock service status", &body, MB_ICONINFORMATION);
@@ -444,20 +941,51 @@ fn show_panel(window: HWND) {
         let _ = SetForegroundWindow(window);
     }
 }
-fn command(window: HWND, id: u32) {
-    match id {
-        MENU_OPEN => open_configuration(), MENU_STATUS => report_status(), MENU_SHOW => show_panel(window),
-        MENU_HIDE | 2 => unsafe { let _ = ShowWindow(window, SW_HIDE); },
-        MENU_EXIT => match service::request_shutdown() {
-            Ok(_) => unsafe { PostQuitMessage(0); },
-            Err(error) => notify("VibDock could not exit", &format!("{error}\n\nThe panel and tray remain available. Retry Exit to stop the verified service."), MB_ICONWARNING),
-        },
-        _ => {}
+fn set_result(window: HWND, text: &str) {
+    unsafe {
+        if let Ok(label) = GetDlgItem(Some(window), RESULT_LABEL) {
+            let text = wide(text);
+            let _ = SetWindowTextW(label, PCWSTR(text.as_ptr()));
+        }
     }
 }
-fn message_loop(window: HWND, receiver: mpsc::Receiver<Observation>) -> crate::Result<()> {
+fn command(window: HWND, id: u32, poller: &Poller, observation: Option<&Observation>) {
+    let requested = match id {
+        MENU_OPEN => Some(poller.request(WorkerCommand::Settings)),
+        MENU_EXIT => Some(poller.request(WorkerCommand::Shutdown)),
+        MENU_STATUS => {
+            report_status(observation);
+            None
+        }
+        MENU_SHOW => {
+            show_panel(window);
+            None
+        }
+        MENU_HIDE | 2 => {
+            unsafe {
+                let _ = ShowWindow(window, SW_HIDE);
+            }
+            None
+        }
+        // Session commands are accepted only from this menu's frozen returned
+        // binding. A posted numeric WM_COMMAND is not a playback selection.
+        _ => None,
+    };
+    if requested == Some(false) {
+        set_result(
+            window,
+            "A request is already queued. Please wait and try again.",
+        );
+    }
+}
+fn message_loop(
+    window: HWND,
+    receiver: mpsc::Receiver<WorkerEvent>,
+    poller: &Poller,
+) -> crate::Result<()> {
     let mut observation: Option<Observation> = None;
     let mut shown = String::new();
+    let mut busy = false;
     let mut apps = AppIcons::new(window);
     unsafe {
         let mut message = MSG::default();
@@ -468,19 +996,36 @@ fn message_loop(window: HWND, receiver: mpsc::Receiver<Observation>) -> crate::R
                 _ => {}
             }
             if message.message == WM_TIMER && message.wParam.0 == TIMER {
-                if let Ok(next) = receiver.try_recv() {
-                    observation = Some(next);
+                while let Ok(event) = receiver.try_recv() {
+                    match event {
+                        WorkerEvent::Observation(next) => observation = Some(next),
+                        WorkerEvent::ActionResult(result) => {
+                            busy = false;
+                            set_result(window, &result);
+                        }
+                        WorkerEvent::Notice(message) => {
+                            notify("VibDock settings", &message, MB_ICONERROR)
+                        }
+                        WorkerEvent::Shutdown(Ok(_)) => {
+                            PostQuitMessage(0);
+                        }
+                        WorkerEvent::Shutdown(Err(error)) => {
+                            busy = false;
+                            set_result(window, "Playback outcome may be unconfirmed after cancelling its receipt check.");
+                            notify("VibDock could not exit", &format!("{error}\n\nThe panel and tray remain available. Retry Exit to stop the verified service."), MB_ICONWARNING);
+                        }
+                    }
                 }
                 let port = observation
                     .as_ref()
-                    .filter(|value| value.checked.elapsed() < Duration::from_secs(4))
+                    .filter(|value| value.fresh())
                     .and_then(|value| value.port);
-                let text = match port { Some(port) => format!("Service: connected (verified, port {port})\nAudio action / app voice state: not verified here"), None => "Service: unavailable / unknown\nNo current instance proof; audio state is unknown".into() };
-                let fresh = observation.as_ref().is_some_and(|v| {
-                    v.checked.elapsed() < Duration::from_secs(4) && v.port.is_some()
-                });
+                let text = match port {
+                    Some(port) => format!("Service: connected (verified, port {port})\nPlayback actions require an explicit session selection"),
+                    None => "Service: unavailable / unknown\nNo current observation; playback controls are disabled".into(),
+                };
                 if let Some(current) = observation.as_ref() {
-                    apps.update(&current.apps, fresh);
+                    apps.update(&current.apps, current.fresh());
                 }
                 if text != shown {
                     if let Ok(label) = GetDlgItem(Some(window), STATUS_LABEL) {
@@ -489,6 +1034,54 @@ fn message_loop(window: HWND, receiver: mpsc::Receiver<Observation>) -> crate::R
                     }
                     shown = text;
                 }
+            } else if message.message == UI_COMMAND {
+                command(
+                    window,
+                    message.wParam.0 as u32,
+                    poller,
+                    observation.as_ref(),
+                );
+                continue;
+            } else if message.message == UI_MENU {
+                // Revoke stale icon data before opening, then retain this exact
+                // mapping until modal tracking returns. Recheck at the click.
+                if let Some(current) = observation.as_ref() {
+                    apps.update(&current.apps, current.fresh());
+                }
+                match show_menu(window, message.wParam.0, &apps, observation.as_ref(), busy) {
+                    Some(MenuChoice::Command(id)) => {
+                        command(window, id, poller, observation.as_ref())
+                    }
+                    Some(MenuChoice::Playback(selection)) => {
+                        let pending_text = format!(
+                            "{} · PID {}\n{} request pending; result not yet verified.",
+                            selection.label,
+                            selection.process_id,
+                            if selection.requested_muted {
+                                "Mute"
+                            } else {
+                                "Unmute"
+                            }
+                        );
+                        if busy
+                            || !observation
+                                .as_ref()
+                                .is_some_and(|view| reference_is_current(view, &selection))
+                        {
+                            set_result(window, "Selection expired while the menu was open. Refresh and select the exact session again.");
+                        } else if poller.request(WorkerCommand::Playback(selection)) {
+                            busy = true;
+                            set_result(window, &pending_text);
+                        } else {
+                            set_result(
+                                window,
+                                "A request is already queued. Please wait and select again.",
+                            );
+                        }
+                    }
+                    None => {}
+                }
+                continue;
             }
             if !IsDialogMessageW(window, &message).as_bool() {
                 let _ = TranslateMessage(&message);
@@ -497,6 +1090,7 @@ fn message_loop(window: HWND, receiver: mpsc::Receiver<Observation>) -> crate::R
         }
     }
 }
+
 unsafe extern "system" fn window_proc(
     window: HWND,
     message: u32,
@@ -526,17 +1120,26 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_COMMAND => {
-            command(window, (wparam.0 & 0xffff) as u32);
+            let _ = PostMessageW(
+                Some(window),
+                UI_COMMAND,
+                WPARAM(wparam.0 & 0xffff),
+                LPARAM(0),
+            );
             LRESULT(0)
         }
         WM_CONTEXTMENU => {
-            show_menu(window);
+            let _ = PostMessageW(Some(window), UI_MENU, WPARAM(1), LPARAM(0));
             LRESULT(0)
         }
         TRAY_MESSAGE => {
             match lparam.0 as u32 {
                 WM_LBUTTONUP => show_panel(window),
-                WM_RBUTTONUP => show_menu(window),
+                WM_RBUTTONUP => {
+                    // With the legacy notify-icon protocol wParam is the
+                    // actual uID. Do not substitute the primary icon's menu.
+                    let _ = PostMessageW(Some(window), UI_MENU, wparam, LPARAM(0));
+                }
                 _ => {}
             };
             LRESULT(0)
@@ -549,14 +1152,37 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-// Each pinned entry has its own notification-area icon. Clicking any entry
-// restores this one panel; this read-only increment has no audio action target.
+fn displayed_rows(
+    value: &serde_json::Value,
+    previous: &[serde_json::Value],
+    fresh: bool,
+) -> Vec<serde_json::Value> {
+    let mut rows: Vec<_> = value["entries"]
+        .as_array()
+        .map(|rows| rows.iter().take(8).cloned().collect())
+        .unwrap_or_else(|| previous.to_vec());
+    if !fresh {
+        for row in &mut rows {
+            row["state"] = serde_json::json!("unknown");
+            row["playback_label"] = serde_json::json!("Playback state unknown");
+            row["icon_b64"] = serde_json::Value::Null;
+            row["actions_enabled"] = serde_json::json!(false);
+            row["sessions"] = serde_json::json!([]);
+        }
+    }
+    rows
+}
+
+// Each pinned entry has its own notification-area icon and exact uID-to-row
+// mapping. Its menu captures one explicit session, never the first or all.
 struct AppIcons {
     window: HWND,
     key: String,
     icons: Vec<(HICON, bool)>,
     data: Vec<NOTIFYICONDATAW>,
     rows: Vec<serde_json::Value>,
+    uids: Vec<u32>,
+    next_uid: u32,
 }
 impl AppIcons {
     fn new(window: HWND) -> Self {
@@ -566,6 +1192,8 @@ impl AppIcons {
             icons: vec![],
             data: vec![],
             rows: vec![],
+            uids: vec![],
+            next_uid: 2,
         }
     }
     fn clear(&mut self) {
@@ -588,16 +1216,9 @@ impl AppIcons {
     }
     fn update(&mut self, value: &serde_json::Value, fresh: bool) {
         unsafe {
-            if let Some(rows) = value["entries"].as_array() {
-                self.rows = rows.iter().take(8).cloned().collect();
-            }
-            let mut rows = self.rows.clone();
-            if !fresh {
-                for row in &mut rows {
-                    row["state"] = serde_json::json!("unknown");
-                    row["playback_label"] = serde_json::json!("Playback state unknown");
-                }
-            }
+            let rows = displayed_rows(value, &self.rows, fresh);
+            self.uids = stable_tray_ids(&self.rows, &self.uids, &rows, &mut self.next_uid);
+            self.rows = rows.clone();
             let key = serde_json::to_string(&rows).unwrap_or_default();
             if self.key == key {
                 // Explorer can restart while the panel is hidden. Failed modify
@@ -665,7 +1286,7 @@ impl AppIcons {
                 let mut data = NOTIFYICONDATAW {
                     cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                     hWnd: self.window,
-                    uID: 2 + index as u32,
+                    uID: self.uids[index as usize],
                     uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
                     uCallbackMessage: TRAY_MESSAGE,
                     hIcon: icon,
@@ -684,7 +1305,7 @@ impl AppIcons {
                 0,
                 0,
                 440,
-                262 + rows.len() as i32 * 40,
+                PANEL_HEIGHT + rows.len() as i32 * 40,
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
@@ -693,5 +1314,115 @@ impl AppIcons {
 impl Drop for AppIcons {
     fn drop(&mut self) {
         self.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn fixture_observation() -> Observation {
+        Observation {
+            port: Some(43128),
+            checked: Some(Instant::now()),
+            generation: 7,
+            apps: json!({"age_ms":0,"entries":[{"id":"a".repeat(64),"label":"Synthetic fixture, not live audio","icon_b64":"old icon","actions_enabled":true,"sessions":[
+                {"session_reference":"b".repeat(64),"process_id":41,"display_name":"First fixture","muted":false,"active":true,"actions_enabled":true},
+                {"session_reference":"c".repeat(64),"process_id":42,"display_name":"Second fixture","muted":true,"active":false,"actions_enabled":true}
+            ]}]}),
+        }
+    }
+
+    #[test]
+    fn tray_uid_routes_to_exact_displayed_row_and_never_falls_back() {
+        let rows = vec![json!({"label":"first"}), json!({"label":"second"})];
+        assert_eq!(tray_row(&rows, &[2, 3], 2).unwrap()["label"], "first");
+        assert_eq!(tray_row(&rows, &[2, 3], 3).unwrap()["label"], "second");
+        for uid in [0, 1, 4, usize::MAX] {
+            assert!(tray_row(&rows, &[2, 3], uid).is_none());
+        }
+    }
+
+    #[test]
+    fn removed_tray_ids_are_never_reassigned_to_another_entry() {
+        let old = vec![json!({"id":"one"}), json!({"id":"two"})];
+        let rows = vec![json!({"id":"two"}), json!({"id":"three"})];
+        let mut next = 4;
+        let ids = stable_tray_ids(&old, &[2, 3], &rows, &mut next);
+        assert_eq!(ids, vec![3, 4]);
+        assert!(tray_row(&rows, &ids, 2).is_none());
+        assert_eq!(tray_row(&rows, &ids, 3).unwrap()["id"], "two");
+        assert_eq!(next, 5);
+    }
+
+    #[test]
+    fn each_session_has_fixed_explicit_actions_and_frozen_identity() {
+        let mut observation = fixture_observation();
+        let menu = session_menu_entries(&observation.apps["entries"][0], observation.generation);
+        assert_eq!(menu.len(), 2);
+        assert!(menu[0].description.contains("PID 41"));
+        assert!(menu[1].description.contains("PID 42"));
+        assert_eq!(menu[1].mute.process_id, 42);
+        assert_eq!(menu[1].mute.session_reference, "c".repeat(64));
+        assert!(menu[1].mute.requested_muted);
+        assert!(!menu[1].unmute.requested_muted);
+        observation.apps["entries"][0]["sessions"][1]["session_reference"] = json!("d".repeat(64));
+        // A refresh cannot turn this chosen second session into the replacement.
+        assert_eq!(menu[1].mute.session_reference, "c".repeat(64));
+        assert!(!reference_is_current(&observation, &menu[1].mute));
+        assert!(reference_is_current(&observation, &menu[0].mute));
+    }
+
+    #[test]
+    fn tray_id_exhaustion_is_sticky_and_never_reuses_primary_or_removed_ids() {
+        let mut next = u32::MAX;
+        assert_eq!(
+            stable_tray_ids(&[], &[], &[serde_json::json!({"id":"last"})], &mut next),
+            vec![u32::MAX]
+        );
+        for _ in 0..4 {
+            assert_eq!(
+                stable_tray_ids(&[], &[], &[serde_json::json!({"id":"new"})], &mut next),
+                vec![0]
+            );
+            assert_eq!(next, 0);
+        }
+        assert!(tray_row(&[serde_json::json!({"id":"new"})], &[0], 0).is_none());
+    }
+
+    #[test]
+    fn freshness_counts_source_age_network_time_and_service_replacement() {
+        let mut observation = fixture_observation();
+        let selected =
+            session_menu_entries(&observation.apps["entries"][0], observation.generation)
+                .remove(0)
+                .mute;
+        let started = Instant::now() - Duration::from_millis(2200);
+        observation.checked = observation_time(started, &json!({"age_ms":2100}));
+        assert!(!observation.fresh());
+        assert!(!reference_is_current(&observation, &selected));
+        assert!(observation_time(Instant::now(), &json!({})).is_none());
+        observation.checked = Some(Instant::now());
+        observation.generation += 1;
+        assert!(!reference_is_current(&observation, &selected));
+        observation.generation = selected.generation;
+        assert!(reference_is_current(&observation, &selected));
+        observation.apps["entries"][0]["sessions"][0]["actions_enabled"] = json!(false);
+        assert!(!reference_is_current(&observation, &selected));
+    }
+
+    #[test]
+    fn stale_or_unproved_rows_clear_icons_references_and_actions() {
+        let observation = fixture_observation();
+        let rows = displayed_rows(&observation.apps, &[], true);
+        assert!(rows[0]["icon_b64"].is_string());
+        let stale = displayed_rows(&serde_json::Value::Null, &rows, false);
+        assert_eq!(stale[0]["state"], "unknown");
+        assert!(stale[0]["icon_b64"].is_null());
+        assert_eq!(stale[0]["actions_enabled"], false);
+        assert!(stale[0]["sessions"].as_array().unwrap().is_empty());
+        assert!(session_menu_entries(&stale[0], 7).is_empty());
+        assert!(displayed_rows(&json!({"entries":[]}), &stale, true).is_empty());
     }
 }

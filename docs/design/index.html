@@ -281,7 +281,7 @@ function renderAppEntries(data){
  lastAppsData=data;appRevision=data.revision;const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
  const key=JSON.stringify([data.platform,data.observation_kind,data.revision,data.available,data.complete,data.error,data.entries,data.choices]);if(key===appsRenderKey)return;appsRenderKey=key;
  $('appsTitle').textContent=mac?'固定软件，查看真实运行状态。':'固定软件，查看真实播放会话。';
- $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':'固定条目保存在本机服务中。播放活动不代表正在收音或通话；本轮只读，不提供静音或启动应用操作。';
+ $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':data.platform==='windows'?'固定条目保存在本机服务中。此页管理条目和查看播放状态；右键 Windows 软件托盘图标可静音或取消静音指定播放会话。播放活动不代表收音或通话。':'固定条目保存在本机服务中。此平台暂不支持真实播放控制；不会启动应用。';
  $('appsChoicesTitle').textContent=mac?'当前可读取的本机应用':'当前可读取的软件会话';
  $('appsChoicesHelp').textContent=mac?'仅列出身份已重新核验的当前用户应用。固定的是应用位置，重启后仍会重新观察；不会启动或终止软件。':'只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。';
  $('appReadStatus').textContent=data.error||(mac?(!data.available?'应用运行状态未知':data.complete?'已读取本机应用。运行不代表正在播放或工作。':'已读取部分应用；缺失项目运行状态未知。'):(!data.available?'播放状态未知或此平台暂不支持':data.complete?'已读取当前播放会话。语音状态不在此推断。':'已读取部分会话；缺失项目状态未知。'));

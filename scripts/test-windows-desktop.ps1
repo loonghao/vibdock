@@ -17,7 +17,7 @@ foreach ($name in @('vibdock.exe', 'vibdock-launcher.exe')) {
 }
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $evidence = (Resolve-Path -LiteralPath $EvidenceDirectory).Path
-foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-restored.png')) {
+foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-software-menu.png', 'resident-restored.png')) {
     $old = Join-Path $evidence $name
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
 }
@@ -107,9 +107,24 @@ try {
     Wait-Until {
         try { $script:softwareView = Invoke-RestMethod -Uri ("http://127.0.0.1:$port/api/apps") -Headers @{Authorization=('Bearer ' + $privateRecord.token)} -TimeoutSec 3; return $script:softwareView.generation -gt 0 } catch { return $false }
     } 'Owned native observer did not publish a completed result'
-    if ($softwareView.actions_enabled -or $softwareView.entries[0].state -ne 'unknown') { throw 'Software observation violated read-only/unknown contract' }
+    if ($softwareView.actions_enabled -or $softwareView.entries[0].state -ne 'unknown') { throw 'Offline fixture incorrectly enabled a playback control or invented live state' }
     if ($softwareView.error -match 'containment|activation|output storage|cleanup is unconfirmed|could not start|timed out') { throw 'Owned observer infrastructure failed' }
     $nativeProbe = @{generation=$softwareView.generation;available=$softwareView.available;complete=$softwareView.complete;readableSessions=@($softwareView.choices).Count;skipped=$softwareView.skipped;error=$softwareView.error}
+    # Negative calls never name a live session or mutate audio. Raw targets and
+    # forged/unknown capabilities must fail before the contained action helper.
+    $prepareBody = @{entry_id=('a' * 64);session_reference=('f' * 64);action='mute'} | ConvertTo-Json -Compress
+    $authHeaders = @{Authorization=('Bearer ' + $privateRecord.token)}
+    $checks = @(
+        @{path='/api/apps/actions/prepare';headers=@{};body=$prepareBody;expected=401},
+        @{path='/api/apps/actions/prepare';headers=@{Authorization=('Bearer ' + $privateRecord.token);Origin='https://attacker.invalid'};body=$prepareBody;expected=403},
+        @{path='/api/apps/actions/prepare';headers=$authHeaders;body=$prepareBody;expected=409},
+        @{path='/api/apps/actions/prepare';headers=$authHeaders;body='{"entry_id":"fixture","session_reference":"forged","action":"mute","executable_path":"C:\\Fixture\\NeverExecuted.exe"}';expected=400},
+        @{path='/api/apps/actions/execute';headers=$authHeaders;body=(@{operation_id=('e' * 64);capability=('f' * 64)} | ConvertTo-Json -Compress);expected=404}
+    )
+    foreach ($check in $checks) {
+        $response = Invoke-WebRequest -Uri ("http://127.0.0.1:$port" + $check.path) -Method Post -Headers $check.headers -ContentType 'application/json' -Body $check.body -TimeoutSec 3 -SkipHttpErrorCheck
+        if ([int]$response.StatusCode -ne $check.expected) { throw 'Playback action authorization or exact-selection rejection failed' }
+    }
     Save-Window $window 'resident-panel.png'
     [void][VibDockNative]::PostMessage($window, 0x007B, $window, [IntPtr](-1)) # WM_CONTEXTMENU
     $menuWindow = [IntPtr]::Zero
@@ -127,6 +142,23 @@ try {
     if (-not ($labels -contains 'Settings…') -or -not ($labels -contains 'Exit VibDock')) { throw 'Context menu lacks Settings or Exit' }
     Save-Window $menuWindow 'resident-context-menu.png'
     [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CANCELMODE
+    Start-Sleep -Milliseconds 150
+    # Use the real first software icon uID, not the primary icon's generic menu.
+    [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]2, [IntPtr]0x0205)
+    Wait-Until { $script:menuWindow = [VibDockNative]::FindWindow('#32768', $null); $script:menuWindow -ne [IntPtr]::Zero -and [VibDockNative]::IsWindowVisible($script:menuWindow) } 'Software icon context menu did not open'
+    [uint32]$softwareMenuPid = 0
+    [void][VibDockNative]::GetWindowThreadProcessId($menuWindow, [ref]$softwareMenuPid)
+    if ($softwareMenuPid -ne $first.Id) { throw 'Software menu belongs to another process' }
+    $menu = [VibDockNative]::SendMessage($menuWindow, 0x01E1, [IntPtr]::Zero, [IntPtr]::Zero)
+    $softwareLabels = @()
+    for ($i = 0; $i -lt [VibDockNative]::GetMenuItemCount($menu); $i++) {
+        $label = [Text.StringBuilder]::new(160)
+        [void][VibDockNative]::GetMenuString($menu, $i, $label, $label.Capacity, 0x400)
+        $softwareLabels += $label.ToString()
+    }
+    if (-not ($softwareLabels -contains 'Offline saved fixture') -or -not ($softwareLabels -contains 'No fresh, controllable playback session') -or -not ($softwareLabels -contains 'Settings…')) { throw 'Software uID menu did not preserve its exact offline row and disabled controls' }
+    Save-Window $menuWindow 'resident-software-menu.png'
+    [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 150
     [void][VibDockNative]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CLOSE
     Wait-Until { -not [VibDockNative]::IsWindowVisible($window) } 'Close did not hide the panel'
@@ -146,7 +178,7 @@ try {
     foreach ($servicePid in $serviceChildren) {
         Wait-Until { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$servicePid" | Where-Object { $_.Name -eq 'vibdock.exe' }).Count -eq 0 } 'Exit left a native observation helper running'
     }
-    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; checks=@('native-window-visible','saved-offline-software-fixture-unknown','placeholder-icon-present','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
+    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('native-window-visible','saved-offline-software-fixture-unknown','placeholder-icon-present','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','playback-action-auth-origin-forged-selection-rejected','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
     $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
     Write-Output 'PASS: native panel, context menu, singleton restoration, and authenticated Exit. Captures are native PrintWindow renders; physical-device and default-browser acceptance remain separate.'
 } finally {

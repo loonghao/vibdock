@@ -16,6 +16,11 @@ fn main() {
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
+    #[cfg(windows)]
+    if args == ["_resident_action"] {
+        vibdock::resident_apps::print_action();
+        return Ok(());
+    }
     if args == ["_resident_snapshot"] {
         vibdock::resident_apps::print_snapshot();
         return Ok(());

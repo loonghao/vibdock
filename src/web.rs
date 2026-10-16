@@ -820,12 +820,18 @@ fn accept_loop(
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
             || path.starts_with("/api/actions/")
+            || path.starts_with("/api/apps/actions/")
             || matches!(
                 path.as_str(),
                 "/api/apps" | "/api/apps/summary" | "/api/apps/pin" | "/api/apps/remove"
             );
-        let authorized = administrator
-            || (browser_scope && browser_auth.accepts(service::request_token(&received.headers)));
+        let browser_principal = browser_auth.principal(service::request_token(&received.headers));
+        let authorized = administrator || (browser_scope && browser_principal.is_some());
+        let principal = if administrator {
+            Some("native-administrator")
+        } else {
+            browser_principal.as_deref()
+        };
         // The body was read on the worker, so public endpoints that take their
         // input in the body (one-use bootstrap code redemption) still work.
         let body_text = received.body.take();
@@ -847,7 +853,7 @@ fn accept_loop(
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
             } else if path.starts_with("/api/apps") {
-                apps_route(&routed_request, token.is_some(), &mut apps)
+                apps_route(&routed_request, token.is_some(), &mut apps, principal)
             } else if bootstrap {
                 bootstrap_route(
                     &routed_request,
@@ -1747,12 +1753,32 @@ fn apps_route(
     request: &Request<'_>,
     token_configured: bool,
     apps: &mut crate::resident_apps::Registry,
+    principal: Option<&str>,
 ) -> Routed {
     if let Some(rejection) = validate_request(request, token_configured) {
         return rejection;
     }
     if !request.authorized {
         return unauthorized();
+    }
+    if request.path.starts_with("/api/apps/actions/") {
+        #[cfg(not(target_os = "macos"))]
+        let result = apps.action_route(
+            request.method == Method::Post,
+            request.method == Method::Get,
+            request.path,
+            request.body,
+            principal.unwrap_or(""),
+        );
+        #[cfg(target_os = "macos")]
+        let result = {
+            let _ = principal;
+            (
+                501,
+                serde_json::json!({"error":"Playback controls are unavailable on this platform"}),
+            )
+        };
+        return (result.0, "application/json", result.1.to_string());
     }
     let (code, value) = match (request.method, request.path) {
         (Method::Get, "/api/apps") => (200, apps.view(false)),
@@ -1776,6 +1802,9 @@ mod resident_api_tests {
             "/api/apps/summary",
             "/api/apps/pin",
             "/api/apps/remove",
+            "/api/apps/actions/prepare",
+            "/api/apps/actions/execute",
+            "/api/apps/actions/fixture-receipt",
         ] {
             let mut request = Request {
                 method: if path.ends_with("pin") || path.ends_with("remove") {
@@ -1790,16 +1819,28 @@ mod resident_api_tests {
                 body: "{}",
                 body_rejected: false,
             };
-            assert_eq!(apps_route(&request, true, &mut apps).0, 401);
+            assert_eq!(
+                apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+                401
+            );
             request.authorized = true;
             request.origin = Some("https://attacker.invalid");
-            assert_eq!(apps_route(&request, true, &mut apps).0, 403);
+            assert_eq!(
+                apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+                403
+            );
             request.origin = None;
             request.host = Some("attacker.invalid");
-            assert_eq!(apps_route(&request, true, &mut apps).0, 403);
+            assert_eq!(
+                apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+                403
+            );
             request.host = Some(&host);
             request.body_rejected = true;
-            assert_eq!(apps_route(&request, true, &mut apps).0, 413);
+            assert_eq!(
+                apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+                413
+            );
         }
     }
     #[test]
@@ -1821,7 +1862,10 @@ mod resident_api_tests {
                 body: "{}",
                 body_rejected: false,
             };
-            assert_eq!(apps_route(&request, true, &mut apps).0, 404);
+            assert_eq!(
+                apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+                404
+            );
         }
     }
 }
