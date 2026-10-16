@@ -156,7 +156,9 @@ observed software entry to keep its location/output selection across restart in
 area show its current native resource icon or a generic placeholder. Removal
 changes only the saved entry. Stale, partial or unsupported reads stay unknown;
 playback activity does not establish microphone use, voice state or agent work.
-Software status is read-only in this increment; it does not provide software controls. See the
+Windows software-icon menus offer explicit single-session playback mute/unmute,
+with identity checks and a verified readback receipt. Mac application presence
+remains read-only. See the
 [software state, privacy and lifecycle contract](docs/resident-software.md).
 
 On macOS, Settings > **应用集成** instead lists native running applications.

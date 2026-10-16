@@ -1020,7 +1020,7 @@ impl PlaybackReceipt {
     pub(crate) fn presentation(&self) -> &'static str {
         match self.state {
             PlaybackReceiptState::Prepared => {
-                "Request was not executed. No playback change was verified."
+                "Request is prepared; no completed playback result is available."
             }
             PlaybackReceiptState::Pending => "Playback request pending; result not yet verified.",
             PlaybackReceiptState::Verified if self.observed_muted == Some(true) => {
