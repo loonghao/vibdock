@@ -1,4 +1,4 @@
-//! Read-only playback observations for the disposable resident-app helper.
+//! Playback observations and exact-session actions in a disposable helper.
 //!
 //! No saved/client path is accepted here. Paths are correlation locations, not
 //! trusted application identities. The parent owns the helper's deadline and
@@ -7,6 +7,7 @@
 
 use std::{collections::BTreeSet, ffi::c_void, ptr};
 
+use crate::resident_action_protocol::{self as action, ActionTarget, ExactSessionAction};
 use serde_json::{json, Value};
 use windows::{
     core::{Interface, PCWSTR, PWSTR},
@@ -157,6 +158,135 @@ pub(crate) fn snapshot() -> Value {
     unsafe { observe_snapshot() }
 }
 
+/// Only an owned, contained helper may call this, with a server-captured job.
+/// Paths are compared to the held live process, never used to launch anything.
+pub(crate) fn execute_action(value: &Value) -> Value {
+    let job = match action::parse_job(value) {
+        Ok(job) => job,
+        Err(error) => return action::failure(value, false, error),
+    };
+    unsafe {
+        if CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_err() {
+            return action::failure(value, false, "com_unavailable");
+        }
+        let _com = Com;
+        let manager: IMMDeviceEnumerator =
+            match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                Ok(manager) => manager,
+                Err(_) => return action::failure(value, false, "playback_unavailable"),
+            };
+        // Open exactly the captured PID once. Never replace this handle with a
+        // newly discovered process or adopt a new PID from a matching session.
+        let raw = OpenProcess(0x1000 | 0x0010_0000, 0, job.target.process_id);
+        if raw.is_null() {
+            return action::failure(value, false, "process_unavailable");
+        }
+        let process = Handle(raw);
+        if process_started(&process, job.target.process_id) != Some(job.target.process_started)
+            || process_name(&process, 0).as_deref() != Some(job.target.executable_path)
+        {
+            return action::failure(value, false, "process_identity_changed");
+        }
+        let image = match LocalImage::from_process(&process) {
+            Some(image) if image.path == job.target.executable_path => image,
+            _ => return action::failure(value, false, "process_image_unconfirmed"),
+        };
+        let mut backend = NativeAction {
+            manager,
+            target: &job.target,
+            process,
+            image,
+            selected: None,
+        };
+        action::run_action(value, &mut backend)
+    }
+}
+
+struct NativeAction<'a> {
+    manager: IMMDeviceEnumerator,
+    target: &'a ActionTarget<'a>,
+    process: Handle,
+    image: LocalImage,
+    selected: Option<(IAudioSessionControl2, ISimpleAudioVolume)>,
+}
+
+impl NativeAction<'_> {
+    unsafe fn same_process(&self) -> bool {
+        let Some(started) = process_started(&self.process, self.target.process_id) else {
+            return false;
+        };
+        let Some(path) = process_name(&self.process, 0) else {
+            return false;
+        };
+        self.target
+            .matches_process(GetProcessId(self.process.0), started, &path)
+            && process_name(&self.process, 1).as_deref() == Some(self.image.native.as_str())
+            && self.image.path == self.target.executable_path
+            && self.image.unchanged()
+    }
+}
+
+impl ExactSessionAction for NativeAction<'_> {
+    fn verify_target(&mut self) -> Result<(), &'static str> {
+        self.selected = None;
+        unsafe {
+            if !self.same_process() {
+                return Err("process_identity_changed");
+            }
+            // Fail closed if unique endpoint membership cannot be established
+            // inside the resident budget. No default, capture or master lookup.
+            let control = verified_control(
+                &self.manager,
+                self.target.endpoint_id,
+                self.target.session_instance_id,
+                self.target.process_id,
+                true,
+            )
+            .ok_or("session_identity_changed")?;
+            session_state(&control).ok_or("session_no_longer_current")?;
+            let volume: ISimpleAudioVolume =
+                control.cast().map_err(|_| "session_volume_unavailable")?;
+            if !self.same_process()
+                || single_process(&control) != Some(self.target.process_id)
+                || co_string(
+                    control
+                        .GetSessionInstanceIdentifier()
+                        .map_err(|_| "session_identity_unconfirmed")?,
+                )
+                .as_deref()
+                    != Some(self.target.session_instance_id)
+                || session_state(&control).is_none()
+            {
+                return Err("session_identity_changed");
+            }
+            self.selected = Some((control, volume));
+        }
+        Ok(())
+    }
+
+    fn set_mute(&mut self, requested: bool) -> Result<(), &'static str> {
+        let (_, volume) = self.selected.as_ref().ok_or("session_volume_unavailable")?;
+        let status =
+            unsafe { (volume.vtable().SetMute)(volume.as_raw(), requested.into(), ptr::null()) };
+        if status.0 == 0 {
+            Ok(())
+        } else {
+            Err("set_mute_failed")
+        }
+    }
+
+    fn read_mute(&mut self) -> Result<bool, &'static str> {
+        let (_, volume) = self.selected.as_ref().ok_or("session_volume_unavailable")?;
+        let mut muted = Default::default();
+        let status = unsafe { (volume.vtable().GetMute)(volume.as_raw(), &mut muted) };
+        if status.0 == 0 {
+            Ok(muted.as_bool())
+        } else {
+            Err("readback_failed")
+        }
+    }
+}
+
 unsafe fn observe_snapshot() -> Value {
     if CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_err() {
         return unavailable("Windows COM could not be initialized for playback observation.");
@@ -285,17 +415,28 @@ unsafe fn single_process(control: &IAudioSessionControl2) -> Option<u32> {
     let mut pid = 0;
     let status = (control.vtable().GetProcessId)(control.as_raw(), &mut pid);
     let system = (control.vtable().IsSystemSoundsSession)(control.as_raw());
-    (status.0 == 0 && system.0 == 1 && pid != 0).then_some(pid)
+    action::single_process_owner(status.0, system.0, pid)
 }
 
 unsafe fn current_sessions(
     manager: &IMMDeviceEnumerator,
     endpoint_id: &str,
 ) -> Option<Vec<(String, u32, IAudioSessionControl2)>> {
+    current_sessions_inner(manager, endpoint_id, false)
+}
+
+unsafe fn current_sessions_inner(
+    manager: &IMMDeviceEnumerator,
+    endpoint_id: &str,
+    require_complete_endpoints: bool,
+) -> Option<Vec<(String, u32, IAudioSessionControl2)>> {
     let endpoints = manager
         .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
         .ok()?;
     let count = endpoints.GetCount().ok()? as usize;
+    if require_complete_endpoints && count > MAX_ENDPOINTS {
+        return None;
+    }
     let mut matches = 0;
     for index in 0..count.min(MAX_ENDPOINTS) {
         let device = endpoints.Item(index as u32).ok()?;
@@ -338,11 +479,12 @@ unsafe fn verified_control(
     endpoint: &str,
     instance: &str,
     pid: u32,
+    require_complete_endpoints: bool,
 ) -> Option<IAudioSessionControl2> {
     if pid == 0 {
         return None;
     }
-    let mut current = current_sessions(manager, endpoint)?;
+    let mut current = current_sessions_inner(manager, endpoint, require_complete_endpoints)?;
     let index = current
         .iter()
         .position(|(id, owner, _)| id == instance && *owner == pid)?;
@@ -356,7 +498,7 @@ unsafe fn observe_session(
     instance: &str,
     pid: u32,
 ) -> Option<Value> {
-    let control = verified_control(manager, endpoint, instance, pid)?;
+    let control = verified_control(manager, endpoint, instance, pid, false)?;
     session_state(&control)?;
     // QUERY_LIMITED_INFORMATION | SYNCHRONIZE; no elevation or process writes.
     let raw = OpenProcess(0x1000 | 0x0010_0000, 0, pid);
@@ -367,7 +509,7 @@ unsafe fn observe_session(
     let started = process_started(&process, pid)?;
     let image = LocalImage::from_process(&process)?;
     let mut icon = image.icon();
-    let control = verified_control(manager, endpoint, instance, pid)?;
+    let control = verified_control(manager, endpoint, instance, pid, false)?;
     let state = session_state(&control)?;
     let volume: ISimpleAudioVolume = control.cast().ok()?;
     let muted = volume.GetMute().ok()?.as_bool();
@@ -433,19 +575,7 @@ unsafe fn process_name(process: &Handle, flags: u32) -> Option<String> {
 /// Deliberately conservative: no UNC, DOS devices, ADS, unresolved components,
 /// control characters, trailing-dot aliases, or executable names without .exe.
 fn local_executable_path(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bounded_text(path, MAX_PATH)
-        && bytes.len() > 7
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1..3] == *b":\\"
-        && !path[3..].contains(['/', ':', '*', '?', '"', '<', '>', '|'])
-        && path[3..].split('\\').all(|part| {
-            !part.is_empty() && part != "." && part != ".." && !part.ends_with(['.', ' '])
-        })
-        && path
-            .rsplit('.')
-            .next()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    action::local_executable_path(path)
 }
 
 fn local_volume(volume: &str) -> bool {

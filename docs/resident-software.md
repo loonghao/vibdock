@@ -1,11 +1,13 @@
-# Resident software entries (read-only status)
+# Resident software entries and exact Windows playback controls
 
 Settings > Software reads current Windows playback sessions. A user can pin up to
 eight observed software locations on their observed output endpoint, or remove a
 saved entry. Pins survive service restarts in a separate `apps.json`; microphone
 bindings remain in `config.json`. The resident panel and notification area show
 one icon/status row per saved entry. Clicking an entry restores the same panel;
-right-click opens the existing Settings/status/hide/exit menu.
+right-click a Windows software icon to choose one explicitly identified playback
+session (including its PID), then mute or unmute that session. Offline/stale
+entries disable controls. Settings/status/hide/exit remain available.
 
 ## State and action contract
 
@@ -17,12 +19,46 @@ right-click opens the existing Settings/status/hide/exit menu.
 - `not_connected` requires a fresh, complete scan of that output with no match.
   Partial scans, missing endpoints, unsupported platforms, stale observations and
   read failures report `unknown`. An incomplete set never claims all muted/idle.
-- This increment has no playback write, launch, terminate, voice-control or
-  autostart operation. All software API rows say `actions_enabled: false`.
+- Windows native software-icon menus offer fixed mute/unmute for an explicit
+  current playback session. A multi-session entry requires selecting a session;
+  no action targets the first/all sessions, system output, microphone, or another
+  process. Launch, terminate, voice control and autostart remain unavailable.
+  The Settings software page manages pins and shows status; controls are native.
 - Native software icons come only from current observed local images. Offline,
   protected, unsupported or invalid resources use a generic placeholder. The app
   does not read an offline saved path, fetch icon URLs, run an executable, invoke
   shell handlers or load imports/DllMain to extract its icon.
+
+## Explicit action safety and receipts
+
+Opening a menu, polling or preparing an action never changes audio. An explicit
+session-menu click captures its displayed random reference, entry and fixed mute
+state. The service rechecks that exact endpoint/session-instance/PID/process
+creation time/executable observation before preparing and before queuing. It
+never recaptures a replacement PID from a saved location. The native helper holds
+a read-only process handle and verifies the same process and unique single-owner
+non-system playback session before the write and around its readback.
+
+`POST /api/apps/actions/prepare` accepts only `entry_id`, `session_reference` and
+`action` (`mute` or `unmute`). Its random one-use capability expires after ten
+seconds and belongs to that browser session or native service instance. Execute
+accepts only that `operation_id` and `capability`, consumed before dispatch.
+Client paths, process IDs, endpoints, toggles and arbitrary actions are rejected.
+At most one action is pending; a separate reliable channel preserves its receipt
+while observations may be coalesced. Operations are memory-only and bounded to
+32 receipts; completed receipts expire after two minutes.
+
+The native client proves each prepare/execute/receipt connection independently,
+using the same captured service instance and one privileged exchange per proof.
+A lost execute response only triggers receipt polling, never an automatic second
+write. A restarted service or missing receipt cannot establish success or prove
+that no write occurred. Readbacks are historical action results, not live state.
+
+Receipts distinguish prepared, pending, verified, verified mismatch, rejected
+before write, and outcome unconfirmed. Once SetMute was attempted, any failed or
+untrusted readback reports uncertainty. Killing a timed-out helper does not undo
+a possible audio change. No default device, master-volume or microphone write
+exists in this path. Mac application presence has no corresponding action API.
 
 ## Data and lifecycle bounds
 
@@ -40,14 +76,18 @@ oversized, unsupported or unreadable files remain untouched, report a diagnostic
 and disable edits; they are not silently replaced with empty configuration.
 
 One background owner starts at most one disposable copy of VibDock's own helper.
-It scans up to eight outputs and 24 sessions, rechecks session ownership and live
+The same owner serializes scans and explicit action jobs. It scans up to eight outputs and 24 sessions, rechecks session ownership and live
 process creation time, bounds ICOs to one 16/24/32px image and 8KiB, and caps output
 at 512KiB. A private non-inheritable kill-on-close job is assigned before an stdin
 gate permits scanning. Output uses the same exclusively created temporary file
 handle, with delete-on-close and a capped post-exit read. Windows files retain the
 existing inherited directory ACL policy; this change does not alter permissions.
 
-The owner applies a three-second scan deadline and bounded cleanup polling. Failed
+Action stdin uses a bounded, private nonblocking local pipe, with the existing
+process ACL policy unchanged; only the contained child receives its read handle.
+Only server-owned exact identity is sent, never a bearer or browser capability.
+
+The owner applies a three-second scan/action deadline and bounded cleanup polling. Failed
 or unconfirmed cleanup stops further helpers and reports unavailable. Service exit
 has a bounded owner wait; OS termination remains asynchronous, so this is not a
 guarantee that every faulty kernel driver completes cleanup within three seconds.
@@ -59,7 +99,13 @@ claimed as live-tested.
 
 Unit fixtures validate persistence/restart, atomic failure, revision conflicts,
 selection expiration/replay/PID change, partial/stale states, path redaction and
-malformed native resources. Fixtures are not real device evidence. Hosted Windows
+malformed native resources, action capability/principal/replay binding, stale
+references, PID creation changes, queue/owner failure and readback uncertainty.
+Fixtures are not real device evidence. A separate hosted Windows test starts the
+real contained action helper with an impossible captured process creation time,
+verifies a native rejection before any write, and confirms cleanup/cancellation.
+This validates private stdin inheritance/gate/EOF and result transport without
+muting audio. Hosted Windows
 CI compiles the native adapter and exercises the real resident lifecycle; a runner
 without playback hardware must show unavailable/unknown and cannot prove live
 application playback or real third-party icon behavior.

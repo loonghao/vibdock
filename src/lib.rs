@@ -34,6 +34,10 @@ mod macos_worker;
 #[allow(dead_code)]
 #[path = "macos_worker.rs"]
 mod macos_worker_tests;
+#[cfg(any(windows, test))]
+mod resident_action_protocol;
+#[cfg(not(target_os = "macos"))]
+mod resident_actions;
 #[cfg(not(target_os = "macos"))]
 pub mod resident_apps;
 #[cfg(target_os = "macos")]

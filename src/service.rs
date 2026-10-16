@@ -908,7 +908,7 @@ pub(crate) fn validate_patch(body: &str) -> std::result::Result<Patch, &'static 
 
 /// Read only the verified instance's bounded software summary over its proved
 /// socket. The proof keeps its original 8 KiB cap; only this data reply is larger.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
     let instance = read_instance().ok_or("No service instance")?;
     let mut connection =
@@ -922,6 +922,270 @@ pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
         return Err("Software status is unavailable".into());
     }
     Ok((instance.port, serde_json::from_str(&body)?))
+}
+
+/// Captured service identity for one resident playback operation. This handle
+/// and prepared capabilities stay on the single desktop worker, never in HWND
+/// data, window messages, menus, tooltips, URLs, or diagnostics.
+#[cfg(any(windows, test))]
+pub(crate) struct ResidentControlClient {
+    instance: Instance,
+}
+
+#[cfg(any(windows, test))]
+pub(crate) struct PreparedPlayback {
+    operation_id: String,
+    capability: String,
+    expires: std::time::Instant,
+}
+
+#[cfg(any(windows, test))]
+impl PreparedPlayback {
+    pub(crate) fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PlaybackReceiptState {
+    Prepared,
+    Pending,
+    Verified,
+    VerifiedMismatch,
+    RejectedBeforeWrite,
+    OutcomeUnconfirmed,
+}
+
+/// An operation receipt describes a completed readback, never current/live
+/// audio. Unknown or inconsistent receipts cannot be presented as success.
+#[cfg(any(windows, test))]
+pub(crate) struct PlaybackReceipt {
+    pub(crate) state: PlaybackReceiptState,
+    pub(crate) requested_muted: bool,
+    pub(crate) observed_muted: Option<bool>,
+}
+
+#[cfg(any(windows, test))]
+impl PlaybackReceipt {
+    fn parse(value: &serde_json::Value) -> Result<Self> {
+        let state = match value["state"].as_str() {
+            Some("prepared") => PlaybackReceiptState::Prepared,
+            Some("pending") => PlaybackReceiptState::Pending,
+            Some("verified") => PlaybackReceiptState::Verified,
+            Some("verified_mismatch") => PlaybackReceiptState::VerifiedMismatch,
+            Some("rejected_before_write") => PlaybackReceiptState::RejectedBeforeWrite,
+            Some("outcome_unconfirmed") => PlaybackReceiptState::OutcomeUnconfirmed,
+            _ => return Err("Unknown playback operation receipt; outcome unconfirmed".into()),
+        };
+        let requested_muted = value["requested_muted"]
+            .as_bool()
+            .ok_or("Playback receipt is missing its requested state")?;
+        let observed_muted = match value.get("observed_muted") {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::Bool(muted)) => Some(*muted),
+            _ => return Err("Playback receipt has invalid readback evidence".into()),
+        };
+        let error = match value.get("error") {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(error)) if !error.is_empty() => Some(error),
+            _ => return Err("Playback receipt has an invalid error field".into()),
+        };
+        match state {
+            PlaybackReceiptState::Verified
+                if observed_muted != Some(requested_muted) || error.is_some() =>
+            {
+                return Err("Playback receipt does not verify the requested state".into());
+            }
+            PlaybackReceiptState::VerifiedMismatch
+                if observed_muted != Some(!requested_muted) || error.is_none() =>
+            {
+                return Err("Playback mismatch receipt has no conflicting readback".into());
+            }
+            PlaybackReceiptState::Verified | PlaybackReceiptState::VerifiedMismatch => {}
+            _ if observed_muted.is_some() => {
+                return Err(
+                    "Unverified playback receipt cannot claim an observed mute state".into(),
+                );
+            }
+            _ => {}
+        }
+        Ok(Self {
+            state,
+            requested_muted,
+            observed_muted,
+        })
+    }
+
+    pub(crate) fn presentation(&self) -> &'static str {
+        match self.state {
+            PlaybackReceiptState::Prepared => {
+                "Request was not executed. No playback change was verified."
+            }
+            PlaybackReceiptState::Pending => "Playback request pending; result not yet verified.",
+            PlaybackReceiptState::Verified if self.observed_muted == Some(true) => {
+                "Verified readback: this playback session was muted. This is a completed action result."
+            }
+            PlaybackReceiptState::Verified => {
+                "Verified readback: this playback session was unmuted. This is a completed action result."
+            }
+            PlaybackReceiptState::VerifiedMismatch => {
+                "Readback differed from the requested mute state. The requested result was not verified."
+            }
+            PlaybackReceiptState::RejectedBeforeWrite => {
+                "Request rejected before any playback write. Refresh and select the session again."
+            }
+            PlaybackReceiptState::OutcomeUnconfirmed => {
+                "Playback outcome unconfirmed. Audio may have changed; inspect the session before trying again."
+            }
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn is_control_reference(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(any(windows, test))]
+impl ResidentControlClient {
+    #[cfg(windows)]
+    pub(crate) fn discover() -> Result<Self> {
+        Ok(Self {
+            instance: read_instance().ok_or("No service instance")?,
+        })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn port(&self) -> u16 {
+        self.instance.port
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn same_instance(&self, other: &Self) -> bool {
+        self.instance == other.instance
+    }
+
+    /// Each call gets a new pinned IPv4 socket, fresh proof, and exactly one
+    /// privileged exchange. No reconnect, token reload, or automatic retry.
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+        expected_status: u16,
+        limit: usize,
+    ) -> Result<serde_json::Value> {
+        let body = body.map(|value| value.to_string()).unwrap_or_default();
+        let mut connection =
+            ControlConnection::connect(self.instance.port, std::time::Duration::from_secs(2))?;
+        if !connection.prove_instance(&self.instance.token)? {
+            return Err("Listener failed instance proof".into());
+        }
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            self.instance.port, self.instance.token, body.len()
+        );
+        let (status, response) = connection.exchange_limited(&request, limit)?;
+        if status != expected_status {
+            // Never include untrusted response contents, capabilities or bearer
+            // values in a diagnostic that may later reach window text or logs.
+            return Err(
+                format!("Playback service request was not accepted (HTTP {status})").into(),
+            );
+        }
+        Ok(serde_json::from_str(&response)?)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn summary(&self) -> Result<serde_json::Value> {
+        self.request("GET", "/api/apps/summary", None, 200, 128 * 1024)
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        entry_id: &str,
+        session_reference: &str,
+        process_id: u32,
+        requested_muted: bool,
+    ) -> Result<PreparedPlayback> {
+        if !is_control_reference(entry_id) || !is_control_reference(session_reference) {
+            return Err("Playback selection is invalid; refresh and select again".into());
+        }
+        let started = std::time::Instant::now();
+        let value = self.request(
+            "POST",
+            "/api/apps/actions/prepare",
+            Some(serde_json::json!({
+                "entry_id": entry_id,
+                "session_reference": session_reference,
+                "action": if requested_muted { "mute" } else { "unmute" },
+            })),
+            200,
+            MAX_CHALLENGE_RESPONSE,
+        )?;
+        let operation_id = value["operation_id"]
+            .as_str()
+            .filter(|value| is_control_reference(value))
+            .ok_or("Playback preparation returned no valid operation reference")?;
+        let capability = value["capability"]
+            .as_str()
+            .filter(|value| is_control_reference(value))
+            .ok_or("Playback preparation returned no valid authorization")?;
+        let lifetime = value["expires_in_ms"]
+            .as_u64()
+            .filter(|value| *value > 0 && *value <= 60_000)
+            .ok_or("Playback preparation returned an invalid expiration")?;
+        if value["requested_muted"].as_bool() != Some(requested_muted)
+            || value["target"]["entry_id"].as_str() != Some(entry_id)
+            || value["target"]["process_id"].as_u64() != Some(u64::from(process_id))
+        {
+            return Err("Playback preparation did not match the explicitly selected target".into());
+        }
+        // Count network time against validity rather than giving a delayed
+        // response a new lease when it reaches the worker.
+        Ok(PreparedPlayback {
+            operation_id: operation_id.to_owned(),
+            capability: capability.to_owned(),
+            expires: started + std::time::Duration::from_millis(lifetime),
+        })
+    }
+
+    /// Send once only. A failed/lost response must be resolved by receipt GET,
+    /// never by resending this execute body or preparing a replacement action.
+    pub(crate) fn execute(&self, prepared: &PreparedPlayback) -> Result<()> {
+        if std::time::Instant::now() >= prepared.expires {
+            return Err("Playback preparation expired before execute".into());
+        }
+        self.request(
+            "POST",
+            "/api/apps/actions/execute",
+            Some(serde_json::json!({
+                "operation_id": prepared.operation_id,
+                "capability": prepared.capability,
+            })),
+            202,
+            MAX_CHALLENGE_RESPONSE,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn receipt(&self, operation_id: &str) -> Result<PlaybackReceipt> {
+        if !is_control_reference(operation_id) {
+            return Err("Invalid playback operation reference".into());
+        }
+        let value = self.request(
+            "GET",
+            &format!("/api/apps/actions/{operation_id}"),
+            None,
+            200,
+            MAX_CHALLENGE_RESPONSE,
+        )?;
+        if value["operation_id"].as_str() != Some(operation_id) {
+            return Err("Playback receipt did not match the requested operation".into());
+        }
+        PlaybackReceipt::parse(&value)
+    }
 }
 
 #[cfg(test)]
@@ -1909,6 +2173,232 @@ mod tests {
         assert!(connection.exchange_limited("GET /api/apps/summary HTTP/1.1\r\nAuthorization: Bearer fixture-admin\r\nContent-Length: 0\r\n\r\n",128*1024).is_err());
         assert!(started.elapsed() < Duration::from_secs(4));
         worker.join().unwrap();
+    }
+
+    /// Synthetic protocol fixture only: no native audio session exists and no
+    /// COM/audio mutation is exercised or claimed by these transport tests.
+    #[test]
+    fn playback_client_proves_each_exchange_and_uses_closed_explicit_bodies() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            for stage in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                fixture_proof(&mut stream, "fixture-admin");
+                let request = fixture_request(&mut stream);
+                assert!(request.contains("Authorization: Bearer fixture-admin\r\n"));
+                assert!(request.contains("Connection: close\r\n"));
+                let (status, response) = match stage {
+                    0 => {
+                        assert!(request.starts_with("POST /api/apps/actions/prepare "));
+                        let body: serde_json::Value =
+                            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1)
+                                .unwrap();
+                        assert_eq!(
+                            body,
+                            serde_json::json!({"entry_id":"a".repeat(64),"session_reference":"b".repeat(64),"action":"unmute"})
+                        );
+                        (
+                            200,
+                            serde_json::json!({"operation_id":"c".repeat(64),"capability":"d".repeat(64),"expires_in_ms":15000,"requested_muted":false,"target":{"entry_id":"a".repeat(64),"label":"Synthetic playback fixture (not audio)","process_id":421}}),
+                        )
+                    }
+                    1 => {
+                        assert!(request.starts_with("POST /api/apps/actions/execute "));
+                        let body: serde_json::Value =
+                            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1)
+                                .unwrap();
+                        assert_eq!(
+                            body,
+                            serde_json::json!({"operation_id":"c".repeat(64),"capability":"d".repeat(64)})
+                        );
+                        (202, serde_json::json!({"state":"pending"}))
+                    }
+                    _ => {
+                        assert!(request
+                            .starts_with(&format!("GET /api/apps/actions/{} ", "c".repeat(64))));
+                        assert!(!request.contains(&"d".repeat(64)));
+                        (
+                            200,
+                            serde_json::json!({"operation_id":"c".repeat(64),"state":"verified","requested_muted":false,"observed_muted":false,"error":null}),
+                        )
+                    }
+                };
+                let response = response.to_string();
+                write!(stream, "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                let mut remaining = String::new();
+                stream.read_to_string(&mut remaining).unwrap();
+                assert!(
+                    remaining.is_empty(),
+                    "only one privileged exchange is allowed after each proof"
+                );
+            }
+            listener.set_nonblocking(true).unwrap();
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+        });
+        let client = ResidentControlClient {
+            instance: Instance {
+                port,
+                token: "fixture-admin".into(),
+            },
+        };
+        let prepared = client
+            .prepare(&"a".repeat(64), &"b".repeat(64), 421, false)
+            .unwrap();
+        client.execute(&prepared).unwrap();
+        let receipt = client.receipt(prepared.operation_id()).unwrap();
+        assert_eq!(receipt.state, PlaybackReceiptState::Verified);
+        assert!(!receipt.requested_muted);
+        assert_eq!(receipt.observed_muted, Some(false));
+        assert!(receipt.presentation().contains("completed action result"));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn playback_client_never_sends_privileged_data_to_unproved_peer() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let request = fixture_request(&mut stream);
+                assert!(request.starts_with("POST /instance/challenge "));
+                assert!(!request.contains("fixture-admin"));
+                assert!(!request.contains(&"d".repeat(64)));
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}",
+                    )
+                    .unwrap();
+                let mut remaining = String::new();
+                stream.read_to_string(&mut remaining).unwrap();
+                assert!(remaining.is_empty());
+            }
+        });
+        let client = ResidentControlClient {
+            instance: Instance {
+                port,
+                token: "fixture-admin".into(),
+            },
+        };
+        assert!(client
+            .prepare(&"a".repeat(64), &"b".repeat(64), 421, true)
+            .is_err());
+        let prepared = PreparedPlayback {
+            operation_id: "c".repeat(64),
+            capability: "d".repeat(64),
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(15),
+        };
+        assert!(client.execute(&prepared).is_err());
+        assert!(client.receipt(prepared.operation_id()).is_err());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn lost_execute_response_can_only_be_resolved_by_known_receipt() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            fixture_proof(&mut stream, "fixture-admin");
+            assert!(fixture_request(&mut stream).starts_with("POST /api/apps/actions/execute "));
+            // Simulate a consumed execute whose response was lost.
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
+            fixture_proof(&mut stream, "fixture-admin");
+            assert!(fixture_request(&mut stream)
+                .starts_with(&format!("GET /api/apps/actions/{} ", "c".repeat(64))));
+            let response = serde_json::json!({"operation_id":"c".repeat(64),"state":"outcome_unconfirmed","requested_muted":true,"observed_muted":null,"error":"synthetic lost readback"}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{response}",
+                response.len()
+            )
+            .unwrap();
+        });
+        let client = ResidentControlClient {
+            instance: Instance {
+                port,
+                token: "fixture-admin".into(),
+            },
+        };
+        let prepared = PreparedPlayback {
+            operation_id: "c".repeat(64),
+            capability: "d".repeat(64),
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(15),
+        };
+        assert!(client.execute(&prepared).is_err());
+        let receipt = client.receipt(prepared.operation_id()).unwrap();
+        assert_eq!(receipt.state, PlaybackReceiptState::OutcomeUnconfirmed);
+        assert!(receipt.presentation().contains("may have changed"));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn playback_receipt_presentation_requires_exact_verified_readback() {
+        for (state, observed, allowed) in [
+            ("verified", serde_json::json!(true), true),
+            ("verified", serde_json::json!(false), false),
+            ("verified", serde_json::Value::Null, false),
+            ("verified_mismatch", serde_json::json!(false), true),
+            ("verified_mismatch", serde_json::json!(true), false),
+            ("verified_mismatch", serde_json::Value::Null, false),
+            ("future_unknown_status", serde_json::json!(true), false),
+        ] {
+            let parsed = PlaybackReceipt::parse(
+                &serde_json::json!({"state":state,"requested_muted":true,"observed_muted":observed,"error":if state=="verified_mismatch" { Some("synthetic mismatch") } else { None }}),
+            );
+            assert_eq!(parsed.is_ok(), allowed, "{state}");
+        }
+        for state in [
+            "prepared",
+            "pending",
+            "rejected_before_write",
+            "outcome_unconfirmed",
+        ] {
+            let receipt = PlaybackReceipt::parse(
+                &serde_json::json!({"state":state,"requested_muted":true,"observed_muted":null,"error":null}),
+            )
+            .unwrap();
+            assert!(!receipt.presentation().starts_with("Verified readback"));
+        }
+        for value in [
+            serde_json::json!({"state":"pending","requested_muted":true,"observed_muted":true,"error":null}),
+            serde_json::json!({"state":"prepared","requested_muted":true,"observed_muted":false,"error":null}),
+            serde_json::json!({"state":"rejected_before_write","requested_muted":true,"observed_muted":true,"error":"rejected"}),
+            serde_json::json!({"state":"outcome_unconfirmed","requested_muted":true,"observed_muted":true,"error":"unknown"}),
+            serde_json::json!({"state":"verified","requested_muted":true,"observed_muted":true,"error":"failure"}),
+            serde_json::json!({"state":"verified_mismatch","requested_muted":true,"observed_muted":false,"error":null}),
+        ] {
+            assert!(PlaybackReceipt::parse(&value).is_err());
+        }
+        let client = ResidentControlClient {
+            instance: Instance {
+                port: 1,
+                token: "never-transmitted-fixture".into(),
+            },
+        };
+        assert!(client
+            .prepare("bad-entry", &"a".repeat(64), 1, true)
+            .is_err());
+        assert!(client.receipt("id\r\nAuthorization: injected").is_err());
+        let expired = PreparedPlayback {
+            operation_id: "c".repeat(64),
+            capability: "d".repeat(64),
+            expires: std::time::Instant::now() - std::time::Duration::from_secs(1),
+        };
+        assert!(client.execute(&expired).is_err());
     }
 
     #[cfg(unix)]

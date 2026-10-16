@@ -57,6 +57,19 @@ jobs:
             work/macos-package/vibdock-candidate-*.zip
             work/macos-package/vibdock-candidate-*.zip.sha256
           if-no-files-found: error
+      - name: Verify contained Windows action helper without changing audio
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:VIBDOCK_ACTION_HELPER_EXE = (Resolve-Path target/release/vibdock.exe).Path
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP ('vibdock-action-helper-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA | Out-Null
+          try {
+            cargo test --locked --lib contained_action_helper_rejects_impossible_identity -- --ignored --nocapture
+            if ($LASTEXITCODE -ne 0) { throw 'Contained native action helper acceptance failed' }
+          } finally {
+            Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force
+          }
       - name: Verify Windows service resilience
         if: runner.os == 'Windows'
         run: node scripts/test-service-resilience.cjs target/release/vibdock.exe
