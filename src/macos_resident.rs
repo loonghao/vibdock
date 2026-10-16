@@ -42,7 +42,7 @@ use crate::service;
 const STATUS_TTL: Duration = Duration::from_secs(4);
 const ACCEPTANCE_BUDGET: Duration = Duration::from_secs(20);
 const CAPABILITY_TEXT: &str =
-    "Running means application presence only.\nPlayback, audio, global shortcuts and voice controls are unavailable on macOS.";
+    "Running means application presence only.\nAudio, voice and global shortcuts are unavailable.";
 const MAX_SOFTWARE_ROWS: usize = 8;
 const BASE_MENU_ITEMS: isize = 7;
 const SOFTWARE_MENU_START: isize = BASE_MENU_ITEMS + 2;
