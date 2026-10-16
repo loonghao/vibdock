@@ -12,8 +12,7 @@ use std::{
 
 use crate::{hotkey::Hotkey, Result};
 
-/// Upper bound on bytes read while resolving an instance challenge. The status
-/// line and headers are all that matter, and headers are always bounded.
+/// Upper bound on the complete HTTP response to a local control request.
 const MAX_CHALLENGE_RESPONSE: usize = 8192;
 
 /// The loopback port the service binds. Single source of truth: the bind
@@ -236,11 +235,10 @@ pub fn live_instance() -> Option<Instance> {
 }
 
 /// True when a listener on this loopback port answers an authenticated
-/// instance challenge with the exact token we recorded.
+/// instance challenge using the token we recorded, without sending that token.
 ///
-/// `/instance` is the smallest endpoint that requires the token, so a 200 here
-/// proves both liveness and ownership. Anything else — refused, wrong token,
-/// foreign service, or a non-VibDock listener — means this is not our instance.
+/// The signed, fresh nonce establishes liveness and possession of the token.
+/// Refusal, a wrong proof, and unrelated HTTP responses all fail closed.
 pub(crate) fn instance_answers(port: u16, token: &str) -> bool {
     // `challenge` returns Some(true) only when the listener proved ownership.
     // Some(false) and None both mean "not our instance" — collapsing them with
@@ -248,66 +246,134 @@ pub(crate) fn instance_answers(port: u16, token: &str) -> bool {
     std::panic::catch_unwind(|| challenge(port, token) == Some(true)).unwrap_or(false)
 }
 
-/// Performs the challenge request, returning `None` on any transport error.
+/// Performs a fresh, non-secret challenge. The response must authenticate the
+/// nonce with the recorded token; a generic 200, echoed nonce, stale proof, or
+/// another instance's proof cannot establish ownership.
 fn challenge(port: u16, token: &str) -> Option<bool> {
-    use std::io::{Read, Write};
+    let nonce = generate_token().ok()?;
+    let body = serde_json::json!({"nonce": nonce}).to_string();
     let request = format!(
-        "GET /instance HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Authorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "POST /instance/challenge HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
     );
+    let (status, body) =
+        control_exchange(port, &request, std::time::Duration::from_millis(700)).ok()?;
+    if status != 200 {
+        return Some(false);
+    }
+    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+    Some(
+        value
+            .get("proof")
+            .and_then(|value| value.as_str())
+            .is_some_and(|proof| crate::instance_proof::verify(token, &nonce, proof)),
+    )
+}
+
+/// Executes one small control request with a single wall-clock budget across
+/// connecting, writing, and every response read. A trickling peer cannot renew
+/// the timeout. Responses are capped and must have an exact HTTP status line,
+/// a complete header terminator, and a matching declared body length.
+fn control_exchange(
+    port: u16,
+    request: &str,
+    timeout: std::time::Duration,
+) -> io::Result<(u16, String)> {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+    let started = Instant::now();
+    let remaining = || {
+        timeout
+            .checked_sub(started.elapsed())
+            .filter(|time| !time.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::TimedOut, "control request deadline exceeded")
+            })
+    };
     let mut stream = std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        std::time::Duration::from_millis(150),
+        remaining()?.min(Duration::from_millis(150)),
     )
     .or_else(|_| {
         std::net::TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
-            std::time::Duration::from_millis(150),
+            remaining()?.min(Duration::from_millis(150)),
         )
-    })
-    .ok()?;
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_millis(700)))
-        .ok()?;
-    stream.write_all(request.as_bytes()).ok()?;
-    // Read the status line rather than to EOF: a server that ignores
-    // `Connection: close` holds the socket open, and `read_to_string` would
-    // then block to the read timeout and discard the bytes it already got —
-    // which made a perfectly good 401 look like a transport failure.
+    })?;
+    let mut unwritten = request.as_bytes();
+    while !unwritten.is_empty() {
+        stream.set_write_timeout(Some(remaining()?))?;
+        let written = stream.write(unwritten)?;
+        if written == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "control request write stopped",
+            ));
+        }
+        unwritten = &unwritten[written..];
+    }
     let mut response = Vec::new();
-    let mut byte = [0u8; 1];
-    while !response.ends_with(b"\r\n\r\n") && response.len() < MAX_CHALLENGE_RESPONSE {
-        match stream.read(&mut byte) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => response.push(byte[0]),
+    loop {
+        stream.set_read_timeout(Some(remaining()?))?;
+        let mut buffer = [0u8; 1024];
+        let count = stream.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        response.extend_from_slice(&buffer[..count]);
+        if response.len() > MAX_CHALLENGE_RESPONSE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "control response is too large",
+            ));
         }
     }
-    let response = String::from_utf8_lossy(&response).to_string();
-    // A 200 means the listener accepted our token. 401 means something is
-    // there but is not our instance; treat that as "not ours" rather than
-    // assuming the port is free.
-    Some(response.starts_with("HTTP/1.1 200"))
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid control response");
+    let response = String::from_utf8(response).map_err(|_| invalid())?;
+    let (head, body) = response.split_once("\r\n\r\n").ok_or_else(invalid)?;
+    let mut lines = head.split("\r\n");
+    let mut status_line = lines.next().ok_or_else(invalid)?.splitn(3, ' ');
+    if status_line.next() != Some("HTTP/1.1") {
+        return Err(invalid());
+    }
+    let status = status_line
+        .next()
+        .filter(|value| value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(invalid)?;
+    if status_line.next().is_none() {
+        return Err(invalid());
+    }
+    let mut length = None;
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(invalid)?;
+        if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err(invalid());
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            if length.is_some() {
+                return Err(invalid());
+            }
+            length = Some(value.trim().parse::<usize>().map_err(|_| invalid())?);
+        }
+    }
+    if length != Some(body.len()) {
+        return Err(invalid());
+    }
+    Ok((status, body.to_owned()))
 }
 
 /// Creates a one-use browser handoff without exposing the service bearer.
 pub(crate) fn browser_code(instance: &Instance) -> Result<String> {
-    use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], instance.port)),
-        std::time::Duration::from_millis(150),
-    )?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
-    write!(stream, "POST /api/bootstrap/new HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", instance.port, instance.token)?;
-    let mut response = String::new();
-    stream.take(8192).read_to_string(&mut response)?;
-    let (head, body) = response
-        .split_once("\r\n\r\n")
-        .ok_or("Invalid authorization response")?;
-    if !head.starts_with("HTTP/1.1 200 ") {
+    let request = format!("POST /api/bootstrap/new HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", instance.port, instance.token);
+    let (status, body) =
+        control_exchange(instance.port, &request, std::time::Duration::from_secs(2))?;
+    if status != 200 {
         return Err("Could not authorize the configuration page".into());
     }
-    let value: serde_json::Value = serde_json::from_str(body)?;
+    let value: serde_json::Value = serde_json::from_str(&body)?;
     let code = value
         .get("code")
         .and_then(|value| value.as_str())
@@ -380,28 +446,16 @@ pub(crate) fn request_shutdown() -> std::result::Result<bool, String> {
          Authorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         instance.port, instance.token
     );
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", instance.port))
-        .or_else(|_| std::net::TcpStream::connect(("::1", instance.port)))
-        .map_err(|e| format!("Could not reach the running service: {e}"))?;
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("Could not send the shutdown request: {e}"))?;
-    let mut response = Vec::new();
-    let mut byte = [0u8; 1];
-    while !response.ends_with(b"\r\n\r\n") && response.len() < MAX_CHALLENGE_RESPONSE {
-        match std::io::Read::read(&mut stream, &mut byte) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => response.push(byte[0]),
-        }
-    }
-    let response = String::from_utf8_lossy(&response).to_string();
-    if !response.starts_with("HTTP/1.1 200") {
+    let (status, body) =
+        control_exchange(instance.port, &request, std::time::Duration::from_secs(2))
+            .map_err(|error| format!("Could not complete the shutdown request: {error}"))?;
+    let accepted = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value.get("stopping").and_then(|value| value.as_bool()))
+        == Some(true);
+    if status != 200 || !accepted {
         return Err(format!(
-            "The running service rejected the shutdown request ({}).",
-            response.lines().next().unwrap_or("no status line").trim()
+            "The running service rejected the shutdown request (HTTP {status})."
         ));
     }
     // Wait for the service to release the port so a relaunch can bind it.
@@ -1419,6 +1473,155 @@ mod tests {
         });
         ready.wait();
         assert!(!instance_answers(port, "recorded-token"));
+    }
+
+    #[test]
+    fn an_unrelated_http_200_listener_cannot_claim_instance_ownership() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0u8; 4096];
+            let size = stream.read(&mut request).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\n{\"alive\":true}").unwrap();
+            String::from_utf8_lossy(&request[..size]).into_owned()
+        });
+        let accepted = instance_answers(port, "synthetic-test-secret");
+        let request = server.join().unwrap();
+        assert!(
+            !accepted,
+            "a generic HTTP 200 response is not proof of ownership"
+        );
+        assert!(
+            !request.contains("synthetic-test-secret"),
+            "discovery must not send the bearer to an unverified listener"
+        );
+    }
+
+    fn fixture_request(stream: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        while !bytes.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            bytes.push(byte[0]);
+            assert!(bytes.len() < 8192);
+        }
+        let head = String::from_utf8(bytes.clone()).unwrap();
+        let size = head
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let mut body = vec![0; size];
+        stream.read_exact(&mut body).unwrap();
+        bytes.extend(body);
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn instance_discovery_accepts_only_a_current_proof_from_the_recorded_secret() {
+        use std::io::Write;
+        for variant in ["valid", "wrong secret", "replayed nonce", "echo nonce"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let worker = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = fixture_request(&mut stream);
+                assert!(!request.contains("synthetic-secret"));
+                assert!(!request.contains("Authorization:"));
+                assert!(request.starts_with("POST /instance/challenge HTTP/1.1\r\n"));
+                let value: serde_json::Value =
+                    serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+                let nonce = value["nonce"].as_str().unwrap();
+                let proof = match variant {
+                    "valid" => crate::instance_proof::respond("synthetic-secret", nonce).unwrap(),
+                    "wrong secret" => {
+                        crate::instance_proof::respond("different-secret", nonce).unwrap()
+                    }
+                    "replayed nonce" => {
+                        crate::instance_proof::respond("synthetic-secret", &"a".repeat(64)).unwrap()
+                    }
+                    _ => nonce.to_owned(),
+                };
+                let body = serde_json::json!({"proof": proof}).to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            });
+            assert_eq!(
+                instance_answers(port, "synthetic-secret"),
+                variant == "valid",
+                "{variant}"
+            );
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn malformed_control_responses_fail_closed() {
+        use std::io::Write;
+        for response in [
+            "HTTP/1.1 2000 OK\r\nContent-Length: 0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nshorter",
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nshort",
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n",
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let worker = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                fixture_request(&mut stream);
+                stream.write_all(response.as_bytes()).unwrap();
+            });
+            assert!(control_exchange(
+                port,
+                "GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+                std::time::Duration::from_secs(1)
+            )
+            .is_err());
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn trickling_control_responses_cannot_renew_the_total_deadline() {
+        use std::io::Write;
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            fixture_request(&mut stream);
+            for byte in b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" {
+                if stream.write_all(&[*byte]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        });
+        let started = Instant::now();
+        let result = control_exchange(
+            port,
+            "GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            Duration::from_millis(150),
+        );
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_millis(750));
+        worker.join().unwrap();
     }
 
     #[test]

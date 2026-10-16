@@ -69,11 +69,17 @@ arbitrary-command endpoint exists.
 
 Repeated `service-start` invocations reuse the running instance instead of
 binding a second listener. The published record is treated only as a candidate:
-before it is trusted, the service on that port must answer an authenticated
-`GET /instance` challenge with the recorded token. A stale marker left by a
-killed service is recovered only after proving no owner answers; if an
-unrelated process holds the port, startup fails with an error and leaves the
-marker alone rather than silently falling back to it.
+before it is trusted, the service on that port must answer a fresh 32-byte
+challenge at `POST /instance/challenge` with an HMAC-SHA256 proof derived from
+the recorded token. Discovery sends only the random nonce, never the bearer
+token; an HTTP 200 response alone is not ownership evidence. The complete
+challenge has a 700 ms budget and an 8 KiB response limit. Browser-code and
+shutdown control requests have a two-second total budget and the same limit.
+A stale marker left by a killed service is recovered only after proving no
+owner answers; if an unrelated process holds the port, startup fails with an
+error and leaves the marker alone. Older preview services without challenge
+proofs are not trusted: exit their tray or stop them with their matching older
+CLI before replacing the executables.
 
 Request bodies are bounded: an oversized or non-UTF-8 body is answered with
 413 rather than read in full. If the OS entropy source fails, the service

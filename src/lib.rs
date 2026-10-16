@@ -16,6 +16,7 @@ mod capabilities;
 pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
+mod instance_proof;
 mod integrations;
 
 pub mod hotkey;

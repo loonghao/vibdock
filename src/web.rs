@@ -837,16 +837,19 @@ fn accept_loop(
         };
         let bootstrap = method == Method::Post
             && matches!(path.as_str(), "/api/bootstrap" | "/api/bootstrap/new");
-        let (mut code, mut mime, mut payload) = if bootstrap {
-            bootstrap_route(
-                &routed_request,
-                &mut browser_auth,
-                administrator,
-                token.is_some(),
-            )
-        } else {
-            route(&routed_request, state, token.is_some(), &activation)
-        };
+        let (mut code, mut mime, mut payload) =
+            if method == Method::Post && path == "/instance/challenge" {
+                instance_challenge_route(&routed_request, token.as_deref())
+            } else if bootstrap {
+                bootstrap_route(
+                    &routed_request,
+                    &mut browser_auth,
+                    administrator,
+                    token.is_some(),
+                )
+            } else {
+                route(&routed_request, state, token.is_some(), &activation)
+            };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
             match commit_live_patch(state, body, binding, &mut activation) {
                 WriteOutcome::Committed(committed) => {
@@ -907,6 +910,33 @@ fn accept_loop(
     }
 }
 
+fn instance_challenge_route(request: &Request<'_>, token: Option<&str>) -> Routed {
+    if let Some(rejection) = validate_request(request, token.is_some()) {
+        return rejection;
+    }
+    let Some(token) = token else {
+        return unauthorized();
+    };
+    let value = serde_json::from_str::<serde_json::Value>(request.body).ok();
+    let proof = value
+        .as_ref()
+        .and_then(|value| value.get("nonce"))
+        .and_then(|value| value.as_str())
+        .and_then(|nonce| crate::instance_proof::respond(token, nonce));
+    match proof {
+        Some(proof) => (
+            200,
+            "application/json",
+            serde_json::json!({"proof": proof}).to_string(),
+        ),
+        None => (
+            400,
+            "text/plain",
+            "Expected a 32-byte hexadecimal nonce".into(),
+        ),
+    }
+}
+
 fn bootstrap_route(
     request: &Request<'_>,
     auth: &mut crate::browser_auth::BrowserAuth,
@@ -953,6 +983,54 @@ fn bootstrap_route(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn instance_proof_route_preserves_host_origin_and_preview_boundaries() {
+        let host = format!("127.0.0.1:{}", service::port());
+        let nonce = "a".repeat(64);
+        let body = serde_json::json!({"nonce": nonce}).to_string();
+        let mut request = Request {
+            method: Method::Post,
+            path: "/instance/challenge",
+            host: Some(&host),
+            origin: None,
+            authorized: false,
+            body: &body,
+            body_rejected: false,
+        };
+        let (status, _, payload) = instance_challenge_route(&request, Some("synthetic-secret"));
+        assert_eq!(status, 200);
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert!(crate::instance_proof::verify(
+            "synthetic-secret",
+            &nonce,
+            value["proof"].as_str().unwrap()
+        ));
+        assert_eq!(instance_challenge_route(&request, None).0, 405);
+        request.origin = Some("http://foreign.example");
+        assert_eq!(
+            instance_challenge_route(&request, Some("synthetic-secret")).0,
+            403
+        );
+        request.origin = None;
+        request.host = Some("foreign.example");
+        assert_eq!(
+            instance_challenge_route(&request, Some("synthetic-secret")).0,
+            403
+        );
+        request.host = Some(&host);
+        request.body_rejected = true;
+        assert_eq!(
+            instance_challenge_route(&request, Some("synthetic-secret")).0,
+            413
+        );
+        request.body_rejected = false;
+        request.body = "{\"nonce\":\"invalid\"}";
+        assert_eq!(
+            instance_challenge_route(&request, Some("synthetic-secret")).0,
+            400
+        );
+    }
 
     /// The cursor must only advance past state the indicator actually accepted.
     ///
