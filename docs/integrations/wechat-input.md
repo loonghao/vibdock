@@ -3,7 +3,7 @@
 This is integration evidence and a prerequisite contract, not installed-client acceptance.
 No capability here is reported as verified. VibDock is independent of this vendor.
 
-## Official source status: unreachable
+## Official source check: 2026-10-15 retrieval failed
 
 The official site at https://shurufa.weixin.qq.com/ could not be retrieved during the
 2026-10-15 check (DNS did not resolve). Official-domain searches did not establish a
