@@ -9,7 +9,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, two executable entry points, and dual-entry packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, saved read-only software observations, two executable entry points, and dual-entry packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline does not validate the later desktop panel. New desktop candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
@@ -21,7 +21,7 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 
 | Platform | Published v0.1.0 | Pending source |
 | --- | --- | --- |
-| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, launcher/tray, dual-entry archive |
+| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, launcher/tray, persistent read-only software entries, dual-entry archive |
 | Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
 | macOS Apple silicon | Design preview | Local configuration service; audio and global shortcuts unsupported |
 
@@ -36,7 +36,7 @@ This workflow requires a build containing both `vibdock.exe` and `vibdock-launch
 5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
 6. Close the browser to leave the service running. Reopen **Settings…** from the panel or tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
 
-Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input, per-application playback mute, and voice-session start/stop are separate planned controls.
+Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input, resident-UI playback writes, and voice-session start/stop are separate planned controls. The existing explicit-session playback CLI is documented below.
 
 The status page uses bounded, serial polling. When the service cannot answer, it shows unknown rather than preserving a successful state. “Last action” is a readback after a shortcut action, not continuous tracking of changes made by other applications. A service restart clears action history and requires a fresh browser session.
 
@@ -137,10 +137,19 @@ setting; Explorer taskbar recreation re-adds the icon. Original artwork is also
 embedded in the executable and settings homepage; it requires no external request.
 The separate optional mouse-transparent feedback overlay is unchanged.
 
-The current app controls are explicitly unavailable without verified adapters.
-Per-software icons, persistent software selections and working-state controls are
-not yet implemented. macOS still packages only the CLI, with no menu-bar/Dock entry.
-See [desktop acceptance and platform plan](docs/design/desktop-candidate.md).
+Settings > **应用集成** lists current readable Windows playback sessions. Pin an
+observed software entry to keep its location/output selection across restart in
+`apps.json`, separately from the microphone binding. The panel and notification
+area show its current native resource icon or a generic placeholder. Removal
+changes only the saved entry. Stale, partial or unsupported reads stay unknown;
+playback activity does not establish microphone use, voice state or agent work.
+All software controls remain read-only in this increment. See the
+[software state, privacy and lifecycle contract](docs/resident-software.md).
+
+macOS still packages only the CLI, with no menu-bar/Dock entry. The separate
+[native macOS plan](docs/macos-resident-plan.md) and
+[desktop acceptance checklist](docs/design/desktop-candidate.md) distinguish
+hosted build/fixture evidence from real application and hardware acceptance.
 
 Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
 tests, so they do not disturb a service already on the default one.

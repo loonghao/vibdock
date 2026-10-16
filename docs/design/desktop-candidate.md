@@ -22,13 +22,17 @@ existing verified-instance functions; there is no reconnect after proof.
 - `scripts/test-windows-desktop.ps1` launches actual Windows release executables
   with a fresh state directory and port. It checks HWND/PID, rendered panel,
   actual context-menu labels, close-to-hide, second-launch singleton handoff,
-  Escape, unchanged service record and authenticated Exit. It uses Win32 messages
+  Escape, unchanged service record and authenticated Exit. It also checks a
+  labelled saved offline software fixture, its unknown state/placeholder icon,
+  a completed native observer result, and ordinary helper cleanup. It uses Win32 messages
   and PrintWindow captures. This is native rendering and lifecycle evidence,
   not physical pointer, tray accessibility, default-browser or DPI acceptance.
 - `scripts/test-web-ui.cjs` uses a real browser against a real isolated service,
   without mocked routes. It checks 1280/390/320 px layouts, the exact supplied
   inline SVG bytes, accessible logo text, absent external requests and JS errors.
-  Separate light/dark captures render the original supplied variants, not a new logo.
+  It reads/removes a saved offline software fixture and verifies the committed
+  file; this fixture never represents real audio. Separate light/dark captures
+  render the original supplied variants, not a new logo.
 - Evidence reports identify the source revision and built executable hash. Old
   reports/captures are removed before a rerun so a failed run cannot inherit PASS.
   State files and browser credentials are never uploaded.
@@ -46,6 +50,10 @@ Before recommending unattended desktop use, verify on an actual interactive host
    without substitution. Confirm actual hardware delivery/readback independently.
 4. Light/dark/high-contrast tray icon, taskbar restart recovery, focus while typing,
    minimize/close/hide, repeated launches and authenticated Exit with error recovery.
+5. Play real software audio, pin its observed output/session, verify its native
+   icon and active/idle/mute observations, restart, and exercise process/session
+   replacement and missing outputs. No stale observation may claim a current
+   state; partial enumeration must not report all sessions muted or idle.
 
 ## macOS next phase (planned, not implemented)
 
@@ -64,8 +72,10 @@ and test reopen/single-instance/quit on a real macOS GUI session. Distribution
 signing/notarization or new credentials require their own setup; do not weaken
 Gatekeeper or claim a CLI tarball is a native desktop release.
 
-Per-software entries require a separate persistent configuration schema and live
-adapters. Bind each action to stable app identity plus the exact current process,
+Windows now has a bounded read-only implementation described in the
+[software contract](../resident-software.md). macOS still requires its separate
+[native identity and packaging plan](../macos-resident-plan.md).
+Future software action adapters must preserve the following boundary: Bind each action to stable app identity plus the exact current process,
 audio endpoint/session or connection instance. Detection is not connection;
 connection is not working. Unknown and unavailable must remain visible, and
 controls without verified support stay disabled. Do not invent app logos or
