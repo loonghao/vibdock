@@ -47,6 +47,7 @@ const MENU_QUIT: isize = 6;
 const ACCEPTANCE_CHECKS: &[&str] = &[
     "service_ownership_proved",
     "main_thread",
+    "application_finished_launching",
     "native_panel_visible",
     "floating_panel",
     "original_template_image",
@@ -241,6 +242,7 @@ struct DelegateState {
     observation: Cell<Option<(u16, Instant)>>,
     acceptance: bool,
     system_quit_acceptance: bool,
+    finished_launching: Cell<bool>,
     stage: Cell<u8>,
     started: Instant,
     report: RefCell<Map<String, Value>>,
@@ -270,6 +272,7 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             self.show_panel();
+            self.ivars().finished_launching.set(true);
         }
 
         #[unsafe(method(applicationShouldTerminateAfterLastWindowClosed:))]
@@ -359,6 +362,7 @@ impl ResidentDelegate {
             acceptance,
             system_quit_acceptance: acceptance
                 && std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_SYSTEM_QUIT").as_deref() == Ok("1"),
+            finished_launching: Cell::new(false),
             stage: Cell::new(0),
             started: Instant::now(),
             report: RefCell::new(Map::new()),
@@ -574,11 +578,28 @@ impl ResidentDelegate {
 
     fn acceptance_step(&self) {
         if self.ivars().started.elapsed() > ACCEPTANCE_BUDGET {
-            self.fail_acceptance("Native acceptance exceeded its 20-second deadline.");
+            self.fail_acceptance(if !self.ivars().finished_launching.get() {
+                "AppKit did not finish launching within the 20-second acceptance deadline."
+            } else if self.ivars().stage.get() == 0 {
+                "The initial native panel or proved service was not ready within the 20-second acceptance deadline."
+            } else {
+                "Native acceptance exceeded its 20-second deadline."
+            });
             return;
         }
         match self.ivars().stage.get() {
-            0 if self.ivars().observation.get().is_some() => {
+            // AppKit may pump common-mode timers during finishLaunching(),
+            // before the delegate's initial Show. Observe both the genuine
+            // notification and its visible window before exercising lifecycle.
+            // Never issue a test-only Show to conceal a broken startup path.
+            0 if self.ivars().finished_launching.get()
+                && self.ivars().observation.get().is_some()
+                && self
+                    .ivars()
+                    .ui
+                    .get()
+                    .is_some_and(|ui| ui.panel.isVisible() && ui.panel.windowNumber() > 0) =>
+            {
                 self.check("service_ownership_proved", true);
                 if let Err(error) = self.exercise_widgets() {
                     self.fail_acceptance(&error.to_string());
@@ -632,6 +653,10 @@ impl ResidentDelegate {
             .borrow_mut()
             .insert("native_window_number".into(), json!(number));
         self.check("main_thread", MainThreadMarker::new().is_some());
+        self.check(
+            "application_finished_launching",
+            self.ivars().finished_launching.get(),
+        );
         self.check("native_panel_visible", ui.panel.isVisible() && number > 0);
         self.check("floating_panel", ui.panel.isFloatingPanel());
         self.check(

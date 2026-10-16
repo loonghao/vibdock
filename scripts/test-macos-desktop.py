@@ -18,7 +18,7 @@ import struct
 import subprocess
 import tempfile
 
-REQUIRED = ["service_ownership_proved", "native_panel_visible", "floating_panel",
+REQUIRED = ["application_finished_launching", "service_ownership_proved", "native_panel_visible", "floating_panel",
             "original_template_image", "retained_status_item", "dock_entry",
             "status_menu", "dock_menu", "hide_keeps_resident", "dock_show_reuses_panel",
             "close_hides_only", "reopen_reuses_panel", "last_window_keeps_resident",
