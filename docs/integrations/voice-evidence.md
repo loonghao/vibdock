@@ -16,6 +16,8 @@ The official site at https://shurufa.weixin.qq.com/ could not be retrieved durin
 
 Do not hard-code a shortcut from a third-party tutorial or claim voice-state readback from input delivery. Record the installed version, configured action, shortcut, focus requirements, and verification method when acceptance becomes possible.
 
+Full host inspection, source status, and the prerequisite contract are in [WeChat Input integration evidence](wechat-input.md).
+
 ## Shortcut ownership
 
 An application-owned voice shortcut and a VibDock-owned device-mute shortcut have different owners and effects. Assign distinct combinations. Windows can reject a registration already held by another process; silently taking the application's voice shortcut for microphone mute would change the user's intended action.

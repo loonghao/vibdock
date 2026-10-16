@@ -7,3 +7,4 @@
 //! of a documented API is not evidence that the capability is absent.
 
 pub mod codex;
+pub mod wechat_input;

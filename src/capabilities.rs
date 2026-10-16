@@ -150,7 +150,10 @@ pub fn inspect(probe: &dyn Probe) -> Report {
 
 /// Print capability reports for every registered integration.
 pub fn report_all() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let probes: [&dyn Probe; 1] = [&crate::integrations::codex::Codex];
+    let probes: [&dyn Probe; 2] = [
+        &crate::integrations::codex::Codex,
+        &crate::integrations::wechat_input::WeChatInput,
+    ];
     for probe in probes {
         let report = inspect(probe);
         println!("{}", report.integration);
