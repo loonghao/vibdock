@@ -25,6 +25,14 @@ existing verified-instance functions; there is no reconnect after proof.
 
 ## Automated evidence
 
+- The ignored `tray::tests::native_strip_render_probe` creates a separate native
+  strip with labelled synthetic stock-icon fixtures for 30 seconds. Windows CI
+  runs it explicitly. It asserts native icon-button/badge styles, names, bounds,
+  work-area placement and unchanged foreground window. It adds no tray icons and
+  never touches an existing service. A local DCC-CUA observation can bind its
+  emitted PID/HWND; this is own-view rendering evidence, not real software/audio
+  or installed-client acceptance.
+
 - `cargo fmt --all --check`, `cargo clippy --locked --all-targets -- -D warnings`,
   `cargo test --locked --all-targets` on Windows, Linux and macOS.
 - `scripts/test-windows-desktop.ps1` launches actual Windows release executables
@@ -38,6 +46,9 @@ existing verified-instance functions; there is no reconnect after proof.
   not physical pointer, tray accessibility, default-browser or DPI acceptance.
   Earlier panel/close-to-hide captures describe the superseded Windows flow
   and cannot establish acceptance of the current tray-first flow.
+  Browser invocation can create an inherited temporary profile. Cleanup removes
+  only the verified VibDock subtree after shutdown, preserves foreign profiles,
+  and records primary native failures separately from cleanup failures.
 - `node scripts/test-binding-ui.cjs` checks service-mode binding and software
   microphone-association DOM logic with fixtures. It does not enumerate real
   microphones, open a default browser or perform audio actions.

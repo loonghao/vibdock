@@ -2,8 +2,9 @@
 Native Windows smoke acceptance, using real built executables and window handles.
 Runs in an isolated state directory/port; no microphone is selected or controlled.
 Window messages exercise tray lifecycle commands. PrintWindow captures real menu
-rendering. Launch/relaunch open the default browser; browser acceptance is separate.
-Only PNGs and a redacted report are written to EvidenceDirectory.
+rendering. Launch/relaunch and primary clicks invoke the default browser; page
+rendering and browser authorization acceptance are separate. Inherited browser
+profiles are retained. PNGs and redacted report/failure diagnostics are evidence.
 #>
 param(
     [string]$BinaryDirectory = 'target/release',
@@ -17,7 +18,7 @@ foreach ($name in @('vibdock.exe', 'vibdock-launcher.exe')) {
 }
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $evidence = (Resolve-Path -LiteralPath $EvidenceDirectory).Path
-foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-software-menu.png', 'resident-result-overflow-fixture.png', 'resident-restored.png')) {
+foreach ($name in @('report.json', 'failure.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-software-menu.png', 'resident-result-overflow-fixture.png', 'resident-restored.png')) {
     $old = Join-Path $evidence $name
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
     if ($name.EndsWith('.png')) {
@@ -63,6 +64,14 @@ function Wait-Until([scriptblock]$Condition, [string]$Failure) {
     do { if (& $Condition) { return }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline)
     throw $Failure
 }
+function Failure-Detail($Problem) {
+    if ($null -eq $Problem) { return $null }
+    $detail = [ordered]@{message=$Problem.ToString();exceptionType=$Problem.Exception.GetType().FullName;fullyQualifiedErrorId=$Problem.FullyQualifiedErrorId;scriptStackTrace=$Problem.ScriptStackTrace;position=$Problem.InvocationInfo.PositionMessage}
+    if ($privateRecord -and $privateRecord.token) {
+        foreach ($key in @($detail.Keys)) { $detail[$key] = ([string]$detail[$key]).Replace([string]$privateRecord.token, '[redacted]') }
+    }
+    return $detail
+}
 function Save-Window([IntPtr]$Handle, [string]$Name) {
     # Menu handles/labels can exist before their opening animation has painted.
     # Retry capture readiness only, never an action or a semantic assertion.
@@ -104,6 +113,8 @@ $fixtureDirectory = Join-Path $state 'VibDock'
 New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
 @{schema_version=1;revision=1;entries=@(@{id=('a' * 64);label='Offline saved fixture';endpoint_id='fixture-output';executable_path='C:\VibDockFixture\NeverExecuted.exe'})} | ConvertTo-Json -Depth 5 -Compress | Set-Content -LiteralPath (Join-Path $fixtureDirectory 'apps.json') -Encoding utf8NoBOM
 $first = $null; $second = $null; $window = [IntPtr]::Zero
+$serviceChildren = @(); $privateRecord = $null; $report = $null; $testFailure = $null; $cleanupFailure = $null
+$cleanup = [ordered]@{serviceStopped=$false;ownedStateRemoved=$false;stateRetained=$true;retainedDirectories=@()}
 try {
     $first = Start-Entry 'vibdock-launcher.exe'
     Wait-Until { $script:window = [VibDockNative]::FindWindow('VibDockTray', 'VibDock'); $script:window -ne [IntPtr]::Zero } 'Tray owner did not start'
@@ -191,17 +202,73 @@ try {
     foreach ($servicePid in $serviceChildren) {
         Wait-Until { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$servicePid" | Where-Object { $_.Name -eq 'vibdock.exe' }).Count -eq 0 } 'Exit left a native observation helper running'
     }
-    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('hidden-tray-owner-without-panel-controls','saved-offline-software-fixture-unknown','original-icon-resource-built','real-context-menu-settings-status-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','playback-action-auth-origin-forged-selection-rejected','close-keeps-tray-service-running','second-launch-reuses-singleton','primary-click-keeps-owner-hidden','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native menus'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch and authenticated page redemption') }
-    $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
-    Write-Output 'PASS: hidden tray owner, context menus, singleton reuse, and authenticated Exit. Captures are native menu renders; physical-device and default-browser acceptance remain separate.'
+    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('hidden-tray-owner-without-panel-controls','saved-offline-software-fixture-unknown','original-icon-resource-built','real-context-menu-settings-status-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','playback-action-auth-origin-forged-selection-rejected','close-keeps-tray-service-running','second-launch-reuses-singleton','primary-click-keeps-owner-hidden','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native menus'; defaultBrowser='invoked by launch, relaunch and primary click; page rendering and handoff redemption unverified'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','authenticated default-browser page rendering and handoff redemption') }
+} catch {
+    $testFailure = $_
+    throw
 } finally {
-    $stop = Start-Entry 'vibdock.exe' 'service-stop'
-    if (-not $stop.WaitForExit(5000)) { $stop.Kill(); $stop.WaitForExit() }
-    foreach ($process in @($second, $first)) { if ($null -ne $process -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() } }
-    # Do not discard credentials while an uncertain detached service may still
-    # be running. Preserve the isolated state so authenticated cleanup can retry.
-    if (Test-Path -LiteralPath (Join-Path $state 'VibDock/service.json')) {
-        throw "Cleanup could not confirm service shutdown; isolated state retained at $state"
+    try {
+        $ownedServicePids = @($serviceChildren)
+        if ($first) {
+            $ownedServicePids += @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($first.Id)" | Where-Object { $_.Name -eq 'vibdock.exe' } | Select-Object -ExpandProperty ProcessId)
+        }
+        $ownedServicePids = @($ownedServicePids | Select-Object -Unique)
+        $ownedHelperPids = @(foreach ($servicePid in $ownedServicePids) {
+            Get-CimInstance Win32_Process -Filter "ParentProcessId=$servicePid" | Where-Object { $_.Name -eq 'vibdock.exe' } | Select-Object -ExpandProperty ProcessId
+        })
+        $stop = Start-Entry 'vibdock.exe' 'service-stop'
+        if (-not $stop.WaitForExit(5000)) {
+            $stop.Kill(); [void]$stop.WaitForExit(5000)
+            throw 'Authenticated cleanup command timed out; service shutdown is uncertain'
+        }
+        $cleanup['stopExitCode'] = $stop.ExitCode
+        foreach ($process in @($second, $first)) {
+            if ($null -ne $process -and -not $process.HasExited) {
+                $process.Kill()
+                if (-not $process.WaitForExit(5000)) { throw 'Owned launcher did not finish cleanup' }
+            }
+        }
+        if (Test-Path -LiteralPath (Join-Path $fixtureDirectory 'service.json')) { throw 'Service instance marker remains; authenticated cleanup must retry' }
+        foreach ($ownedPid in @($ownedServicePids + $ownedHelperPids)) {
+            Wait-Until { $null -eq (Get-CimInstance Win32_Process -Filter "ProcessId=$ownedPid") } 'Owned service or observer helper remains; state must be retained'
+        }
+        $cleanupProbe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
+        try { $cleanupProbe.Start() } finally { $cleanupProbe.Stop() }
+        $cleanup['serviceStopped'] = $true
+
+        # Only VibDock owns this subtree; browsers inherit LOCALAPPDATA too.
+        $stateFull = [IO.Path]::GetFullPath($state).TrimEnd([IO.Path]::DirectorySeparatorChar)
+        $tempFull = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($stateFull), $tempFull, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($stateFull) -notmatch '^vibdock-desktop-[a-f0-9]{32}$') { throw 'Cleanup workspace is outside its unique temporary parent' }
+        $ownedState = (Resolve-Path -LiteralPath $fixtureDirectory).Path
+        if (-not [string]::Equals($ownedState, (Join-Path $stateFull 'VibDock'), [StringComparison]::OrdinalIgnoreCase)) { throw 'Cleanup target is outside the owned VibDock subtree' }
+        if (((Get-Item -LiteralPath $stateFull -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or ((Get-Item -LiteralPath $ownedState -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or @(Get-ChildItem -LiteralPath $ownedState -Force -Recurse | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) { throw 'Cleanup target contains an uncertain filesystem link; state must be retained' }
+        Remove-Item -LiteralPath $ownedState -Recurse -Force
+        $cleanup['ownedStateRemoved'] = $true
+        $cleanup['retainedDirectories'] = @(Get-ChildItem -LiteralPath $stateFull -Force | Select-Object -ExpandProperty Name)
+        if ($cleanup.retainedDirectories.Count -eq 0) {
+            try { [IO.Directory]::Delete($stateFull, $false); $cleanup['stateRetained'] = $false }
+            catch { $cleanup['retentionReason'] = 'Nonrecursive empty-parent removal failed; foreign data was preserved' }
+        }
+    } catch {
+        $cleanupFailure = $_
     }
-    Remove-Item -LiteralPath $state -Recurse -Force
+    if ($cleanup.stateRetained) { $cleanup['retainedStateDirectory'] = $state }
+    if ($null -eq $report) { $report = [ordered]@{platform='Windows';sourceRevision=$env:VIBDOCK_SOURCE_REVISION;checks=@();defaultBrowser='launch may have invoked the configured browser before failure; page and handoff acceptance unverified';exclusions=@('native acceptance did not finish')} }
+    $report['status'] = if ($testFailure -or $cleanupFailure) { 'failed' } else { 'passed' }
+    $report['cleanup'] = $cleanup
+    if ($cleanup.stateRetained -and $cleanup.ownedStateRemoved) { $report['exclusions'] += 'inherited default-browser profiles and foreign temporary data retained; browser processes are not controlled' }
+    elseif ($cleanup.stateRetained) { $report['exclusions'] += 'isolated VibDock state retained because shutdown or owned-state cleanup is uncertain' }
+    try {
+        if ($testFailure -or $cleanupFailure) {
+            $failure = [ordered]@{primary=(Failure-Detail $testFailure);cleanup=(Failure-Detail $cleanupFailure)}
+            $report['failure'] = $failure
+            $failure | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'failure.json') -Encoding utf8
+        }
+        $report | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
+    } catch {
+        if ($testFailure -or $cleanupFailure) { Write-Warning ('Failure evidence could not be saved: ' + $_.Exception.Message) } else { throw }
+    }
+    if ($cleanupFailure -and -not $testFailure) { throw $cleanupFailure }
+    if (-not $testFailure) { Write-Output 'PASS: hidden tray owner, context menus, singleton reuse, and authenticated Exit. Default-browser invocation occurs; page and physical-device acceptance remain separate.' }
 }
