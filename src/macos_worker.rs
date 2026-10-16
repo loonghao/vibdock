@@ -28,7 +28,8 @@ fn private_output() -> std::io::Result<File> {
     std::fs::create_dir_all(&directory)?;
     let path = directory.join(format!(
         ".mac-observer-{}.tmp",
-        crate::service::generate_token().map_err(std::io::Error::other)?
+        crate::service::generate_token()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
     ));
     let file = OpenOptions::new()
         .read(true)
@@ -155,6 +156,7 @@ fn bounded_json(reader: impl Read) -> Option<Value> {
 
 /// Internal main-thread helper entry. Only VibDock's own executable is started;
 /// no client-provided path, command, bundle or program is accepted here.
+#[cfg(target_os = "macos")]
 pub(crate) fn print_snapshot() {
     let deadline = std::thread::Builder::new()
         .name("mac-observer-deadline".into())

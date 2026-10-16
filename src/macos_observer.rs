@@ -218,7 +218,8 @@ fn read_identity(application: &NSRunningApplication, uid: u32) -> Option<Identit
         return None;
     }
     let started = launch_stamp(application.launchDate()?.timeIntervalSince1970())?;
-    let bundle_path = canonical_url(&application.bundleURL()?)?;
+    let bundle_url = application.bundleURL()?;
+    let bundle_path = canonical_url(&bundle_url)?;
     if !is_bundle_path(&bundle_path) || !bundle_path.is_dir() {
         return None;
     }
@@ -311,7 +312,8 @@ fn canonical_url(url: &NSURL) -> Option<PathBuf> {
             return None;
         }
     }
-    let path = bounded_string(&url.path()?, MAX_PATH_BYTES)?;
+    let native_path = url.path()?;
+    let path = bounded_string(&native_path, MAX_PATH_BYTES)?;
     canonical_local_path(&path)
 }
 
@@ -487,9 +489,9 @@ fn encode_icon_png(premultiplied_rgba: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let mut scanlines = Vec::with_capacity(ICON_RGBA_BYTES + ICON_SIDE);
-    for row in premultiplied_rgba.chunks_exact(ICON_ROW) {
+    for row in premultiplied_rgba.as_chunks::<ICON_ROW>().0 {
         scanlines.push(0); // PNG filter: None
-        for pixel in row.chunks_exact(4) {
+        for pixel in row.as_chunks::<4>().0 {
             let alpha = u32::from(pixel[3]);
             for channel in &pixel[..3] {
                 scanlines.push(if alpha == 0 {
