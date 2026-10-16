@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<title>VibDock symbol — vector reconstruction of selected concept</title>
+<defs><mask id="voice" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="512" fill="white"/><g fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round"><path d="M256 127V392" stroke-width="40"/><path d="M15 291H154Q178 291 178 267V229" stroke-width="32"/><path d="M334 338V268Q334 245 358 245H497" stroke-width="32"/></g></mask></defs>
+<path fill="#10233A" mask="url(#voice)" d="M281 48 464 231Q489 256 464 281L281 464Q256 489 231 464L48 281Q23 256 48 231L231 48Q256 23 281 48Z"/>
+</svg>
