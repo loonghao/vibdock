@@ -22,11 +22,13 @@ use objc2::{
     sel, AnyThread, DefinedClass, MainThreadOnly,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSApplicationTerminateReply, NSBackingStoreType, NSBitmapImageFileType, NSButton, NSEvent,
-    NSEventModifierFlags, NSEventType, NSFloatingWindowLevel, NSFont, NSImage, NSImageView, NSMenu,
-    NSMenuItem, NSModalPanelRunLoopMode, NSPanel, NSStatusBar, NSStatusItem, NSTextField, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
+    NSAlert, NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
+    NSBackingStoreType, NSBitmapFormat, NSBitmapImageFileType, NSBitmapImageRep, NSButton, NSColor,
+    NSColorSpace, NSEvent, NSEventModifierFlags, NSEventType, NSFloatingWindowLevel, NSFont,
+    NSImage, NSImageView, NSMenu, NSMenuItem, NSModalPanelRunLoopMode, NSPanel, NSRectFill,
+    NSStatusBar, NSStatusItem, NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSWorkspace,
 };
 use objc2_foundation::{
     ns_string, MainThreadMarker, NSData, NSDictionary, NSNotification, NSObject, NSObjectProtocol,
@@ -68,6 +70,13 @@ const ACCEPTANCE_CHECKS: &[&str] = &[
     "reopen_reuses_panel",
     "last_window_keeps_resident",
     "native_view_rendered",
+    "native_view_opaque_root",
+    "native_view_background_opaque",
+    "native_light_view_rendered",
+    "native_dark_view_rendered",
+    "native_light_background_opaque",
+    "native_dark_background_opaque",
+    "native_appearance_backgrounds_distinct",
     "second_launcher_exited",
     "owner_ipc_reopen_restores",
     "settings_handoff_issued",
@@ -92,6 +101,7 @@ const OFFLINE_ACCEPTANCE_CHECKS: &[&str] = &[
 const RUNNING_ACCEPTANCE_CHECKS: &[&str] = &[
     "software_self_running_observed",
     "software_self_native_icon",
+    "software_self_brand_icon_colors",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +250,38 @@ impl SoftwareSnapshot {
 struct SoftwareAcceptance {
     offline: Option<(String, String)>,
     running: Option<String>,
+}
+
+fn packed_alpha_is_opaque(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    stride: usize,
+    samples: usize,
+    alpha: usize,
+) -> Option<bool> {
+    if width == 0
+        || height == 0
+        || samples == 0
+        || alpha >= samples
+        || width.checked_mul(samples)? > stride
+        || stride.checked_mul(height)? > bytes.len()
+    {
+        return None;
+    }
+    Some(bytes.chunks_exact(stride).take(height).all(|row| {
+        row[..width * samples]
+            .chunks_exact(samples)
+            .all(|pixel| pixel[alpha] == 255)
+    }))
+}
+
+fn self_brand_colors_match(sampled: usize, teal: usize, red: usize) -> bool {
+    sampled >= 256
+        && teal <= sampled
+        && red <= sampled
+        && teal >= sampled.div_ceil(20)
+        && red < sampled.div_ceil(20)
 }
 
 impl SoftwareAcceptance {
@@ -562,6 +604,46 @@ fn probe_second_launch() -> std::result::Result<(), String> {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+define_class!(
+    // SAFETY: NSView drawing and all access stay on AppKit's main thread. The
+    // opaque contract is fulfilled by painting every dirty region before any
+    // descendant draws, in both the real window and cacheDisplay's native view.
+    #[unsafe(super = NSView)]
+    #[thread_kind = MainThreadOnly]
+    struct ResidentContentView;
+
+    unsafe impl NSObjectProtocol for ResidentContentView {}
+
+    impl ResidentContentView {
+        #[unsafe(method(isOpaque))]
+        fn opaque(&self) -> bool { true }
+
+        #[unsafe(method(drawRect:))]
+        fn draw_background(&self, dirty: NSRect) {
+            // Dynamic system colors resolve using the native drawing
+            // appearance; no fixed light/dark RGB or screenshot compositing.
+            NSColor::windowBackgroundColor().setFill();
+            NSRectFill(dirty);
+        }
+
+        #[unsafe(method(viewDidChangeEffectiveAppearance))]
+        fn appearance_changed(&self) {
+            // SAFETY: This is NSView's documented no-argument callback.
+            unsafe { let _: () = msg_send![super(self), viewDidChangeEffectiveAppearance]; }
+            self.setNeedsDisplay(true);
+        }
+    }
+);
+
+impl ResidentContentView {
+    fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        // SAFETY: NSView's designated initializer has this signature. This
+        // class has no custom ivars and is created only on the main thread.
+        unsafe { msg_send![super(this), initWithFrame: frame] }
     }
 }
 
@@ -1441,38 +1523,134 @@ impl ResidentDelegate {
             .panel
             .contentView()
             .ok_or("The panel has no content view.")?;
-        view.displayIfNeeded();
-        let bounds = view.bounds();
-        let bitmap = view
-            .bitmapImageRepForCachingDisplayInRect(bounds)
-            .ok_or("AppKit could not allocate an own-view bitmap.")?;
-        view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
-        // SAFETY: PNG accepts an empty, immutable property dictionary.
-        let png = unsafe {
-            bitmap.representationUsingType_properties(
-                NSBitmapImageFileType::PNG,
-                &NSDictionary::new(),
-            )
-        }
-        .ok_or("AppKit could not encode the own-view bitmap.")?;
+        let (bitmap, png) = capture_native_view(&view)?;
+        let (opaque, background, facts) = native_bitmap_facts(&bitmap)?;
+        self.check("native_view_rendered", !png.is_empty());
+        self.check("native_view_opaque_root", view.isOpaque());
         self.check(
-            "native_view_rendered",
-            bitmap.pixelsWide() > 0 && bitmap.pixelsHigh() > 0 && !png.is_empty(),
+            "native_view_background_opaque",
+            opaque && background[3] >= 0.999,
         );
-        self.ivars().report.borrow_mut().insert(
-            "render".into(),
-            json!({
-                "kind": "AppKit own-content-view bitmap; not a desktop screenshot",
-                "width": bitmap.pixelsWide(), "height": bitmap.pixelsHigh(),
-                "screen_recording_requested": false
-            }),
-        );
-        // Only the explicit acceptance mode can write this opt-in artifact.
-        if let Some(path) = std::env::var_os("VIBDOCK_NATIVE_ACCEPTANCE_IMAGE") {
+        self.ivars()
+            .report
+            .borrow_mut()
+            .insert("render".into(), facts);
+        self.check_self_brand_colors(ui, &bitmap, view.bounds());
+        let output =
+            std::env::var_os("VIBDOCK_NATIVE_ACCEPTANCE_IMAGE").map(std::path::PathBuf::from);
+        if let Some(path) = &output {
             std::fs::write(path, png.to_vec())?;
             self.check("native_view_png_written", true);
         }
-        Ok(())
+
+        // The real native widgets are rendered in each system appearance. This
+        // changes only this acceptance process, restores its original setting,
+        // and never composites a background or recolors a captured image.
+        let app = NSApplication::sharedApplication(self.mtm());
+        let previous = app.appearance();
+        let variants = (|| -> crate::Result<()> {
+            let mut backgrounds = Vec::new();
+            // SAFETY: These are AppKit's immutable standard appearance names.
+            for (name, appearance_name) in unsafe {
+                [
+                    ("light", NSAppearanceNameAqua),
+                    ("dark", NSAppearanceNameDarkAqua),
+                ]
+            } {
+                let appearance = NSAppearance::appearanceNamed(appearance_name)
+                    .ok_or("AppKit did not provide the requested native appearance.")?;
+                app.setAppearance(Some(&appearance));
+                let (bitmap, png) = capture_native_view(&view)?;
+                let (opaque, background, facts) = native_bitmap_facts(&bitmap)?;
+                self.check(
+                    &format!("native_{name}_view_rendered"),
+                    !png.is_empty()
+                        && app.effectiveAppearance().name().to_string()
+                            == appearance.name().to_string(),
+                );
+                self.check(
+                    &format!("native_{name}_background_opaque"),
+                    opaque && background[3] >= 0.999,
+                );
+                self.ivars()
+                    .report
+                    .borrow_mut()
+                    .insert(format!("render_{name}"), facts);
+                backgrounds.push(background);
+                if let Some(path) = &output {
+                    let mut stem = path
+                        .file_stem()
+                        .unwrap_or(std::ffi::OsStr::new("resident-native-view"))
+                        .to_os_string();
+                    stem.push(format!("-{name}.png"));
+                    std::fs::write(path.with_file_name(stem), png.to_vec())?;
+                }
+            }
+            let brightness = |color: &[f64; 4]| (color[0] + color[1] + color[2]) / 3.0;
+            self.check(
+                "native_appearance_backgrounds_distinct",
+                backgrounds.len() == 2
+                    && brightness(&backgrounds[0]) > brightness(&backgrounds[1]) + 0.2,
+            );
+            Ok(())
+        })();
+        app.setAppearance(previous.as_deref());
+        view.setNeedsDisplay(true);
+        view.displayIfNeeded();
+        variants
+    }
+
+    fn check_self_brand_colors(&self, ui: &Ui, bitmap: &NSBitmapImageRep, bounds: NSRect) {
+        let Some(id) = self
+            .ivars()
+            .software_acceptance
+            .as_ref()
+            .and_then(|expected| expected.running.as_ref())
+        else {
+            return;
+        };
+        let entries = self.ivars().software.borrow().display(Instant::now());
+        let Some(index) = entries.iter().position(|entry| &entry.id == id) else {
+            self.check("software_self_brand_icon_colors", false);
+            return;
+        };
+        // Inspect the expected live VibDock row in the actual native view
+        // bitmap. This brand-specific gate never applies to third-party apps.
+        let frame = ui.software_rows[index].image.frame();
+        let scale_x = bitmap.pixelsWide() as f64 / bounds.size.width;
+        let scale_y = bitmap.pixelsHigh() as f64 / bounds.size.height;
+        let left = ((frame.origin.x - bounds.origin.x) * scale_x).round() as isize;
+        let top = ((bounds.origin.y + bounds.size.height - frame.origin.y - frame.size.height)
+            * scale_y)
+            .round() as isize;
+        let right = (left + (frame.size.width * scale_x).round() as isize).min(bitmap.pixelsWide());
+        let bottom =
+            (top + (frame.size.height * scale_y).round() as isize).min(bitmap.pixelsHigh());
+        let mut teal = 0usize;
+        let mut red = 0usize;
+        let mut sampled = 0usize;
+        for y in top.max(0)..bottom {
+            for x in left.max(0)..right {
+                if let Some([r, g, b, a]) = bitmap_srgb(bitmap, x, y) {
+                    sampled += 1;
+                    if a > 0.9 && g > r + 0.12 && b > r + 0.08 {
+                        teal += 1;
+                    }
+                    if a > 0.9 && r > g + 0.15 && r > b + 0.15 {
+                        red += 1;
+                    }
+                }
+            }
+        }
+        self.check(
+            "software_self_brand_icon_colors",
+            self_brand_colors_match(sampled, teal, red),
+        );
+        self.ivars().report.borrow_mut().insert("software_self_brand_render".into(), json!({
+            "source": "expected live self-application icon region in actual AppKit own-content-view bitmap",
+            "sampled_pixels": sampled, "teal_pixels": teal, "red_pixels": red,
+            "arbitrary_third_party_icons_checked": false,
+        }));
     }
 
     fn stop_loop(&self) {
@@ -1569,6 +1747,95 @@ impl ResidentDelegate {
         }
         Value::Object(report)
     }
+}
+
+fn capture_native_view(
+    view: &NSView,
+) -> crate::Result<(Retained<NSBitmapImageRep>, Retained<NSData>)> {
+    view.setNeedsDisplay(true);
+    view.displayIfNeeded();
+    let bounds = view.bounds();
+    let bitmap = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .ok_or("AppKit could not allocate an own-view bitmap.")?;
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    // SAFETY: PNG accepts an empty immutable property dictionary. The bytes
+    // come directly from AppKit's real view render, with no pixel mutation.
+    let png = unsafe {
+        bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
+    }
+    .ok_or("AppKit could not encode the own-view bitmap.")?;
+    Ok((bitmap, png))
+}
+
+fn bitmap_srgb(bitmap: &NSBitmapImageRep, x: isize, y: isize) -> Option<[f64; 4]> {
+    let color = bitmap
+        .colorAtX_y(x, y)?
+        .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
+    let rgba = [
+        color.redComponent(),
+        color.greenComponent(),
+        color.blueComponent(),
+        color.alphaComponent(),
+    ];
+    rgba.iter()
+        .all(|component| component.is_finite())
+        .then_some(rgba)
+}
+
+fn native_bitmap_facts(bitmap: &NSBitmapImageRep) -> crate::Result<(bool, [f64; 4], Value)> {
+    let width = usize::try_from(bitmap.pixelsWide())?;
+    let height = usize::try_from(bitmap.pixelsHigh())?;
+    if width == 0 || height == 0 || width > 4096 || height > 4096 {
+        return Err("The native view bitmap dimensions exceed the acceptance bound.".into());
+    }
+    let opaque = if !bitmap.hasAlpha() {
+        true
+    } else {
+        let samples = usize::try_from(bitmap.samplesPerPixel())?;
+        let stride = usize::try_from(bitmap.bytesPerRow())?;
+        let length = stride
+            .checked_mul(height)
+            .ok_or("Native bitmap length overflow.")?;
+        let allowed = NSBitmapFormat::AlphaFirst | NSBitmapFormat::AlphaNonpremultiplied;
+        if bitmap.bitsPerSample() != 8
+            || bitmap.isPlanar()
+            || !(2..=4).contains(&samples)
+            || bitmap.bitsPerPixel() != (samples * 8) as isize
+            || !bitmap.bitmapFormat().difference(allowed).is_empty()
+            || length > 32 * 1024 * 1024
+            || bitmap.bytesPerPlane() < length as isize
+            || bitmap.bitmapData().is_null()
+        {
+            return Err("The native view bitmap has an unsupported alpha layout.".into());
+        }
+        // SAFETY: AppKit owns this retained, non-planar 8-bit bitmap; all layout
+        // dimensions, allocation size and the non-null pointer are checked.
+        // No mutable alias is created and the source pixels are never changed.
+        let bytes = unsafe { std::slice::from_raw_parts(bitmap.bitmapData(), length) };
+        let alpha = if bitmap.bitmapFormat().contains(NSBitmapFormat::AlphaFirst) {
+            0
+        } else {
+            samples - 1
+        };
+        packed_alpha_is_opaque(bytes, width, height, stride, samples, alpha)
+            .ok_or("The native bitmap alpha layout is inconsistent.")?
+    };
+    let background = bitmap_srgb(
+        bitmap,
+        3.min(width as isize - 1),
+        3.min(height as isize - 1),
+    )
+    .ok_or("AppKit could not read the native background color.")?;
+    let facts = json!({
+        "kind": "AppKit own-content-view bitmap; not a desktop screenshot",
+        "width": width, "height": height, "all_pixels_opaque": opaque,
+        "pixel_count": width * height, "bitmap_has_alpha": bitmap.hasAlpha(),
+        "background_source": "native dynamic NSColor.windowBackgroundColor drawn by the actual root view",
+        "background_srgb": background, "screen_recording_requested": false,
+        "postprocessed_or_composited": false,
+    });
+    Ok((opaque, background, facts))
 }
 
 fn rect_contains(outer: NSRect, inner: NSRect) -> bool {
@@ -1730,9 +1997,11 @@ fn build_ui(delegate: &ResidentDelegate, app: &NSApplication) -> crate::Result<U
     panel.setHidesOnDeactivate(false);
     panel.setDelegate(Some(ProtocolObject::from_ref(delegate)));
     panel.center();
-    let content = panel
-        .contentView()
-        .ok_or("AppKit created no panel content view.")?;
+    let content = ResidentContentView::new(
+        mtm,
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(PANEL_WIDTH, 321.0)),
+    );
+    panel.setContentView(Some(&content));
     let title = NSTextField::labelWithString(ns_string!("VibDock"), mtm);
     title.setFont(Some(&NSFont::boldSystemFontOfSize(24.0)));
     title.setFrame(NSRect::new(
@@ -1935,6 +2204,34 @@ pub fn report_error(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_alpha_checks_actual_pixels_and_ignores_row_padding() {
+        let rgba = [10, 20, 30, 255, 0, 0, 0, 0, 40, 50, 60, 255, 0, 0, 0, 0];
+        assert_eq!(packed_alpha_is_opaque(&rgba, 1, 2, 8, 4, 3), Some(true));
+        let mut transparent = rgba;
+        transparent[11] = 0;
+        assert_eq!(
+            packed_alpha_is_opaque(&transparent, 1, 2, 8, 4, 3),
+            Some(false)
+        );
+        assert_eq!(
+            packed_alpha_is_opaque(&[255, 10, 20, 30], 1, 1, 4, 4, 0),
+            Some(true)
+        );
+        assert_eq!(packed_alpha_is_opaque(&rgba, 3, 2, 8, 4, 3), None);
+        assert_eq!(packed_alpha_is_opaque(&rgba, 1, 3, 8, 4, 3), None);
+        assert_eq!(packed_alpha_is_opaque(&rgba, 1, 1, 8, 4, 4), None);
+        assert_eq!(packed_alpha_is_opaque(&rgba, 0, 1, 8, 4, 3), None);
+    }
+
+    #[test]
+    fn expected_self_brand_colors_reject_observed_red_noise() {
+        assert!(self_brand_colors_match(1024, 300, 0));
+        assert!(!self_brand_colors_match(1024, 0, 386));
+        assert!(!self_brand_colors_match(1024, 300, 100));
+        assert!(!self_brand_colors_match(100, 30, 0));
+    }
 
     fn software_summary() -> Value {
         json!({

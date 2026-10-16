@@ -25,13 +25,18 @@ REQUIRED = ["application_finished_launching", "service_ownership_proved", "nativ
             "close_hides_only", "reopen_reuses_panel", "last_window_keeps_resident",
             "settings_handoff_issued", "authenticated_shutdown_and_port_released",
             "native_view_rendered", "native_view_png_written", "native_resources_released",
+            "native_view_opaque_root", "native_view_background_opaque",
+            "native_light_view_rendered", "native_dark_view_rendered",
+            "native_light_background_opaque", "native_dark_background_opaque",
+            "native_appearance_backgrounds_distinct",
             "second_launcher_exited", "owner_ipc_reopen_restores"]
 SOFTWARE_REQUIRED = ["software_rows_match_summary", "software_rows_within_panel",
                      "software_status_menu_rows", "software_dock_menu_rows",
                      "software_presence_only", "software_expiry_unknown",
                      "software_expiry_clears_icons", "software_persisted_offline_label",
                      "software_offline_not_running_or_unknown", "software_offline_placeholder",
-                     "software_self_running_observed", "software_self_native_icon"]
+                     "software_self_running_observed", "software_self_native_icon",
+                     "software_self_brand_icon_colors"]
 OBSERVER_COUNTERS = ("enumerated", "inspected", "other_user_excluded", "unreadable_process",
                      "invalid_application_identity", "changed_before_publish", "missing_icons",
                      "collection_limited", "publication_budget_expired", "missing_launch_date")
@@ -261,12 +266,15 @@ def run(app, evidence, system_quit=False):
                 raise RuntimeError(f"Native acceptance missing required check: {key}")
         if report.get("browser_launched") is not False or report.get("audio_supported") is not False:
             raise RuntimeError("Acceptance exceeded its browser/audio scope")
-        png = image.read_bytes()
-        if len(png) < 1024 or png[:8] != b"\x89PNG\r\n\x1a\n":
-            raise RuntimeError("Native view PNG was not rendered")
-        width, height = struct.unpack_from(">II", png, 16)
-        if not (100 <= width <= 2400 and 60 <= height <= 1600):
-            raise RuntimeError("Unexpected native view image bounds")
+        for appearance in (None, "light", "dark"):
+            capture = image if appearance is None else image.with_name(
+                f"{image.stem}-{appearance}.png")
+            png = capture.read_bytes()
+            if len(png) < 1024 or png[:8] != b"\x89PNG\r\n\x1a\n":
+                raise RuntimeError("Native view PNG was not rendered")
+            width, height = struct.unpack_from(">II", png, 16)
+            if not (100 <= width <= 2400 and 60 <= height <= 1600):
+                raise RuntimeError("Unexpected native view image bounds")
         if (state / "VibDock/service.json").exists():
             raise RuntimeError("Quit left the test service record behind")
         print("PASS: actual AppKit widgets, owner-specific singleton reopen, proved Settings handoff, authenticated Quit and original-art native view rendering.")

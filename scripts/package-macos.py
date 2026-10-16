@@ -41,16 +41,21 @@ def check_brand(brand):
         safe_segment(name)
         if hashlib.sha256((brand / name).read_bytes()).hexdigest() != expected:
             raise ValueError("Original brand content hash mismatch")
-    # ICNS is only a container: every PNG is byte-for-byte from the owner's pack.
+    # Keep PNG bytes only in modern PNG-capable icon slots. AppKit can select
+    # and downscale the 128+ px representations for small sizes. PNG data in
+    # legacy icp4/icp5/icp6 slots renders as colored noise for .app icons even
+    # when a standalone image decoder accepts the embedded PNG itself.
+    # Every retained PNG is byte-for-byte from the owner's original pack.
     payload = (brand / "vibdock.icns").read_bytes()
     if payload[:4] != b"icns" or struct.unpack_from(">I", payload, 4)[0] != len(payload):
         raise ValueError("Invalid original-art ICNS container")
-    sizes = {b"icp4": 16, b"icp5": 32, b"icp6": 64, b"ic07": 128,
-             b"ic08": 256, b"ic09": 512, b"ic10": 1024}
+    sizes = {b"ic07": 128, b"ic08": 256, b"ic09": 512, b"ic10": 1024}
     source_hashes = json.loads((brand / "MACOS-PNG-SHA256.json").read_text())
     offset, seen = 8, set()
     while offset < len(payload):
         kind, length = struct.unpack_from(">4sI", payload, offset)
+        if kind in (b"icp4", b"icp5", b"icp6"):
+            raise ValueError("Legacy small-icon ICNS slots are not supported")
         if kind not in sizes or kind in seen or length < 32 or offset + length > len(payload):
             raise ValueError("Invalid or repeated ICNS image")
         png = payload[offset + 8:offset + length]
