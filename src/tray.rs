@@ -119,6 +119,15 @@ struct PlaybackSelection {
     requested_muted: bool,
 }
 
+fn receipt_is_terminal(state: &service::PlaybackReceiptState) -> bool {
+    // A delayed execute can still be queued behind this receipt GET. Prepared
+    // is not proof that an attempted request will never execute.
+    !matches!(
+        state,
+        service::PlaybackReceiptState::Prepared | service::PlaybackReceiptState::Pending
+    )
+}
+
 fn reference_is_current(observation: &Observation, selection: &PlaybackSelection) -> bool {
     observation.fresh()
         && observation.generation == selection.generation
@@ -293,7 +302,7 @@ fn poll_worker(
                     Ok(receipt)
                         if receipt.requested_muted == operation.selection.requested_muted =>
                     {
-                        if receipt.state != service::PlaybackReceiptState::Pending {
+                        if receipt_is_terminal(&receipt.state) {
                             complete = Some(receipt.presentation().to_owned());
                         }
                     }
@@ -1389,6 +1398,21 @@ mod tests {
             assert_eq!(next, 0);
         }
         assert!(tray_row(&[serde_json::json!({"id":"new"})], &[0], 0).is_none());
+    }
+
+    #[test]
+    fn a_prepared_receipt_after_lost_execute_cannot_claim_no_write() {
+        use service::PlaybackReceiptState::*;
+        assert!(!receipt_is_terminal(&Prepared));
+        assert!(!receipt_is_terminal(&Pending));
+        for state in [
+            Verified,
+            VerifiedMismatch,
+            RejectedBeforeWrite,
+            OutcomeUnconfirmed,
+        ] {
+            assert!(receipt_is_terminal(&state));
+        }
     }
 
     #[test]
