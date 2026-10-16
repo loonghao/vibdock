@@ -1,4 +1,4 @@
-# Resident software entries (Windows read-only increment)
+# Resident software entries (read-only status)
 
 Settings > Software reads current Windows playback sessions. A user can pin up to
 eight observed software locations on their observed output endpoint, or remove a
@@ -64,13 +64,26 @@ CI compiles the native adapter and exercises the real resident lifecycle; a runn
 without playback hardware must show unavailable/unknown and cannot prove live
 application playback or real third-party icon behavior.
 
-macOS currently reports native software observation unavailable. A separate native
-menu-bar/Dock adapter needs a supported playback/process model, icon lifecycle,
-packaging/signing and actual macOS GUI acceptance before claiming parity. The
-Windows CoreAudio implementation is not used as a macOS substitute. Formal release
-readiness still requires representative real Windows playback and software-state
-acceptance; this increment is a candidate, not a full voice-control release.
+macOS has a separate native application-presence adapter, not a translation of
+Windows playback sessions. It stores schema 1 in `apps-macos.json` with platform,
+revision and at most eight entries (random ID, label, canonical bundle location,
+optional bundle ID). It never reads, migrates or replaces Windows `apps.json`.
+A saved location is only a correlation hint; processes and launch stamps are not
+persisted as authority. Current choices are one-use OS-random capabilities bound
+to the full observed bundle/executable/PID/launch identity. Client paths are not
+accepted. Atomic-write failures, corruption, unsupported schemas and external
+file changes preserve the existing file and disable editing with a diagnostic.
 
-The separate [macOS adapter plan](macos-resident-plan.md) names the native APIs,
-identity differences, bundle and logged-in GUI acceptance gates. It is not shipped
-macOS functionality.
+The Mac helper caps inspection at 128 applications and publication at 64. It
+verifies current-user kernel process creation data and AppKit launch identity,
+including apps without a visible Dock icon. Fixed 32px metadata-free PNG icons
+are bounded to 16KiB and validated before browser/native rendering. No offline
+saved bundle path is read to recover an icon. The native panel expires status and
+icons after four seconds, subtracting observation and transport age. Mac API
+states are `running`, `not_running` and `unknown`; `actions_enabled` remains false.
+A running process is not proof of playback, recording, voice activity or work.
+
+See [macOS native behavior and acceptance](macos-desktop.md) for helper lifecycle,
+actual AppKit evidence and remaining physical-desktop/signing limitations. Formal
+release readiness still requires representative real Windows playback/control
+and software-state acceptance. Candidates are not a full voice-control release.

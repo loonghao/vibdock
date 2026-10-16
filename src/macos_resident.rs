@@ -1,8 +1,9 @@
 //! Main-thread AppKit resident shell. No macOS audio backend is implied.
 //!
 //! Native widgets never perform network I/O. One joined worker serializes the
-//! existing bounded proof, browser-code and shutdown operations; its two queues
-//! are bounded. Windows software identities are not loaded by this adapter.
+//! existing bounded proof, software summary, browser-code and shutdown
+//! operations; its two queues are bounded. Windows software identities are not
+//! loaded by this adapter. Application presence never implies audio activity.
 
 use std::{
     cell::{Cell, OnceCell, RefCell},
@@ -23,8 +24,8 @@ use objc2::{
 use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSApplicationTerminateReply, NSBackingStoreType, NSBitmapImageFileType, NSButton, NSEvent,
-    NSEventModifierFlags, NSEventType, NSFloatingWindowLevel, NSFont, NSImage, NSMenu, NSMenuItem,
-    NSModalPanelRunLoopMode, NSPanel, NSStatusBar, NSStatusItem, NSTextField, NSWindow,
+    NSEventModifierFlags, NSEventType, NSFloatingWindowLevel, NSFont, NSImage, NSImageView, NSMenu,
+    NSMenuItem, NSModalPanelRunLoopMode, NSPanel, NSStatusBar, NSStatusItem, NSTextField, NSWindow,
     NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{
@@ -39,7 +40,13 @@ use crate::service;
 const STATUS_TTL: Duration = Duration::from_secs(4);
 const ACCEPTANCE_BUDGET: Duration = Duration::from_secs(20);
 const CAPABILITY_TEXT: &str =
-    "Audio, global shortcuts and per-app voice controls are unavailable on macOS.";
+    "Running means application presence only.\nPlayback, audio, global shortcuts and voice controls are unavailable on macOS.";
+const MAX_SOFTWARE_ROWS: usize = 8;
+const BASE_MENU_ITEMS: isize = 7;
+const SOFTWARE_MENU_START: isize = BASE_MENU_ITEMS + 2;
+const ROW_HEIGHT: f64 = 40.0;
+const ROW_BOTTOM: f64 = 166.0;
+const PANEL_WIDTH: f64 = 460.0;
 const MENU_SHOW: isize = 2;
 const MENU_HIDE: isize = 3;
 const MENU_SETTINGS: isize = 4;
@@ -67,6 +74,193 @@ const ACCEPTANCE_CHECKS: &[&str] = &[
     "authenticated_shutdown_and_port_released",
     "native_resources_released",
 ];
+const SOFTWARE_ACCEPTANCE_CHECKS: &[&str] = &[
+    "software_rows_match_summary",
+    "software_rows_within_panel",
+    "software_status_menu_rows",
+    "software_dock_menu_rows",
+    "software_presence_only",
+    "software_ui_has_no_bundle_paths",
+    "software_expiry_unknown",
+    "software_expiry_clears_icons",
+];
+const OFFLINE_ACCEPTANCE_CHECKS: &[&str] = &[
+    "software_persisted_offline_label",
+    "software_offline_not_running_or_unknown",
+    "software_offline_placeholder",
+];
+const RUNNING_ACCEPTANCE_CHECKS: &[&str] = &[
+    "software_self_running_observed",
+    "software_self_native_icon",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Presence {
+    Running,
+    NotRunning,
+    Unknown,
+}
+
+impl Presence {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Running => "Running",
+            Self::NotRunning => "Not running",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SoftwareEntry {
+    id: String,
+    label: String,
+    presence: Presence,
+    icon: Option<Vec<u8>>,
+}
+
+impl SoftwareEntry {
+    fn unknown(&mut self) {
+        self.presence = Presence::Unknown;
+        self.icon = None;
+    }
+
+    fn menu_title(&self, has_icon: bool) -> String {
+        let placeholder = if has_icon { "" } else { "□ " };
+        format!(
+            "{placeholder}{} · {}",
+            self.display_label(),
+            self.presence.label()
+        )
+    }
+
+    fn display_label(&self) -> String {
+        let mut chars = self.label.chars();
+        let mut label: String = chars.by_ref().take(32).collect();
+        if chars.next().is_some() {
+            label.push('…');
+        }
+        label
+    }
+}
+
+#[derive(Default)]
+struct SoftwareSnapshot {
+    entries: Vec<SoftwareEntry>,
+    checked: Option<Instant>,
+}
+
+fn summary_string(value: &Value, key: &str, max: usize) -> Option<String> {
+    let text = value.get(key)?.as_str()?;
+    (!text.is_empty() && text.len() <= max && !text.chars().any(char::is_control))
+        .then(|| text.to_owned())
+}
+
+impl SoftwareSnapshot {
+    // This runs on the serial service worker. Only bounded labels, presence and
+    // validated PNG bytes reach native widgets; no executable or bundle path is
+    // ever used by the resident UI, including when a menu row is selected.
+    fn parse(value: &Value, checked: Instant) -> Option<Self> {
+        if value["platform"] != "macos" || value["observation_kind"] != "application_presence" {
+            return None;
+        }
+        let values = value["entries"].as_array()?;
+        if values.len() > MAX_SOFTWARE_ROWS {
+            return None;
+        }
+        let observed = value["age_ms"]
+            .as_u64()
+            .filter(|age| *age < STATUS_TTL.as_millis() as u64)
+            .and_then(|age| checked.checked_sub(Duration::from_millis(age)));
+        let available = value["available"].as_bool() == Some(true) && observed.is_some();
+        let mut entries: Vec<SoftwareEntry> = Vec::with_capacity(values.len());
+        for value in values {
+            let id = summary_string(value, "id", 128)?;
+            if entries.iter().any(|entry| entry.id == id) {
+                return None;
+            }
+            let label = summary_string(value, "label", 80)?;
+            let read_only = value["actions_enabled"].as_bool() == Some(false)
+                && value["sessions"].as_array().is_some_and(Vec::is_empty);
+            let presence = if available && read_only {
+                match value["state"].as_str() {
+                    // A partial scan can still positively verify one app. Only
+                    // absence requires a complete observation for this entry.
+                    Some("running") => Presence::Running,
+                    Some("not_running") if value["complete"].as_bool() == Some(true) => {
+                        Presence::NotRunning
+                    }
+                    _ => Presence::Unknown,
+                }
+            } else {
+                Presence::Unknown
+            };
+            let icon = if presence == Presence::Running && value["icon_mime"] == "image/png" {
+                value["icon_b64"]
+                    .as_str()
+                    .and_then(crate::resident_apps::decode_icon)
+            } else {
+                None
+            };
+            entries.push(SoftwareEntry {
+                id,
+                label,
+                presence,
+                icon,
+            });
+        }
+        Some(Self {
+            entries,
+            checked: observed,
+        })
+    }
+
+    fn expire(&mut self) {
+        self.checked = None;
+        for entry in &mut self.entries {
+            entry.unknown();
+        }
+    }
+
+    fn display(&self, now: Instant) -> Vec<SoftwareEntry> {
+        let mut entries = self.entries.clone();
+        if !self
+            .checked
+            .is_some_and(|checked| now.saturating_duration_since(checked) < STATUS_TTL)
+        {
+            for entry in &mut entries {
+                entry.unknown();
+            }
+        }
+        entries
+    }
+}
+
+struct SoftwareAcceptance {
+    offline: Option<(String, String)>,
+    running: Option<String>,
+}
+
+impl SoftwareAcceptance {
+    fn from_environment(acceptance: bool) -> crate::Result<Option<Self>> {
+        if !acceptance {
+            return Ok(None);
+        }
+        let id = std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_SOFTWARE_ID").ok();
+        let label = std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_SOFTWARE_LABEL").ok();
+        let offline = match (id, label) {
+            (Some(id), Some(label)) => Some((id, label)),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "Software acceptance requires both the persisted fixture ID and label.".into(),
+                )
+            }
+        };
+        let running = std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_RUNNING_ID").ok();
+        Ok((offline.is_some() || running.is_some()).then_some(Self { offline, running }))
+    }
+}
 
 fn service_text(observation: Option<(u16, Instant)>, now: Instant) -> String {
     match observation {
@@ -82,6 +276,24 @@ fn acceptance_passed(report: &Map<String, Value>) -> bool {
         && ACCEPTANCE_CHECKS
             .iter()
             .all(|name| report.get(*name).and_then(Value::as_bool) == Some(true))
+        && [
+            ("software_acceptance_requested", SOFTWARE_ACCEPTANCE_CHECKS),
+            (
+                "software_offline_fixture_requested",
+                OFFLINE_ACCEPTANCE_CHECKS,
+            ),
+            (
+                "software_self_observation_requested",
+                RUNNING_ACCEPTANCE_CHECKS,
+            ),
+        ]
+        .iter()
+        .all(|(requested, checks)| {
+            report.get(*requested).and_then(Value::as_bool) != Some(true)
+                || checks
+                    .iter()
+                    .all(|name| report.get(*name).and_then(Value::as_bool) == Some(true))
+        })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -93,7 +305,11 @@ enum Command {
 }
 
 enum Reply {
-    Observation { port: Option<u16>, checked: Instant },
+    Observation {
+        port: Option<u16>,
+        software: Option<SoftwareSnapshot>,
+        checked: Instant,
+    },
     Settings(std::result::Result<String, String>),
     Quit(std::result::Result<bool, String>),
     ReopenProbe(std::result::Result<(), String>),
@@ -145,12 +361,22 @@ impl Worker {
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                     if Instant::now() >= next_observation && !stopping.load(Ordering::Relaxed) {
-                        // Only liveness/ownership reaches the UI, never the token or
-                        // the Windows-specific persisted application inventory.
-                        let port = service::live_instance().map(|instance| instance.port);
+                        // The summary follows the ownership proof on the same
+                        // socket. There is no main-thread networking or second
+                        // connection carrying a bearer to an unproved listener.
+                        let requested = Instant::now();
+                        let observation = service::resident_app_view();
+                        let checked = Instant::now();
+                        let (port, software) = match observation {
+                            Ok((port, value)) => {
+                                (Some(port), SoftwareSnapshot::parse(&value, requested))
+                            }
+                            Err(_) => (None, None),
+                        };
                         let _ = outgoing.try_send(Reply::Observation {
                             port,
-                            checked: Instant::now(),
+                            software,
+                            checked,
                         });
                         next_observation = Instant::now() + Duration::from_secs(1);
                     }
@@ -224,13 +450,26 @@ impl Drop for Worker {
     }
 }
 
+struct SoftwareRow {
+    image: Retained<NSImageView>,
+    placeholder: Retained<NSTextField>,
+    label: Retained<NSTextField>,
+    state: Retained<NSTextField>,
+}
+
 struct Ui {
     panel: Retained<NSPanel>,
     status: Retained<NSStatusItem>,
     status_menu: Retained<NSMenu>,
     dock_menu: Retained<NSMenu>,
+    software_menus: Vec<Retained<NSMenu>>,
     summaries: Vec<Retained<NSMenuItem>>,
+    title: Retained<NSTextField>,
     service_label: Retained<NSTextField>,
+    software_heading: Retained<NSTextField>,
+    software_empty: Retained<NSTextField>,
+    software_rows: Vec<SoftwareRow>,
+    rendered_software: RefCell<Option<Vec<SoftwareEntry>>>,
     notice_label: Retained<NSTextField>,
     menu_image: Retained<NSImage>,
 }
@@ -240,6 +479,8 @@ struct DelegateState {
     worker: Worker,
     pending: Cell<Option<Command>>,
     observation: Cell<Option<(u16, Instant)>>,
+    software: RefCell<SoftwareSnapshot>,
+    software_acceptance: Option<SoftwareAcceptance>,
     acceptance: bool,
     system_quit_acceptance: bool,
     finished_launching: Cell<bool>,
@@ -370,6 +611,8 @@ impl ResidentDelegate {
             worker: Worker::start()?,
             pending: Cell::new(None),
             observation: Cell::new(None),
+            software: RefCell::new(SoftwareSnapshot::default()),
+            software_acceptance: SoftwareAcceptance::from_environment(acceptance)?,
             acceptance,
             system_quit_acceptance: acceptance
                 && std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_SYSTEM_QUIT").as_deref() == Ok("1"),
@@ -465,10 +708,21 @@ impl ResidentDelegate {
         }
         for reply in self.ivars().worker.drain() {
             match reply {
-                Reply::Observation { port, checked } => {
+                Reply::Observation {
+                    port,
+                    software,
+                    checked,
+                } => {
                     self.ivars()
                         .observation
                         .set(port.map(|port| (port, checked)));
+                    if let Some(software) = software {
+                        *self.ivars().software.borrow_mut() = software;
+                    } else {
+                        // Preserve saved locations in their stable order, but
+                        // never preserve a running claim or an old native icon.
+                        self.ivars().software.borrow_mut().expire();
+                    }
                 }
                 Reply::Settings(result) => {
                     self.ivars().pending.set(None);
@@ -582,16 +836,311 @@ impl ResidentDelegate {
             for summary in &ui.summaries {
                 summary.setTitle(&text);
             }
+            self.render_software(ui, Instant::now());
         }
         if self.ivars().acceptance && !self.ivars().stopped.get() {
             self.acceptance_step();
         }
     }
 
+    fn render_software(&self, ui: &Ui, now: Instant) {
+        let entries = self.ivars().software.borrow().display(now);
+        if ui.rendered_software.borrow().as_ref() == Some(&entries) {
+            return;
+        }
+        let row_count = entries.len().max(1);
+        let height = 281.0 + row_count as f64 * ROW_HEIGHT;
+        ui.panel.setContentSize(NSSize::new(PANEL_WIDTH, height));
+        ui.title.setFrame(NSRect::new(
+            NSPoint::new(22.0, height - 47.0),
+            NSSize::new(416.0, 32.0),
+        ));
+        ui.service_label.setFrame(NSRect::new(
+            NSPoint::new(22.0, height - 81.0),
+            NSSize::new(416.0, 24.0),
+        ));
+        ui.software_heading.setFrame(NSRect::new(
+            NSPoint::new(22.0, height - 111.0),
+            NSSize::new(416.0, 22.0),
+        ));
+        ui.software_empty.setHidden(!entries.is_empty());
+        for (index, row) in ui.software_rows.iter().enumerate() {
+            let entry = entries.get(index);
+            let hidden = entry.is_none();
+            row.image.setHidden(hidden);
+            row.placeholder.setHidden(hidden);
+            row.label.setHidden(hidden);
+            row.state.setHidden(hidden);
+            let Some(entry) = entry else {
+                row.image.setImage(None);
+                row.label.setStringValue(ns_string!(""));
+                row.state.setStringValue(ns_string!(""));
+                continue;
+            };
+            let y = ROW_BOTTOM + (row_count - index - 1) as f64 * ROW_HEIGHT;
+            row.image.setFrame(NSRect::new(
+                NSPoint::new(22.0, y + 2.0),
+                NSSize::new(32.0, 32.0),
+            ));
+            row.placeholder
+                .setFrame(NSRect::new(NSPoint::new(24.0, y), NSSize::new(30.0, 36.0)));
+            row.label
+                .setFrame(NSRect::new(NSPoint::new(66.0, y), NSSize::new(244.0, 36.0)));
+            row.state.setFrame(NSRect::new(
+                NSPoint::new(322.0, y + 7.0),
+                NSSize::new(116.0, 22.0),
+            ));
+            row.label
+                .setStringValue(&NSString::from_str(&entry.display_label()));
+            row.label
+                .setToolTip(Some(&NSString::from_str(&entry.label)));
+            row.state
+                .setStringValue(&NSString::from_str(entry.presence.label()));
+            let image = entry.icon.as_ref().and_then(|bytes| {
+                let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(bytes))?;
+                if !image.isValid() {
+                    return None;
+                }
+                image.setSize(NSSize::new(32.0, 32.0));
+                Some(image)
+            });
+            row.image.setImage(image.as_deref());
+            row.image.setHidden(image.is_none());
+            row.placeholder.setHidden(image.is_some());
+        }
+        for menu in &ui.software_menus {
+            // Existing command indices stay unchanged. Rebuild only when the
+            // displayed snapshot changes, not on every timer/menu tracking tick.
+            while menu.numberOfItems() > BASE_MENU_ITEMS {
+                menu.removeItemAtIndex(BASE_MENU_ITEMS);
+            }
+            if !entries.is_empty() {
+                menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
+                let heading = menu_item(self, "Saved software · presence only", None, "");
+                heading.setEnabled(false);
+                menu.addItem(&heading);
+                for (entry, row) in entries.iter().zip(&ui.software_rows) {
+                    let image = row.image.image();
+                    let item = menu_item(
+                        self,
+                        &entry.menu_title(image.is_some()),
+                        Some(sel!(showPanel:)),
+                        "",
+                    );
+                    item.setImage(image.as_deref());
+                    item.setToolTip(Some(ns_string!("Show VibDock's panel. Application presence does not establish playback or voice state.")));
+                    menu.addItem(&item);
+                }
+            }
+        }
+        *ui.rendered_software.borrow_mut() = Some(entries);
+    }
+
+    fn software_acceptance_ready(&self) -> bool {
+        let Some(expected) = &self.ivars().software_acceptance else {
+            return true;
+        };
+        let entries = self.ivars().software.borrow().display(Instant::now());
+        let offline_ready = expected.offline.as_ref().is_none_or(|(id, label)| {
+            entries.iter().any(|entry| {
+                &entry.id == id
+                    && &entry.label == label
+                    && entry.presence != Presence::Running
+                    && entry.icon.is_none()
+            })
+        });
+        let running_ready = expected.running.as_ref().is_none_or(|id| {
+            entries
+                .iter()
+                .position(|entry| {
+                    &entry.id == id && entry.presence == Presence::Running && entry.icon.is_some()
+                })
+                .is_some_and(|index| {
+                    self.ivars().ui.get().is_some_and(|ui| {
+                        ui.software_rows[index]
+                            .image
+                            .image()
+                            .is_some_and(|image| image.isValid())
+                    })
+                })
+        });
+        offline_ready && running_ready
+    }
+
+    fn exercise_software(&self, ui: &Ui) -> crate::Result<()> {
+        let Some(expected) = &self.ivars().software_acceptance else {
+            return Ok(());
+        };
+        self.check("software_acceptance_requested", true);
+        self.check(
+            "software_offline_fixture_requested",
+            expected.offline.is_some(),
+        );
+        self.check(
+            "software_self_observation_requested",
+            expected.running.is_some(),
+        );
+        let entries = self.ivars().software.borrow().display(Instant::now());
+        let view = ui
+            .panel
+            .contentView()
+            .ok_or("The software panel has no content view.")?;
+        let bounds = view.bounds();
+        self.check(
+            "software_rows_match_summary",
+            !entries.is_empty()
+                && entries.len() <= MAX_SOFTWARE_ROWS
+                && entries.iter().zip(&ui.software_rows).all(|(entry, row)| {
+                    !row.label.isHidden()
+                        && row.label.stringValue().to_string() == entry.display_label()
+                        && row.state.stringValue().to_string() == entry.presence.label()
+                })
+                && ui
+                    .software_rows
+                    .iter()
+                    .skip(entries.len())
+                    .all(|row| row.label.isHidden()),
+        );
+        self.check(
+            "software_rows_within_panel",
+            ui.software_rows.iter().take(entries.len()).all(|row| {
+                [
+                    row.image.frame(),
+                    row.placeholder.frame(),
+                    row.label.frame(),
+                    row.state.frame(),
+                ]
+                .iter()
+                .all(|frame| rect_contains(bounds, *frame))
+            }),
+        );
+        self.check(
+            "software_status_menu_rows",
+            software_menu_matches(&ui.status_menu, &entries, &ui.software_rows),
+        );
+        self.check(
+            "software_dock_menu_rows",
+            software_menu_matches(&ui.dock_menu, &entries, &ui.software_rows),
+        );
+        self.check(
+            "software_presence_only",
+            CAPABILITY_TEXT.contains("application presence only")
+                && CAPABILITY_TEXT.contains("Playback")
+                && ui.software_menus.iter().all(|menu| {
+                    entries.iter().enumerate().all(|(index, _)| {
+                        menu.itemAtIndex(SOFTWARE_MENU_START + index as isize)
+                            .is_some_and(|item| item.action() == Some(sel!(showPanel:)))
+                    })
+                }),
+        );
+        self.check(
+            "software_ui_has_no_bundle_paths",
+            ui.software_rows
+                .iter()
+                .take(entries.len())
+                .all(|row| !row.label.stringValue().to_string().contains('/'))
+                && ui.software_menus.iter().all(|menu| {
+                    (0..entries.len()).all(|index| {
+                        menu.itemAtIndex(SOFTWARE_MENU_START + index as isize)
+                            .is_some_and(|item| !item.title().to_string().contains('/'))
+                    })
+                }),
+        );
+        if let Some((id, label)) = &expected.offline {
+            let offline = entries
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| &entry.id == id);
+            self.check(
+                "software_persisted_offline_label",
+                offline.is_some_and(|(index, entry)| {
+                    &entry.label == label
+                        && ui.software_rows[index].label.stringValue().to_string() == *label
+                }),
+            );
+            self.check(
+                "software_offline_not_running_or_unknown",
+                offline.is_some_and(|(_, entry)| {
+                    matches!(entry.presence, Presence::NotRunning | Presence::Unknown)
+                }),
+            );
+            self.check(
+                "software_offline_placeholder",
+                offline.is_some_and(|(index, _)| {
+                    let row = &ui.software_rows[index];
+                    row.image.image().is_none()
+                        && !row.placeholder.isHidden()
+                        && row.placeholder.stringValue().to_string() == "□"
+                }),
+            );
+        }
+        if let Some(id) = &expected.running {
+            let running = entries
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| &entry.id == id);
+            self.check(
+                "software_self_running_observed",
+                running.is_some_and(|(_, entry)| entry.presence == Presence::Running),
+            );
+            self.check(
+                "software_self_native_icon",
+                running.is_some_and(|(index, entry)| {
+                    entry.icon.is_some()
+                        && ui.software_rows[index].image.image().is_some_and(|image| {
+                            image.isValid() && image.size() == NSSize::new(32.0, 32.0)
+                        })
+                        && ui.software_rows[index].placeholder.isHidden()
+                }),
+            );
+        }
+        self.ivars().report.borrow_mut().insert(
+            "software_render".into(),
+            json!({
+                "row_count": entries.len(), "observation_kind": "application_presence",
+                "offline_fixture_is_presence_evidence": false,
+            "self_running_app_observed": expected.running.as_ref().is_some_and(|id| entries.iter()
+                .any(|entry| &entry.id == id && entry.presence == Presence::Running && entry.icon.is_some())),
+                "playback_supported": false, "voice_supported": false,
+                "third_party_application_control": false,
+            }),
+        );
+        // Advance only the display clock for the actual observed snapshot. This
+        // neither changes OS process state nor injects fabricated live entries.
+        self.render_software(ui, Instant::now() + STATUS_TTL);
+        self.check(
+            "software_expiry_unknown",
+            ui.software_rows
+                .iter()
+                .take(entries.len())
+                .all(|row| row.state.stringValue().to_string() == Presence::Unknown.label()),
+        );
+        self.check(
+            "software_expiry_clears_icons",
+            ui.software_rows
+                .iter()
+                .take(entries.len())
+                .all(|row| row.image.image().is_none() && !row.placeholder.isHidden())
+                && ui.software_menus.iter().all(|menu| {
+                    (0..entries.len()).all(|index| {
+                        menu.itemAtIndex(SOFTWARE_MENU_START + index as isize)
+                            .is_some_and(|item| {
+                                item.image().is_none()
+                                    && item.title().to_string().ends_with(" · Unknown")
+                            })
+                    })
+                }),
+        );
+        self.render_software(ui, Instant::now());
+        Ok(())
+    }
+
     fn acceptance_step(&self) {
         if self.ivars().started.elapsed() > ACCEPTANCE_BUDGET {
             self.fail_acceptance(if !self.ivars().finished_launching.get() {
                 "AppKit did not finish launching within the 20-second acceptance deadline."
+            } else if self.ivars().stage.get() == 0 && !self.software_acceptance_ready() {
+                "Saved software rows or the requested live application/icon were not observed within the 20-second acceptance deadline."
             } else if self.ivars().stage.get() == 0 {
                 "The initial native panel or proved service was not ready within the 20-second acceptance deadline."
             } else {
@@ -606,6 +1155,7 @@ impl ResidentDelegate {
             // Never issue a test-only Show to conceal a broken startup path.
             0 if self.ivars().finished_launching.get()
                 && self.ivars().observation.get().is_some()
+                && self.software_acceptance_ready()
                 && self
                     .ivars()
                     .ui
@@ -705,13 +1255,13 @@ impl ResidentDelegate {
             "dock_entry",
             app.activationPolicy() == NSApplicationActivationPolicy::Regular,
         );
-        self.check("status_menu", ui.status_menu.numberOfItems() == 7);
+        self.check("status_menu", native_menu_is_valid(&ui.status_menu));
         // Send the actual delegate selectors, including the Dock's request for
         // its own menu. This is in-process lifecycle evidence, not mouse input.
         let dock: Option<Retained<NSMenu>> = unsafe { msg_send![self, applicationDockMenu: &*app] };
         self.check(
             "dock_menu",
-            dock.as_ref().is_some_and(|menu| menu.numberOfItems() == 7),
+            dock.as_ref().is_some_and(|menu| native_menu_is_valid(menu)),
         );
         ui.status_menu.performActionForItemAtIndex(MENU_HIDE);
         self.check(
@@ -738,6 +1288,7 @@ impl ResidentDelegate {
         let terminate_on_close: bool =
             unsafe { msg_send![self, applicationShouldTerminateAfterLastWindowClosed: &*app] };
         self.check("last_window_keeps_resident", !terminate_on_close);
+        self.exercise_software(ui)?;
         self.capture_own_view(ui)?;
         Ok(())
     }
@@ -846,6 +1397,48 @@ impl ResidentDelegate {
     }
 }
 
+fn rect_contains(outer: NSRect, inner: NSRect) -> bool {
+    inner.origin.x >= outer.origin.x
+        && inner.origin.y >= outer.origin.y
+        && inner.origin.x + inner.size.width <= outer.origin.x + outer.size.width
+        && inner.origin.y + inner.size.height <= outer.origin.y + outer.size.height
+}
+
+fn native_menu_is_valid(menu: &NSMenu) -> bool {
+    let count = menu.numberOfItems();
+    (count == BASE_MENU_ITEMS
+        || (SOFTWARE_MENU_START + 1..=SOFTWARE_MENU_START + MAX_SOFTWARE_ROWS as isize)
+            .contains(&count))
+        && [
+            (MENU_SHOW, sel!(showPanel:)),
+            (MENU_HIDE, sel!(hidePanel:)),
+            (MENU_SETTINGS, sel!(openSettings:)),
+            (MENU_QUIT, sel!(quitVibDock:)),
+        ]
+        .iter()
+        .all(|(index, selector)| {
+            menu.itemAtIndex(*index)
+                .is_some_and(|item| item.action() == Some(*selector))
+        })
+}
+
+fn software_menu_matches(menu: &NSMenu, entries: &[SoftwareEntry], rows: &[SoftwareRow]) -> bool {
+    menu.numberOfItems() == SOFTWARE_MENU_START + entries.len() as isize
+        && entries
+            .iter()
+            .zip(rows)
+            .enumerate()
+            .all(|(index, (entry, row))| {
+                let image = row.image.image();
+                menu.itemAtIndex(SOFTWARE_MENU_START + index as isize)
+                    .is_some_and(|item| {
+                        item.title().to_string() == entry.menu_title(image.is_some())
+                            && item.image().is_some() == image.is_some()
+                            && item.action() == Some(sel!(showPanel:))
+                    })
+            })
+}
+
 fn menu_item(
     delegate: &ResidentDelegate,
     title: &str,
@@ -950,7 +1543,7 @@ fn build_ui(delegate: &ResidentDelegate, app: &NSApplication) -> crate::Result<U
 
     let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
         NSPanel::alloc(mtm),
-        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(460.0, 245.0)),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(PANEL_WIDTH, 321.0)),
         NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
         NSBackingStoreType::Buffered,
         false,
@@ -980,6 +1573,7 @@ fn build_ui(delegate: &ResidentDelegate, app: &NSApplication) -> crate::Result<U
     ));
     let capabilities =
         NSTextField::wrappingLabelWithString(&NSString::from_str(CAPABILITY_TEXT), mtm);
+    capabilities.setFont(Some(&NSFont::systemFontOfSize(12.0)));
     capabilities.setFrame(NSRect::new(
         NSPoint::new(22.0, 111.0),
         NSSize::new(416.0, 44.0),
@@ -992,9 +1586,55 @@ fn build_ui(delegate: &ResidentDelegate, app: &NSApplication) -> crate::Result<U
         NSPoint::new(22.0, 61.0),
         NSSize::new(416.0, 44.0),
     ));
+    let software_heading =
+        NSTextField::labelWithString(ns_string!("Saved software · manage in Settings"), mtm);
+    software_heading.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+    let software_empty = NSTextField::labelWithString(
+        ns_string!("Add saved software from the running apps in Settings."),
+        mtm,
+    );
+    software_empty.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+    software_empty.setFrame(NSRect::new(
+        NSPoint::new(22.0, ROW_BOTTOM + 8.0),
+        NSSize::new(416.0, 22.0),
+    ));
+    let mut software_rows = Vec::with_capacity(MAX_SOFTWARE_ROWS);
+    for _ in 0..MAX_SOFTWARE_ROWS {
+        let image = NSImageView::new(mtm);
+        image.setEditable(false);
+        image.setAnimates(false);
+        image.setAllowsCutCopyPaste(false);
+        let placeholder = NSTextField::labelWithString(ns_string!("□"), mtm);
+        placeholder.setFont(Some(&NSFont::systemFontOfSize(28.0)));
+        let label = NSTextField::wrappingLabelWithString(ns_string!(""), mtm);
+        label.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        label.setMaximumNumberOfLines(2);
+        let state = NSTextField::labelWithString(ns_string!("Unknown"), mtm);
+        state.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        state.setToolTip(Some(ns_string!(
+            "Application presence only; playback, microphone and voice state are unsupported."
+        )));
+        content.addSubview(&image);
+        for view in [&placeholder, &label, &state] {
+            content.addSubview(view);
+        }
+        software_rows.push(SoftwareRow {
+            image,
+            placeholder,
+            label,
+            state,
+        });
+    }
     // SAFETY: The views are main-thread native controls; the content view retains them.
     unsafe {
-        for view in [&title, &service_label, &capabilities, &notice_label] {
+        for view in [
+            &title,
+            &service_label,
+            &software_heading,
+            &software_empty,
+            &capabilities,
+            &notice_label,
+        ] {
             content.addSubview(view);
         }
         for (x, width, text, selector) in [
@@ -1027,16 +1667,24 @@ fn build_ui(delegate: &ResidentDelegate, app: &NSApplication) -> crate::Result<U
     button.setImage(Some(&menu_image));
     button.setToolTip(Some(ns_string!("VibDock • service controls")));
     status.setMenu(Some(&status_menu));
-    Ok(Ui {
+    let ui = Ui {
         panel,
         status,
+        software_menus: vec![status_menu.clone(), dock_menu.clone(), app_menu],
         status_menu,
         dock_menu,
         summaries: vec![status_summary, dock_summary, app_summary],
+        title,
         service_label,
+        software_heading,
+        software_empty,
+        software_rows,
+        rendered_software: RefCell::new(None),
         notice_label,
         menu_image,
-    })
+    };
+    delegate.render_software(&ui, Instant::now());
+    Ok(ui)
 }
 
 fn run_native(acceptance: bool, reopen: Receiver<()>) -> crate::Result<Value> {
@@ -1113,6 +1761,179 @@ pub fn report_error(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn software_summary() -> Value {
+        json!({
+            "platform": "macos", "observation_kind": "application_presence",
+            "available": true, "complete": false, "age_ms": 0,
+            "entries": [{ "id": "a".repeat(64), "label": "Native application",
+                "state": "running", "complete": false, "sessions": [],
+                "actions_enabled": false, "icon_mime": "image/png", "icon_b64": null,
+            }],
+        })
+    }
+
+    #[test]
+    fn partial_observation_proves_presence_but_never_absence() {
+        let checked = Instant::now();
+        let mut value = software_summary();
+        let snapshot = SoftwareSnapshot::parse(&value, checked).unwrap();
+        assert_eq!(snapshot.display(checked)[0].presence, Presence::Running);
+        value["entries"][0]["state"] = json!("not_running");
+        let snapshot = SoftwareSnapshot::parse(&value, checked).unwrap();
+        assert_eq!(snapshot.display(checked)[0].presence, Presence::Unknown);
+        value["entries"][0]["complete"] = json!(true);
+        let snapshot = SoftwareSnapshot::parse(&value, checked).unwrap();
+        assert_eq!(snapshot.display(checked)[0].presence, Presence::NotRunning);
+        assert!(snapshot.display(checked)[0].icon.is_none());
+    }
+
+    #[test]
+    fn source_age_is_not_extended_by_native_polling() {
+        let checked = Instant::now();
+        let mut value = software_summary();
+        value["age_ms"] = json!(3999);
+        let snapshot = SoftwareSnapshot::parse(&value, checked).unwrap();
+        assert_eq!(snapshot.display(checked)[0].presence, Presence::Running);
+        assert_eq!(
+            snapshot.display(checked + Duration::from_millis(1))[0].presence,
+            Presence::Unknown
+        );
+        for age in [json!(4000), json!(6000), json!(-1), json!(0.5), Value::Null] {
+            value["age_ms"] = age;
+            let snapshot = SoftwareSnapshot::parse(&value, checked).unwrap();
+            assert_eq!(snapshot.display(checked)[0].presence, Presence::Unknown);
+        }
+    }
+
+    #[test]
+    fn expiry_or_failure_keeps_saved_rows_and_clears_live_icons() {
+        let checked = Instant::now();
+        let mut snapshot = SoftwareSnapshot {
+            entries: vec![SoftwareEntry {
+                id: "saved".into(),
+                label: "Saved application".into(),
+                presence: Presence::Running,
+                icon: Some(vec![1, 2, 3]),
+            }],
+            checked: Some(checked),
+        };
+        // These bytes exercise only pure display-state expiry, not image decode
+        // or a native evidence report; no fabricated app reaches AppKit.
+        let expired = snapshot.display(checked + STATUS_TTL);
+        assert_eq!(expired[0].id, "saved");
+        assert_eq!(expired[0].label, "Saved application");
+        assert_eq!(expired[0].presence, Presence::Unknown);
+        assert!(expired[0].icon.is_none());
+        snapshot.expire();
+        assert_eq!(snapshot.display(checked), expired);
+    }
+
+    #[test]
+    fn unexpected_summary_types_and_unsafe_shapes_fail_closed() {
+        let checked = Instant::now();
+        let mut value = software_summary();
+        value["platform"] = json!("windows");
+        assert!(SoftwareSnapshot::parse(&value, checked).is_none());
+        value = software_summary();
+        value["observation_kind"] = json!("playback");
+        assert!(SoftwareSnapshot::parse(&value, checked).is_none());
+        for (field, invalid) in [
+            ("actions_enabled", json!(true)),
+            ("sessions", json!([{"active": true}])),
+            ("state", json!("playing")),
+        ] {
+            value = software_summary();
+            value["entries"][0][field] = invalid;
+            assert_eq!(
+                SoftwareSnapshot::parse(&value, checked)
+                    .unwrap()
+                    .display(checked)[0]
+                    .presence,
+                Presence::Unknown
+            );
+        }
+        value = software_summary();
+        value["available"] = json!(false);
+        assert_eq!(
+            SoftwareSnapshot::parse(&value, checked)
+                .unwrap()
+                .display(checked)[0]
+                .presence,
+            Presence::Unknown
+        );
+        value = software_summary();
+        value["entries"][0]["icon_b64"] = json!("not a bounded PNG");
+        assert!(SoftwareSnapshot::parse(&value, checked)
+            .unwrap()
+            .display(checked)[0]
+            .icon
+            .is_none());
+    }
+
+    #[test]
+    fn software_rows_and_labels_are_bounded_without_reordering() {
+        let checked = Instant::now();
+        let mut value = software_summary();
+        let template = value["entries"][0].clone();
+        let entries: Vec<Value> = (0..MAX_SOFTWARE_ROWS)
+            .map(|index| {
+                let mut entry = template.clone();
+                entry["id"] = json!(format!("{index:064x}"));
+                entry
+            })
+            .collect();
+        value["entries"] = json!(entries);
+        let snapshot = SoftwareSnapshot::parse(&value, checked).unwrap();
+        assert_eq!(snapshot.entries.len(), 8);
+        assert_eq!(snapshot.entries[7].id, format!("{:064x}", 7));
+        value["entries"].as_array_mut().unwrap().push(template);
+        assert!(SoftwareSnapshot::parse(&value, checked).is_none());
+        value = software_summary();
+        value["entries"][0]["label"] = json!("x".repeat(80));
+        let entry = SoftwareSnapshot::parse(&value, checked)
+            .unwrap()
+            .entries
+            .remove(0);
+        assert_eq!(entry.display_label(), format!("{}…", "x".repeat(32)));
+        for label in ["x".repeat(81), "Saved\napplication".into(), String::new()] {
+            value["entries"][0]["label"] = json!(label);
+            assert!(SoftwareSnapshot::parse(&value, checked).is_none());
+        }
+        value = software_summary();
+        let duplicate = value["entries"][0].clone();
+        value["entries"].as_array_mut().unwrap().push(duplicate);
+        assert!(SoftwareSnapshot::parse(&value, checked).is_none());
+    }
+
+    #[test]
+    fn requested_software_evidence_is_required_for_acceptance() {
+        let mut report = Map::new();
+        for name in ACCEPTANCE_CHECKS {
+            report.insert((*name).into(), json!(true));
+        }
+        assert!(acceptance_passed(&report));
+        for (flag, checks) in [
+            ("software_acceptance_requested", SOFTWARE_ACCEPTANCE_CHECKS),
+            (
+                "software_offline_fixture_requested",
+                OFFLINE_ACCEPTANCE_CHECKS,
+            ),
+            (
+                "software_self_observation_requested",
+                RUNNING_ACCEPTANCE_CHECKS,
+            ),
+        ] {
+            report.insert(flag.into(), json!(true));
+            assert!(!acceptance_passed(&report));
+            for name in checks {
+                report.insert((*name).into(), json!(true));
+            }
+            assert!(acceptance_passed(&report));
+        }
+        report.insert("software_self_native_icon".into(), json!(false));
+        assert!(!acceptance_passed(&report));
+    }
 
     #[test]
     fn service_observation_expires_and_never_implies_audio() {

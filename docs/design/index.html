@@ -26,11 +26,11 @@
 <section class="view" id="audio" hidden><h1>选对设备，再开始说话。</h1><p class="muted">设备级静音与应用级输出分开显示。以下均为设计示例。</p>
 <div class="rows"><div class="row"><div><strong>Ulanzi 麦克风</strong><p>输入设备 · 演示设备，未连接 · 不自动替换为其他麦克风</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div><div class="row"><div><strong>Codex 播放声音</strong><p>应用音频会话 · 演示 · 需要后台枚举真实会话</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div><div class="row"><div><strong>WorkBuddy 播放声音</strong><p>应用音频会话 · 演示 · 输入设备切换能力需单独验证</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div></div>
 <div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
-<section class="view" id="apps" hidden><h1>固定软件，查看真实播放会话。</h1>
-<p class="muted">固定条目保存在本机服务中。播放活动不代表正在收音或通话；本轮只读，不提供静音或启动应用操作。</p>
+<section class="view" id="apps" hidden><h1 id="appsTitle">固定软件，查看真实播放会话。</h1>
+<p id="appsIntro" class="muted">固定条目保存在本机服务中。播放活动不代表正在收音或通话；本轮只读，不提供静音或启动应用操作。</p>
 <p id="appReadStatus" role="status" aria-live="polite">从浮窗 Settings 打开并授权后读取。</p>
 <div id="pinnedApps" class="rows" aria-label="已固定的软件"></div>
-<h2 style="margin-top:24px">当前可读取的软件会话</h2><p class="muted">只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。</p>
+<h2 id="appsChoicesTitle" style="margin-top:24px">当前可读取的软件会话</h2><p id="appsChoicesHelp" class="muted">只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。</p>
 <div id="appChoices" class="rows" aria-label="可固定的播放会话"></div>
 <h2 style="margin-top:28px">语音集成能力规划</h2><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p>
 <div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>计划支持：唤起入口、应用输出静音。内部语音控制接口待验证。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>微信输入法</strong><p>通过用户录入的快捷键触发。发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>WorkBuddy</strong><p>快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div></div>
@@ -269,34 +269,50 @@ async function probe(){
 
 // Read-only software observations. Paths stay server-side; images are bounded
 // native resources fetched inside this authenticated JSON response.
-let appsBusy=false,appRevision=0,appTimer=null,appsRenderKey='',lastAppsData=null;
+let appsBusy=false,appRevision=0,appTimer=null,appExpiryTimer=null,appsRenderKey='',lastAppsData=null;
 function appButtonsBusy(){for(const button of document.querySelectorAll('#pinnedApps button,#appChoices button'))button.disabled=appsBusy||!lastAppsData?.storage_writable;}
 function appNode(tag,text){const n=document.createElement(tag);if(text)n.textContent=text;return n;}
-function appIcon(value){const img=appNode('img');img.width=32;img.height=32;img.alt='软件图标';
- if(typeof value==='string'&&value.length<=12000&&/^[A-Za-z0-9+/]+={0,2}$/.test(value))img.src='data:image/x-icon;base64,'+value;
+function appIcon(value,mime){const img=appNode('img');img.width=32;img.height=32;img.alt='软件图标';
+ const png=mime==='image/png',limit=png?21848:12000;
+ if(typeof value==='string'&&value.length<=limit&&/^[A-Za-z0-9+/]+={0,2}$/.test(value))img.src='data:'+(png?'image/png':'image/x-icon')+';base64,'+value;
  else{const fallback=appNode('span','◇');fallback.setAttribute('aria-label','没有可读取的软件图标');return fallback;}return img;}
-function appState(session){return (session.session_state==='active'?'播放会话活动':'播放会话空闲')+' · '+(session.muted?'已静音':'未静音')+' · PID '+session.process_id;}
+function appState(session,mac){return mac?'应用正在运行 · 播放和语音状态不可用':(session.session_state==='active'?'播放会话活动':'播放会话空闲')+' · '+(session.muted?'已静音':'未静音')+' · PID '+session.process_id;}
 function renderAppEntries(data){
- lastAppsData=data;appRevision=data.revision;
- const key=JSON.stringify([data.revision,data.available,data.complete,data.error,data.entries,data.choices]);if(key===appsRenderKey)return;appsRenderKey=key;
- $('appReadStatus').textContent=data.error||(!data.available?'播放状态未知或此平台暂不支持':data.complete?'已读取当前播放会话。语音状态不在此推断。':'已读取部分会话；缺失项目状态未知。');
+ lastAppsData=data;appRevision=data.revision;const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
+ const key=JSON.stringify([data.platform,data.observation_kind,data.revision,data.available,data.complete,data.error,data.entries,data.choices]);if(key===appsRenderKey)return;appsRenderKey=key;
+ $('appsTitle').textContent=mac?'固定软件，查看真实运行状态。':'固定软件，查看真实播放会话。';
+ $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':'固定条目保存在本机服务中。播放活动不代表正在收音或通话；本轮只读，不提供静音或启动应用操作。';
+ $('appsChoicesTitle').textContent=mac?'当前可读取的本机应用':'当前可读取的软件会话';
+ $('appsChoicesHelp').textContent=mac?'仅列出身份已重新核验的当前用户应用。固定的是应用位置，重启后仍会重新观察；不会启动或终止软件。':'只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。';
+ $('appReadStatus').textContent=data.error||(mac?(!data.available?'应用运行状态未知':data.complete?'已读取本机应用。运行不代表正在播放或工作。':'已读取部分应用；缺失项目运行状态未知。'):(!data.available?'播放状态未知或此平台暂不支持':data.complete?'已读取当前播放会话。语音状态不在此推断。':'已读取部分会话；缺失项目状态未知。'));
  const pinned=$('pinnedApps');pinned.replaceChildren();
  if(!data.entries.length)pinned.append(appNode('p','尚未固定软件。'));
  for(const entry of data.entries){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',entry.label));
- body.append(appNode('p',entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话'));
- for(const session of entry.sessions)body.append(appNode('p',appState(session)));
- const remove=appNode('button','移除固定');remove.disabled=appsBusy||!data.storage_writable;remove.onclick=()=>editApp('remove',{id:entry.id});row.append(appIcon(entry.icon_b64),body,remove);pinned.append(row);}
+ body.append(appNode('p',mac?(entry.state==='running'?'应用正在运行':entry.state==='not_running'?'应用未运行':'运行状态未知'):(entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话')));
+ if(mac)body.append(appNode('p','播放和语音状态不可用；没有应用控制。'));
+ for(const session of entry.sessions)body.append(appNode('p',appState(session,mac)));
+ const remove=appNode('button','移除固定');remove.disabled=appsBusy||!data.storage_writable;remove.onclick=()=>editApp('remove',{id:entry.id});row.append(appIcon(entry.icon_b64,entry.icon_mime),body,remove);pinned.append(row);}
  const choices=$('appChoices');choices.replaceChildren();
- if(!data.choices.length)choices.append(appNode('p',data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。'));
- for(const item of data.choices){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p',appState(item)));
- const pin=appNode('button','固定软件');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64),body,pin);choices.append(row);}
+ if(!data.choices.length)choices.append(appNode('p',mac?(data.available?'没有可固定的当前应用；打开目标软件后刷新。':'尚无可读取的原生应用。'):(data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。')));
+ for(const item of data.choices){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p',appState(item,mac)));
+ const pin=appNode('button','固定软件');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64,item.icon_mime),body,pin);choices.append(row);}
 }
-function markAppsUnknown(message){if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],entries:lastAppsData.entries.map(e=>({...e,state:'unknown',sessions:[]}))});else $('appReadStatus').textContent=message;}
-async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
- try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)renderAppEntries(data);}
- catch{markAppsUnknown('播放状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
-async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
- try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});const result=await response.json();if(serviceToken!==expectedToken)return;if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return;}renderAppEntries(result);}
+function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],entries:lastAppsData.entries.map(e=>({...e,state:'unknown',icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
+function receiveAppEntries(data,started){
+ clearTimeout(appExpiryTimer);appExpiryTimer=null;
+ const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
+ const age=mac?(Number.isSafeInteger(data.age_ms)&&data.age_ms>=0?data.age_ms:4000):0;
+ const remaining=4000-age-(performance.now()-started);
+ renderAppEntries(data);
+ if(document.hidden||remaining<=0){markAppsUnknown('软件状态已过期，等待重新读取。');return;}
+ if(data.available)appExpiryTimer=setTimeout(()=>markAppsUnknown('软件状态已过期，等待重新读取。'),remaining);
+}
+document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');if(!document.hidden)refreshApps();});
+async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+ try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)receiveAppEntries(data,started);}
+ catch{markAppsUnknown('软件状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
+async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+ try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});const result=await response.json();if(serviceToken!==expectedToken)return;if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return;}receiveAppEntries(result,started);}
  catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
 function startAppPoll(){refreshApps();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
 async function redeemBootstrap(code){
@@ -379,7 +395,7 @@ function renderBindingStatus(config){
 function expireBrowserSession(){
   serviceToken=null;
   if(appTimer){clearInterval(appTimer);appTimer=null;}
-  appsRenderKey='';lastAppsData=null;$('pinnedApps').replaceChildren();$('appChoices').replaceChildren();
+  clearTimeout(appExpiryTimer);appExpiryTimer=null;appsRenderKey='';lastAppsData=null;$('pinnedApps').replaceChildren();$('appChoices').replaceChildren();
   $('appReadStatus').textContent='会话已失效，软件状态未知。请从 Settings 重新打开。';
   bindingPollStarted=false;
   $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';

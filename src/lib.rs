@@ -18,10 +18,22 @@ pub mod feedback;
 mod feedback_windows;
 mod instance_proof;
 mod integrations;
+#[cfg(all(test, not(target_os = "macos")))]
+#[allow(dead_code)]
+#[path = "macos_apps.rs"]
+mod macos_apps_tests;
 #[cfg(target_os = "macos")]
 pub mod macos_launcher;
 #[cfg(target_os = "macos")]
+mod macos_observer;
+#[cfg(target_os = "macos")]
 pub mod macos_resident;
+#[cfg(target_os = "macos")]
+mod macos_worker;
+#[cfg(not(target_os = "macos"))]
+pub mod resident_apps;
+#[cfg(target_os = "macos")]
+#[path = "macos_apps.rs"]
 pub mod resident_apps;
 #[cfg(windows)]
 mod resident_windows;
