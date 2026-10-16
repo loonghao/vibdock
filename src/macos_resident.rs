@@ -862,8 +862,28 @@ fn build_ui(delegate: &ResidentDelegate, app: &NSApplication) -> crate::Result<U
     // SAFETY: Both images are retained for the native setters' call duration;
     // AppKit retains the application image. No arbitrary external path is read.
     unsafe { app.setApplicationIconImage(Some(&original)) };
-    if !app.setActivationPolicy(NSApplicationActivationPolicy::Regular) {
-        return Err("macOS did not allow VibDock's Dock activation policy.".into());
+    // A bundled app may already have its required policy from Info.plist.
+    // Check the actual state, rather than requiring a redundant change to
+    // succeed. The setter only reports whether its change was accepted.
+    let policy_before = app.activationPolicy();
+    let policy_request = (policy_before != NSApplicationActivationPolicy::Regular)
+        .then(|| app.setActivationPolicy(NSApplicationActivationPolicy::Regular));
+    let policy_after = app.activationPolicy();
+    if delegate.ivars().acceptance {
+        delegate.ivars().report.borrow_mut().insert(
+            "activation_policy".into(),
+            json!({
+                "before": policy_before.0,
+                "request_accepted": policy_request,
+                "after": policy_after.0,
+            }),
+        );
+    }
+    if policy_after != NSApplicationActivationPolicy::Regular {
+        return Err(format!(
+            "macOS did not provide VibDock's Dock activation policy (before={}, request_accepted={policy_request:?}, after={}). A usable macOS desktop session is required.",
+            policy_before.0, policy_after.0,
+        ).into());
     }
 
     let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
