@@ -54,6 +54,16 @@ Before recommending unattended desktop use, verify on an actual interactive host
    icon and active/idle/mute observations, restart, and exercise process/session
    replacement and missing outputs. No stale observation may claim a current
    state; partial enumeration must not report all sessions muted or idle.
+6. With two identifiable applications playing on the same output, record their
+   playback, output-master and microphone mute states. Right-click one saved
+   software icon, select its exact displayed session/PID, and explicitly choose
+   Mute. Require both the matching native readback receipt and independently
+   observed silence of only that session; the other application, output-master
+   and microphone states must remain unchanged. Explicitly Unmute the same
+   session and verify again. Multiple sessions must require an explicit choice;
+   an expired, replaced or offline session must disable/reject the old action.
+   A timed-out or unconfirmed receipt is not success and is not proof that no
+   write occurred. Inspect the actual state before making another request.
 
 ## macOS native source and remaining acceptance
 
