@@ -5,7 +5,7 @@ The PNG is the application's own native view bitmap, not a screenshot of the
 desktop or menu bar. This acceptance never launches a default browser or audio.
 """
 import argparse
-import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -39,12 +39,13 @@ def diagnostic_text(value):
 def port_is_closed(port):
     with socket.socket() as probe:
         probe.settimeout(0.3)
-        return probe.connect_ex(("127.0.0.1", port)) != 0
+        return probe.connect_ex(("127.0.0.1", port)) == errno.ECONNREFUSED
 
 
 def run(app, evidence, system_quit=False):
     if platform.system() != "Darwin":
         raise RuntimeError("Native macOS acceptance requires macOS")
+    import fcntl
     app, evidence = app.resolve(), evidence.resolve()
     launcher = app / "Contents/MacOS/vibdock-launcher"
     cli = app / "Contents/MacOS/vibdock"

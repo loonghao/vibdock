@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline package contracts; stub Mach-O bytes are fixtures, never executed."""
+import errno
 import importlib.util
 import json
 import os
@@ -10,11 +11,36 @@ import struct
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("mac_package", SOURCE / "scripts/package-macos.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+
+HARNESS_SPEC = importlib.util.spec_from_file_location("mac_harness", SOURCE / "scripts/test-macos-desktop.py")
+HARNESS = importlib.util.module_from_spec(HARNESS_SPEC)
+HARNESS_SPEC.loader.exec_module(HARNESS)
+
+
+class HarnessTests(unittest.TestCase):
+    def test_only_refused_connection_proves_closed(self):
+        with patch.object(HARNESS.socket, "socket") as socket:
+            probe = socket.return_value.__enter__.return_value
+            for result in (0, errno.ETIMEDOUT, errno.EACCES, errno.ENETUNREACH, errno.EMFILE):
+                probe.connect_ex.return_value = result
+                self.assertFalse(HARNESS.port_is_closed(54321))
+            probe.connect_ex.return_value = errno.ECONNREFUSED
+            self.assertTrue(HARNESS.port_is_closed(54321))
+
+    def test_diagnostics_remove_fixture_capabilities_paths_and_urls(self):
+        secret = "a" * 64
+        message = f"ERROR <fixture> {secret} /private/fixture/state http://127.0.0.1:1234/?code={secret}"
+        result = HARNESS.diagnostic_text(message)
+        self.assertNotIn(secret, result)
+        self.assertNotIn("/private", result)
+        self.assertNotIn("127.0.0.1", result)
+        self.assertLessEqual(len(HARNESS.diagnostic_text("x" * 3000)), 2048)
 
 
 class PackageTests(unittest.TestCase):
