@@ -270,6 +270,7 @@ async function probe(){
 // Read-only software observations. Paths stay server-side; images are bounded
 // native resources fetched inside this authenticated JSON response.
 let appsBusy=false,appRevision=0,appTimer=null,appsRenderKey='',lastAppsData=null;
+function appButtonsBusy(){for(const button of document.querySelectorAll('#pinnedApps button,#appChoices button'))button.disabled=appsBusy||!lastAppsData?.storage_writable;}
 function appNode(tag,text){const n=document.createElement(tag);if(text)n.textContent=text;return n;}
 function appIcon(value){const img=appNode('img');img.width=32;img.height=32;img.alt='软件图标';
  if(typeof value==='string'&&value.length<=12000&&/^[A-Za-z0-9+/]+={0,2}$/.test(value))img.src='data:image/x-icon;base64,'+value;
@@ -284,19 +285,19 @@ function renderAppEntries(data){
  for(const entry of data.entries){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',entry.label));
  body.append(appNode('p',entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话'));
  for(const session of entry.sessions)body.append(appNode('p',appState(session)));
- const remove=appNode('button','移除固定');remove.disabled=!data.storage_writable;remove.onclick=()=>editApp('remove',{id:entry.id});row.append(appIcon(entry.icon_b64),body,remove);pinned.append(row);}
+ const remove=appNode('button','移除固定');remove.disabled=appsBusy||!data.storage_writable;remove.onclick=()=>editApp('remove',{id:entry.id});row.append(appIcon(entry.icon_b64),body,remove);pinned.append(row);}
  const choices=$('appChoices');choices.replaceChildren();
  if(!data.choices.length)choices.append(appNode('p',data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。'));
  for(const item of data.choices){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p',appState(item)));
- const pin=appNode('button','固定软件');pin.disabled=!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64),body,pin);choices.append(row);}
+ const pin=appNode('button','固定软件');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64),body,pin);choices.append(row);}
 }
 function markAppsUnknown(message){if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],entries:lastAppsData.entries.map(e=>({...e,state:'unknown',sessions:[]}))});else $('appReadStatus').textContent=message;}
-async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;const expectedToken=serviceToken;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
  try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)renderAppEntries(data);}
- catch{markAppsUnknown('播放状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;}}
-async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;const expectedToken=serviceToken;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+ catch{markAppsUnknown('播放状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
+async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
  try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});const result=await response.json();if(serviceToken!==expectedToken)return;if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return;}renderAppEntries(result);}
- catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');}finally{clearTimeout(timeout);appsBusy=false;}}
+ catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
 function startAppPoll(){refreshApps();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
 async function redeemBootstrap(code){
   const response=await fetch('/api/bootstrap',{method:'POST',cache:'no-store',

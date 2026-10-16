@@ -41,12 +41,15 @@ async function unusedPort() {
     const results=[];
     for(const viewport of [{width:1280,height:900},{width:390,height:844},{width:320,height:740}]) {
       const page = await browser.newPage({viewport,colorScheme:'dark'});
-      const external=[]; const errors=[];
+      const external=[]; const errors=[]; const consoleErrors=[];
       page.on('request', request => { if(!request.url().startsWith(origin) && !request.url().startsWith('data:')) external.push(request.url()); });
       page.on('pageerror', error=>errors.push(error.message));
+      page.on('console',message=>{if(message.type()==='error')consoleErrors.push(message.text())});
       const code=await browserCode();
-      await page.goto(`${origin}/#bootstrap=${code}`, {waitUntil:'networkidle'});
-      assert.equal(new URL(page.url()).hash,'','one-use code remained in URL');
+      const homeResponse=await page.goto(`${origin}/#bootstrap=${code}`, {waitUntil:'networkidle'});
+      assert.equal(homeResponse.status(),200,'homepage response failed');
+      assert.deepEqual(errors,[],'homepage JavaScript failed before handoff');
+      assert.equal(new URL(page.url()).hash,'','one-use code remained in URL; console errors: '+JSON.stringify(consoleErrors));
       await page.waitForFunction(()=>document.querySelector('#conn').textContent.includes('已授权'));
       assert((await page.locator('#persistNote').innerText()).includes('后台绑定见上方'),'storage labels contradict the live service');
       const replay=await fetch(`${origin}/api/bootstrap`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});

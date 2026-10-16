@@ -12,7 +12,8 @@ use windows::{
     core::{Interface, PCWSTR, PWSTR},
     Win32::{
         Media::Audio::{
-            eRender, AudioSessionStateActive, AudioSessionStateInactive, IAudioSessionControl,
+            eRender, AudioSessionStateActive as AUDIO_SESSION_STATE_ACTIVE,
+            AudioSessionStateInactive as AUDIO_SESSION_STATE_INACTIVE, IAudioSessionControl,
             IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume,
             MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
         },
@@ -395,8 +396,8 @@ unsafe fn observe_session(
 
 unsafe fn session_state(control: &IAudioSessionControl2) -> Option<&'static str> {
     match control.GetState().ok()? {
-        AudioSessionStateActive => Some("active"),
-        AudioSessionStateInactive => Some("inactive"),
+        AUDIO_SESSION_STATE_ACTIVE => Some("active"),
+        AUDIO_SESSION_STATE_INACTIVE => Some("inactive"),
         _ => None, // Expired/unknown is not a current selectable application.
     }
 }
