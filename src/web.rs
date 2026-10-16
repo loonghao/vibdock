@@ -823,7 +823,11 @@ fn accept_loop(
             || path.starts_with("/api/apps/actions/")
             || matches!(
                 path.as_str(),
-                "/api/apps" | "/api/apps/summary" | "/api/apps/pin" | "/api/apps/remove"
+                "/api/apps"
+                    | "/api/apps/summary"
+                    | "/api/apps/pin"
+                    | "/api/apps/remove"
+                    | "/api/apps/bind"
             );
         let browser_principal = browser_auth.principal(service::request_token(&received.headers));
         let authorized = administrator || (browser_scope && browser_principal.is_some());
@@ -1785,14 +1789,67 @@ fn apps_route(
         (Method::Get, "/api/apps/summary") => (200, apps.view(true)),
         (Method::Post, "/api/apps/pin") => apps.mutate("pin", request.body),
         (Method::Post, "/api/apps/remove") => apps.mutate("remove", request.body),
+        (Method::Post, "/api/apps/bind") => {
+            #[cfg(windows)]
+            {
+                apps.bind(request.body, validate_bound_microphone)
+            }
+            #[cfg(not(windows))]
+            {
+                (
+                    501,
+                    serde_json::json!({"error":"Microphone associations require the Windows audio adapter"}),
+                )
+            }
+        }
         _ => (404, serde_json::json!({"error":"Unknown app route"})),
     };
     (code, "application/json", value.to_string())
 }
 
+#[cfg(windows)]
+fn validate_bound_microphone(device_id: &str) -> std::result::Result<(), String> {
+    let result = service::run_device_action(service::DeviceAction::Status, Some(device_id))?;
+    match result {
+        service::ActionResult::MuteState {
+            device_id: actual, ..
+        } if actual == device_id => Ok(()),
+        _ => Err("The selected microphone changed; refresh and select it again".into()),
+    }
+}
+
 #[cfg(test)]
 mod resident_api_tests {
     use super::*;
+    #[test]
+    fn microphone_association_route_is_post_only_and_unavailable_in_preview() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let origin = format!("http://{host}");
+        let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
+        let mut request = Request {
+            method: Method::Post,
+            path: "/api/apps/bind",
+            host: Some(&host),
+            origin: Some(&origin),
+            authorized: true,
+            body: "{}",
+            body_rejected: false,
+        };
+        assert_eq!(
+            apps_route(&request, false, &mut apps, Some("fixture-principal")).0,
+            405
+        );
+        request.method = Method::Get;
+        assert_eq!(
+            apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+            404
+        );
+        request.method = Method::Post;
+        assert_eq!(
+            apps_route(&request, true, &mut apps, Some("fixture-principal")).0,
+            if cfg!(windows) { 400 } else { 501 }
+        );
+    }
     #[test]
     fn software_reads_and_writes_require_authentication_and_origin() {
         let host = format!("127.0.0.1:{}", crate::service::port());
@@ -1802,12 +1859,16 @@ mod resident_api_tests {
             "/api/apps/summary",
             "/api/apps/pin",
             "/api/apps/remove",
+            "/api/apps/bind",
             "/api/apps/actions/prepare",
             "/api/apps/actions/execute",
             "/api/apps/actions/fixture-receipt",
         ] {
             let mut request = Request {
-                method: if path.ends_with("pin") || path.ends_with("remove") {
+                method: if path.ends_with("pin")
+                    || path.ends_with("remove")
+                    || path.ends_with("bind")
+                {
                     Method::Post
                 } else {
                     Method::Get

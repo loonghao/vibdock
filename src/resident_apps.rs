@@ -18,10 +18,11 @@ struct Entry {
     label: String,
     endpoint: String,
     executable: String,
+    device_id: Option<String>,
 }
 impl Entry {
     fn json(&self) -> Value {
-        json!({"id":self.id,"label":self.label,"endpoint_id":self.endpoint,"executable_path":self.executable})
+        json!({"id":self.id,"label":self.label,"endpoint_id":self.endpoint,"executable_path":self.executable,"device_id":self.device_id})
     }
     fn parse(value: &Value) -> Option<Self> {
         let id = string(value, "id", 64)?;
@@ -32,11 +33,16 @@ impl Entry {
         if !local_executable(&executable) {
             return None;
         }
+        let device_id = match value.get("device_id") {
+            None | Some(Value::Null) => None,
+            Some(_) => Some(string(value, "device_id", 512).filter(|id| !id.trim().is_empty())?),
+        };
         Some(Self {
             id,
             label: string(value, "label", 80)?,
             endpoint: string(value, "endpoint_id", 512)?,
             executable,
+            device_id,
         })
     }
 }
@@ -286,7 +292,7 @@ impl Registry {
             let playback=if !complete && !sessions.is_empty(){"Partial observation; aggregate playback state unknown"}else if sessions.is_empty(){"Playback state unknown"}else if sessions.iter().any(|s|s["active"]==true){"Playback session active"}else{"Playback session idle"};
             let muted=if !complete || sessions.is_empty(){""}else if sessions.iter().all(|s|s["muted"]==true){"all muted"}else if sessions.iter().all(|s|s["muted"]==false){"not muted"}else{"mixed mute states"};
             let enabled=sessions.iter().any(|s|s["actions_enabled"]==true);
-            let mut row=json!({"playback_label":format!("{playback}; {muted}"),"id":e.id,"label":e.label,"state":state,"complete":complete,"sessions":sessions,"actions_enabled":enabled,"identity_kind":"saved_executable_location","icon_b64":icon});
+            let mut row=json!({"playback_label":format!("{playback}; {muted}"),"id":e.id,"label":e.label,"device_id":e.device_id,"capabilities":{"start_voice":"not_implemented","end_voice":"not_implemented","input_routing":"not_implemented"},"state":state,"complete":complete,"sessions":sessions,"actions_enabled":enabled,"identity_kind":"saved_executable_location","icon_b64":icon});
             if summary {for session in row["sessions"].as_array_mut().unwrap() {session.as_object_mut().unwrap().remove("icon_b64");}}
             row
         }).collect::<Vec<_>>();
@@ -469,6 +475,25 @@ impl Registry {
         )
     }
     pub(crate) fn mutate(&mut self, operation: &str, body: &str) -> (u16, Value) {
+        if operation == "bind" {
+            return (404, json!({"error":"Use the microphone association API"}));
+        }
+        self.edit(operation, body, |_| Ok(()))
+    }
+    #[cfg(any(windows, test))]
+    pub(crate) fn bind(
+        &mut self,
+        body: &str,
+        validate_device: impl FnOnce(&str) -> std::result::Result<(), String>,
+    ) -> (u16, Value) {
+        self.edit("bind", body, validate_device)
+    }
+    fn edit(
+        &mut self,
+        operation: &str,
+        body: &str,
+        validate_device: impl FnOnce(&str) -> std::result::Result<(), String>,
+    ) -> (u16, Value) {
         let fail = |status, message: &str| (status, json!({"error":message}));
         if self.load_error.is_some() {
             return fail(
@@ -482,16 +507,19 @@ impl Registry {
         let Some(obj) = v.as_object() else {
             return fail(400, "Expected a JSON object");
         };
-        let allowed = if operation == "pin" {
-            &["revision", "selection_id", "label"][..]
-        } else {
-            &["revision", "id"][..]
+        let allowed = match operation {
+            "pin" => &["revision", "selection_id", "label"][..],
+            "bind" => &["revision", "id", "device_id"][..],
+            _ => &["revision", "id"][..],
         };
         if obj.keys().any(|k| !allowed.contains(&k.as_str())) {
             return fail(
                 400,
                 "Unexpected app field; paths and icon URLs are not accepted",
             );
+        }
+        if operation == "bind" && (obj.len() != 3 || v["revision"].as_u64().is_none()) {
+            return fail(400, "revision, id and device_id are required");
         }
         if v["revision"].as_u64() != Some(self.revision) {
             return fail(409, "App entries changed; refresh before editing");
@@ -554,6 +582,7 @@ impl Registry {
                     label,
                     endpoint: endpoint.into(),
                     executable: exe.into(),
+                    device_id: None,
                 });
                 used = Some(id.to_string());
             }
@@ -566,6 +595,33 @@ impl Registry {
                 if before == entries.len() {
                     return fail(404, "Entry not found");
                 }
+            }
+            "bind" => {
+                let Some(id) = string(&v, "id", 64).filter(|id| token(id)) else {
+                    return fail(400, "A saved entry id is required");
+                };
+                let device_id = match v.get("device_id") {
+                    Some(Value::Null) => None,
+                    Some(Value::String(_)) => {
+                        match string(&v, "device_id", 512).filter(|id| !id.trim().is_empty()) {
+                            Some(id) => Some(id),
+                            None => return fail(
+                                400,
+                                "device_id must be a plain identifier of at most 512 bytes or null",
+                            ),
+                        }
+                    }
+                    _ => return fail(400, "device_id must be a string or explicit null"),
+                };
+                let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) else {
+                    return fail(404, "Entry not found");
+                };
+                if let Some(id) = device_id.as_deref() {
+                    if let Err(error) = validate_device(id) {
+                        return fail(409, &error);
+                    }
+                }
+                entry.device_id = device_id;
             }
             _ => return fail(404, "Unknown app operation"),
         }
@@ -796,6 +852,166 @@ mod tests {
     fn select(registry: &mut Registry) -> String {
         registry.observe(snapshot(123, "session-a"), Instant::now());
         registry.current_choices[0].0.clone()
+    }
+    fn legacy_registry() -> Registry {
+        let path = temp();
+        let saved = json!({"schema_version":1,"revision":7,"entries":[{"id":"a".repeat(64),"label":"Example","endpoint_id":"speaker-fixture","executable_path":"C:\\Fixture\\Example.exe"}]});
+        std::fs::write(&path, saved.to_string()).unwrap();
+        Registry::load(path)
+    }
+    #[test]
+    fn microphone_association_loads_legacy_entries_roundtrips_and_explicitly_clears() {
+        let mut r = legacy_registry();
+        let original_entry = r.entries[0].clone();
+        let config = r.path.with_file_name("config.json");
+        std::fs::write(&config, b"separate-global-microphone").unwrap();
+        assert_eq!(r.view(false)["entries"][0]["device_id"], Value::Null);
+        for capability in ["start_voice", "end_voice", "input_routing"] {
+            assert_eq!(
+                r.view(false)["entries"][0]["capabilities"][capability],
+                "not_implemented"
+            );
+        }
+        for (revision, device_id) in [(7, "mic-fixture-a"), (8, "mic-fixture-b")] {
+            let body = json!({"revision":revision,"id":original_entry.id,"device_id":device_id});
+            let (status, view) = r.bind(&body.to_string(), |requested| {
+                assert_eq!(requested, device_id);
+                Ok(())
+            });
+            assert_eq!(status, 200);
+            assert_eq!(view["entries"][0]["device_id"], device_id);
+            assert_eq!(r.view(true)["entries"][0]["device_id"], device_id);
+            let disk: Value = serde_json::from_slice(&std::fs::read(&r.path).unwrap()).unwrap();
+            assert_eq!(disk["revision"], revision + 1);
+            assert_eq!(disk["entries"][0]["device_id"], device_id);
+            r = Registry::load(r.path.clone());
+            assert_eq!(r.entries[0].device_id.as_deref(), Some(device_id));
+        }
+        assert_eq!(
+            r.bind(
+                &json!({"revision":9,"id":original_entry.id,"device_id":null}).to_string(),
+                |_| panic!("Clearing must never choose or probe another microphone")
+            )
+            .0,
+            200
+        );
+        let reopened = Registry::load(r.path.clone());
+        assert_eq!(reopened.revision, 10);
+        assert_eq!(reopened.entries[0], original_entry);
+        assert_eq!(
+            std::fs::read(config).unwrap(),
+            b"separate-global-microphone"
+        );
+        std::fs::remove_dir_all(r.path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn microphone_association_rejects_bad_stale_and_unknown_targets_before_validation() {
+        let mut r = legacy_registry();
+        let bytes = std::fs::read(&r.path).unwrap();
+        let id = r.entries[0].id.clone();
+        let mut invalid = vec![
+            (json!({"revision":6,"id":id,"device_id":"mic-fixture"}), 409),
+            (json!({"revision":7,"id":id}), 400),
+            (json!({"id":id,"device_id":"mic-fixture"}), 400),
+            (
+                json!({"revision":null,"id":id,"device_id":"mic-fixture"}),
+                400,
+            ),
+            (json!({"revision":7,"device_id":"mic-fixture"}), 400),
+            (
+                json!({"revision":7,"id":id,"device_id":"mic-fixture","executable_path":"C:\\Other.exe"}),
+                400,
+            ),
+            (
+                json!({"revision":7,"id":"invalid","device_id":"mic-fixture"}),
+                400,
+            ),
+            (
+                json!({"revision":7,"id":"b".repeat(64),"device_id":"mic-fixture"}),
+                404,
+            ),
+            (json!([]), 400),
+        ];
+        for device_id in [
+            json!(""),
+            json!("   "),
+            json!("x".repeat(513)),
+            json!("mic\nfixture"),
+            json!("mic\0fixture"),
+            json!(123),
+            json!(false),
+            json!([]),
+            json!({}),
+        ] {
+            invalid.push((json!({"revision":7,"id":id,"device_id":device_id}), 400));
+        }
+        for (body, expected) in invalid {
+            assert_eq!(
+                r.bind(&body.to_string(), |_| panic!(
+                    "Invalid request probed a microphone"
+                ))
+                .0,
+                expected,
+                "{body}"
+            );
+        }
+        assert_eq!(
+            r.bind("not-json", |_| panic!("Invalid JSON probed a microphone"))
+                .0,
+            400
+        );
+        assert_eq!(r.revision, 7);
+        assert_eq!(r.entries[0].device_id, None);
+        assert_eq!(std::fs::read(&r.path).unwrap(), bytes);
+        std::fs::remove_dir_all(r.path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn unavailable_microphone_and_failed_save_preserve_association_revision_and_bytes() {
+        let mut r = legacy_registry();
+        let path = r.path.clone();
+        let bytes = std::fs::read(&path).unwrap();
+        let entries = r.entries.clone();
+        let body =
+            json!({"revision":7,"id":r.entries[0].id,"device_id":"missing-microphone"}).to_string();
+        let (status, value) = r.bind(&body, |id| {
+            assert_eq!(id, "missing-microphone");
+            Err("Selected microphone is unavailable".into())
+        });
+        assert_eq!(status, 409);
+        assert_eq!(value["error"], "Selected microphone is unavailable");
+        // A file as the destination's parent makes atomic_write fail on every platform.
+        r.path = path.join("cannot-write-here.json");
+        assert_eq!(r.bind(&body, |_| Ok(())).0, 500);
+        assert_eq!(r.revision, 7);
+        assert_eq!(r.entries, entries);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn malformed_saved_microphone_association_preserves_original_data() {
+        let r = legacy_registry();
+        let path = r.path.clone();
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for value in [
+            json!(false),
+            json!(""),
+            json!("x".repeat(513)),
+            json!("mic\nfixture"),
+        ] {
+            saved["entries"][0]["device_id"] = value;
+            let bytes = saved.to_string();
+            std::fs::write(&path, &bytes).unwrap();
+            let mut reopened = Registry::load(path.clone());
+            assert!(reopened.load_error.is_some());
+            assert_eq!(
+                reopened
+                    .bind("{}", |_| panic!("Invalid storage probed a microphone"))
+                    .0,
+                503
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        }
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
     #[test]
     fn pin_roundtrip_remove_preserves_separate_microphone_config() {

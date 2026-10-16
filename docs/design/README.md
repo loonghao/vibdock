@@ -45,7 +45,7 @@ Adapters declare actions, scope, prerequisites, and state-query capability. CLI 
 
 Design-preview mode uses mock devices and browser-local drafts. Authenticated service mode can read real Windows capture devices, persist configuration, and register a configurable Windows global shortcut. Physical hardware delivery and platform voice integrations remain unverified.
 
-Bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`, so they survive a reload or reopen in the same browser. This is a draft, not the authoritative configuration: it is per-browser and is not shared with the resident service.
+Design-preview bindings are saved to the browser's own `localStorage` under `vibdock.design.bindings.v2`. They are per-browser drafts and are not shared with the resident service. Service mode uses the authoritative service configuration and never writes these drafts.
 
 ## Service mode versus design-preview mode
 
@@ -59,16 +59,18 @@ In **service mode** (`audio_control: true`) the backend exposes an authenticated
 - offers manual token paste only as an explicitly labelled advanced troubleshooting route; the normal desktop flow uses one-use browser codes;
 - verifies any token against `GET /api/config` before treating the session as authorized, and reports an invalid token as such;
 - loads real capture devices from `POST /api/actions/devices` and requires one to be selected before saving;
-- writes configuration with `POST /api/config` and updates the page draft **only after the backend confirms the write**, so a failed save never replaces what is actually configured;
+- writes the single microphone/shortcut pair with `POST /api/config` and renders the backend-confirmed configuration; a failed save preserves the previous binding and no browser-local draft is written;
 - calls `POST /api/actions/{status,mute,unmute,toggle}` for the test action and distinguishes a verified outcome (the service read back a real mute state) from a request that was accepted but not verifiable.
 
-Only the microphone device is offered as a target; Codex, WorkBuddy, and WeChat Input remain labelled unsupported and cannot be selected, so a selection never implies integration support that does not exist. Global hotkey and hardware-origin claims are likewise not made: browser key capture is not global registration, and the page says so.
+The global shortcut targets one selected microphone. The service reports whether Windows registered that shortcut; browser capture alone is not registration or physical-device evidence. Pinned Windows software entries can also retain an exact microphone association and expose explicit status/mute/unmute controls for that endpoint. The association is metadata, not an application input-route change. Application `start_voice`, `end_voice` and `input_routing` remain `not_implemented` and cannot be invoked.
 
-The backend stores exactly one binding — a device plus a hotkey — and the page represents it that way, in its own section, rather than attributing it to whichever hardware button happens to be selected. Per-key bindings are not a backend capability; the hardware buttons in the device view select which draft is being edited and remain explicitly a draft concept until the service grows per-key configuration.
+The backend stores exactly one global binding — a device plus a hotkey — and service mode presents one editor with real microphone choices. Per-key hardware drafts belong to design-preview mode. Software microphone associations are separate from the global shortcut; saving one does not register another shortcut or change the existing binding.
 
 ## Interaction behavior
 
-Setup follows the three guided steps shown above: capture a key, choose a target and action, then test and save. The step indicator marks a step satisfied only after the user actually performs it — choosing an action is not credited merely because the selector shows a default — and flags one step as active at a time.
+In service mode, choose a microphone, capture a shortcut, test its endpoint and save the single binding. Read saved configuration and registration status back from the service. Software association forms save against the current revision; a conflict or unavailable microphone leaves the prior association intact. A disappeared saved microphone stays unavailable and never selects another endpoint silently.
+
+The following draft interactions apply to design-preview mode. Setup follows the three guided steps: capture a key, choose a target and action, then test and save. The step indicator marks a step satisfied only after the user actually performs it and flags one step as active at a time.
 
 Switching to a different key while a draft is unsaved asks for confirmation before discarding it, so an entered shortcut is never lost silently. The same draft can also be dropped explicitly with the discard button, which appears only while the editor differs from what is saved.
 
@@ -90,7 +92,8 @@ The feedback view previews each result state separately: trigger received, actio
 - Request bodies are bounded: an oversized or non-UTF-8 body yields 413 and is never parsed or truncated at an arbitrary byte offset.
 - No arbitrary command or shell endpoint is exposed. `/api/actions/{devices,status,mute,unmute,toggle}` run through the same closed allowlist and the shared Windows adapter; an unrecognised verb is a 404 that never reaches the adapter. Actions always name their endpoint, taken from the request body or the user's saved device, never a platform default, so an action cannot silently apply to a microphone the caller did not choose. Results report the mute state read back from the device, and a failed action is an error rather than an assumed success.
 - Single instance: a second launch reuses the running service only after the listener on that port answers a fresh nonce at `POST /instance/challenge` with an HMAC-SHA256 proof derived from the recorded token. The discovery request does not transmit the bearer. Browser handoff and shutdown prove ownership again on the same pinned IPv4 connection used for the privileged request, sharing one two-second deadline; they never reconnect or fall back to IPv6 after proof. A successful challenge permits at most one additional exchange. Atomic state writes use exclusive fresh temporary files, created with mode 0600 on Unix; Windows protection still relies on inherited directory ACLs. TCP reachability or HTTP 200 alone is not accepted, so an unrelated process that inherits the port is not mistaken for our service. A stale marker is recovered only after proving no owner answers; if an unrelated process holds the port, startup fails loudly and leaves the marker in place.
-- `service-status` reports whether a service is listening. `service-stop` performs a real authenticated shutdown: it posts to the running service's `/api/shutdown` with the recorded token and waits for the port to be released, so an unrelated process on that port is never stopped by name. `tray` (Windows) runs the resident panel and notification-area icon with Settings, Service status, Hide, and Exit VibDock, sharing the same service core as the CLI.
+- `service-status` reports whether a service is listening. `service-stop` performs a real authenticated shutdown: it posts to the running service's `/api/shutdown` with the recorded token and waits for the port to be released, so an unrelated process on that port is never stopped by name. `tray` (Windows) runs a hidden owner and notification-area icons with Settings, Service status and Exit VibDock, sharing the same service core as the CLI.
+- Windows `POST /api/apps/bind` accepts only `revision`, saved-entry `id` and `device_id` (string or explicit null). A current exact-device read validates a non-null microphone before its optional ID is atomically persisted in `apps.json`. Old entries without this field are unbound. The association and microphone endpoint controls do not set application input routes or start/end voice sessions. See the [software contract](../resident-software.md).
 - `VIBDOCK_PORT` overrides the bound loopback port so acceptance runs can use a private port instead of disturbing a service on the default one.
 
 The `serve` preview remains read-only and unauthenticated: it serves the page and reports `design-preview` mode.
@@ -99,13 +102,13 @@ The `serve` preview remains read-only and unauthenticated: it serves the page an
 ## Resident-service lifecycle requirement
 
 The Windows source now starts by double-clicking the launcher, reuses one local
-service, and shows a small interactive floating panel. Settings opens from its
-button or right-click menu with a one-use browser code. Closing the panel, pressing
-Escape or closing the browser leaves the service running. The taskbar/tray entry
-restores the panel; **Exit VibDock** is the discoverable authenticated shutdown.
+service, and opens authenticated Web Settings. Clicking the primary tray icon,
+its Settings menu, or launching again requests a fresh one-use browser code.
+Closing the browser leaves the tray and service running; **Exit VibDock** performs
+authenticated shutdown. The old Windows resident panel is removed.
 The independent optional mouse-transparent feedback indicator remains separate.
 
-Repeated launches reuse the existing service and panel. Exiting unregisters
+Repeated launches reuse the existing service and tray owner. Exiting unregisters
 hotkeys and stops listeners without changing microphone mute state. Settings
 navigates to the proved service's actual bound address, never a guessed port.
 See [candidate evidence and platform limits](desktop-candidate.md).
@@ -130,13 +133,14 @@ Authenticated `GET /api/config` includes `hotkey_live` (the service currently ho
 
 The sequence starts at zero for each service instance and advances after each handled hotkey action. A successful audio readback sets `state` to `LIVE` or `MUTED`; failure clears `state` and sets `error`. Registration and saving alone do not create a successful action. Each queued press is handled separately; Windows `MOD_NOREPEAT` suppresses held-key repeats. This status is a completed action result, not a continuous meter of changes made by other applications. Clients must reset their event cursor on service restart.
 
-The native adapter remains Windows-only. Physical Ulanzi identity, hold-to-talk, desktop overlay, and application-specific voice controls require separate implementation and host acceptance.
+The audio and global-hotkey adapters remain Windows-only. Physical Ulanzi identity, hold-to-talk and application-specific voice controls require separate implementation and host acceptance. The implemented optional Windows overlay still requires host acceptance.
 
 ## Persisted software observation
 
-The authenticated Software page now supports the read-only Windows resident
-software increment: pin/remove current observed playback locations, preserve pins
-across restart, and show native resource icons with explicitly partial/unknown
-status. It does not activate the planned voice integrations above. See
+The authenticated Software page supports pin/remove for observed Windows playback
+locations, persistent per-entry microphone associations, and native icons with
+explicit partial/unknown status. Microphone controls target that exact saved
+endpoint; native software-icon menus control one explicitly selected playback
+session. Neither path implements application input routing or voice start/stop. See
 [resident software contract](../resident-software.md) for API, lifecycle, privacy
 and real-device evidence limits.

@@ -1,10 +1,11 @@
-//! Native desktop entry: Windows panel/tray and macOS AppKit panel/menu bar.
+//! Native desktop entry: Windows tray/Web Settings and macOS AppKit panel/menu bar.
 //!
 //! This binary is deliberately thin. It ensures a resident service is running
-//! (reusing an authenticated one if there is), shows an interactive floating panel, and stays in the notification area.
+//! (reusing an authenticated one if there is) and stays in the notification area.
+//! Windows launches Web Settings directly; macOS retains its native panel.
 //! Settings opens the service's proved address with a one-use browser code.
-//! Closing the panel or browser leaves the
-//! service running; only the tray Exit item stops it.
+//! Closing the browser or macOS panel leaves the service running;
+//! the tray Exit or macOS Quit item stops it.
 
 // The launcher is GUI-subsystem: double-clicking must not flash a console.
 #![cfg_attr(windows, windows_subsystem = "windows")]

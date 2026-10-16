@@ -2,12 +2,22 @@
 
 Settings > Software reads current Windows playback sessions. A user can pin up to
 eight observed software locations on their observed output endpoint, or remove a
-saved entry. Pins survive service restarts in a separate `apps.json`; microphone
-bindings remain in `config.json`. The resident panel and notification area show
-one icon/status row per saved entry. Clicking an entry restores the same panel;
+saved entry. Pins and their optional microphone associations survive service
+restarts in `apps.json`; the single global microphone/shortcut binding remains
+in `config.json`. Settings and the notification area show each saved entry's icon
+and observation. The primary VibDock icon and repeated launches open authenticated
+Web Settings;
 right-click a Windows software icon to choose one explicitly identified playback
 session (including its PID), then mute or unmute that session. Offline/stale
-entries disable controls. Settings/status/hide/exit remain available.
+entries disable playback controls. Settings/status/exit remain available.
+
+Windows also shows up to eight software logos in a passive strip just above the
+primary work area bottom edge. `×`, `▶`, `II`, `–` and `?` describe playback only;
+voice activity remains unknown. Native buttons expose the app and state to
+accessibility tools and tooltips. Clicking opens Settings; right-clicking retains
+the exact software/session menu. An unreadable or too-small work area hides the
+strip. The settings list uses the same logo-and-badge vocabulary. This source
+change has unit coverage; native pointer, DPI and focus acceptance is pending.
 
 ## State and action contract
 
@@ -23,7 +33,15 @@ entries disable controls. Settings/status/hide/exit remain available.
   current playback session. A multi-session entry requires selecting a session;
   no action targets the first/all sessions, system output, microphone, or another
   process. Launch, terminate, voice control and autostart remain unavailable.
-  The Settings software page manages pins and shows status; controls are native.
+  The Settings software page manages pins and microphone associations; playback
+  controls remain in native software-icon menus.
+- A saved `device_id` associates a microphone endpoint with a software entry.
+  The page offers explicit status/mute/unmute for that exact endpoint, verifies
+  the returned device ID and mute state, and disables controls for a missing
+  endpoint. Microphone mute affects every application using that device. An
+  association does not prove which microphone the application uses, change its
+  operating-system input route, or start/end a voice session. Capabilities
+  `input_routing`, `start_voice` and `end_voice` remain `not_implemented`.
 - Native software icons come only from current observed local images. Offline,
   protected, unsupported or invalid resources use a generic placeholder. The app
   does not read an offline saved path, fetch icon URLs, run an executable, invoke
@@ -64,14 +82,26 @@ exists in this path. Mac application presence has no corresponding action API.
 
 Authenticated same-origin `GET /api/apps` returns public rows and current opaque
 selection IDs. `POST /api/apps/pin` accepts only revision, selection ID and optional
-label; remove accepts revision and saved ID. A selection is a 256-bit OS-random,
+label; remove accepts revision and saved ID. Windows `POST /api/apps/bind` accepts
+exactly `{"revision":0,"id":"<saved-entry-id>","device_id":"<microphone-endpoint-id>"}`.
+All three fields are required; explicit `device_id: null` clears the association.
+A non-empty identifier of at most 512 bytes must pass a current exact-device
+status read before commit. Malformed fields return 400, an unknown entry 404,
+and a revision conflict or failed device validation 409; failed edits preserve
+the previous data. Other platforms return 501 for bind. These routes require
+the existing authentication and same-origin checks.
+
+A pin selection is a 256-bit OS-random,
 15-second, single-session capability, consumed on success and revalidated against
 a scan younger than six seconds. Client paths and arbitrary fields are rejected.
-Raw executable, endpoint and session identifiers stay server-side. Paths in the
-local file are personal data; do not attach that file to public bug reports.
+Raw executable, playback endpoint and session identifiers stay server-side.
+An associated microphone `device_id` is returned to authenticated settings clients.
+Paths in the local file are personal data; do not attach that file to public bug reports.
 
 Schema 1 has a revision and at most eight entries (random ID, label, output ID,
-executable location). Atomic writes commit before memory changes. Malformed,
+executable location, optional microphone `device_id`). Existing entries with a
+missing or null `device_id` remain unbound; no default microphone is substituted.
+Atomic writes commit before memory changes. Malformed,
 oversized, unsupported or unreadable files remain untouched, report a diagnostic,
 and disable edits; they are not silently replaced with empty configuration.
 
@@ -97,7 +127,8 @@ claimed as live-tested.
 
 ## Evidence and remaining platform work
 
-Unit fixtures validate persistence/restart, atomic failure, revision conflicts,
+Unit fixtures validate persistence/restart, microphone-association validation,
+null clearing and missing-field compatibility, atomic failure, revision conflicts,
 selection expiration/replay/PID change, partial/stale states, path redaction and
 malformed native resources, action capability/principal/replay binding, stale
 references, PID creation changes, queue/owner failure and readback uncertainty.

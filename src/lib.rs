@@ -227,7 +227,7 @@ pub fn help() {
     println!("  service-start    Run the resident authenticated service on the same address");
     println!("  service-status   Report whether a resident service is listening");
     println!("  service-stop     Shut down the running service (authenticated)");
-    println!("  tray             Run the Windows tray entry (Windows only)");
+    println!("  tray             Run the Windows tray and open authenticated Web Settings");
     println!("  devices          List active microphone endpoints and their IDs");
     println!("  capabilities     Report documented integration capabilities");
     println!("  status|mute|unmute|toggle   Read or change one microphone's mute state");
