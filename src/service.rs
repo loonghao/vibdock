@@ -1812,21 +1812,24 @@ mod tests {
 
     #[test]
     fn proof_and_control_share_one_total_deadline() {
+        // Keep each phase below the 3 s fixture budget but their sum above it.
+        // Wider spacing avoids mistaking scheduler pressure for a protocol
+        // failure before the control request is even sent. Production stays 2 s.
         use std::time::{Duration, Instant};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let worker = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_secs(1));
             fixture_proof(&mut stream, "fixture-admin");
             fixture_request(&mut stream);
-            std::thread::sleep(Duration::from_millis(150));
+            std::thread::sleep(Duration::from_millis(2500));
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
         });
         let started = Instant::now();
         assert!(verified_control_exchange(&Instance { port, token: "fixture-admin".into() },
-            "POST /api/shutdown HTTP/1.1\r\nAuthorization: Bearer fixture-admin\r\nContent-Length: 0\r\n\r\n", Duration::from_millis(200)).is_err());
-        assert!(started.elapsed() < Duration::from_millis(750));
+            "POST /api/shutdown HTTP/1.1\r\nAuthorization: Bearer fixture-admin\r\nContent-Length: 0\r\n\r\n", Duration::from_secs(3)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(4));
         worker.join().unwrap();
     }
 

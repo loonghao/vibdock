@@ -44,6 +44,9 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-match :lang=zh
           npm install --prefix work/browser --no-package-lock --ignore-scripts playwright@1.60.0
           PLAYWRIGHT_MODULE="$PWD/work/browser/node_modules/playwright" CHROMIUM_PATH="$(command -v google-chrome)" node scripts/test-web-ui.cjs target/release/vibdock
       - name: Upload desktop and browser evidence

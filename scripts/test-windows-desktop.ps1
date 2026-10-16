@@ -17,6 +17,10 @@ foreach ($name in @('vibdock.exe', 'vibdock-launcher.exe')) {
 }
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $evidence = (Resolve-Path -LiteralPath $EvidenceDirectory).Path
+foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-restored.png')) {
+    $old = Join-Path $evidence $name
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
+}
 $state = Join-Path ([IO.Path]::GetTempPath()) ('vibdock-desktop-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $state | Out-Null
 $portProbe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -115,16 +119,24 @@ try {
     Wait-Until { [VibDockNative]::IsWindowVisible($window) } 'Second launch did not restore the first panel'
     if ($first.HasExited -or [IO.File]::ReadAllText($recordPath) -cne $initialRecord) { throw 'Repeated launch replaced the resident service' }
     Save-Window $window 'resident-restored.png'
-    [void][VibDockNative]::PostMessage($window, 0x0111, [IntPtr]3, [IntPtr]::Zero) # actual Exit command
+    [void][VibDockNative]::PostMessage($window, 0x0100, [IntPtr]27, [IntPtr]::Zero) # real WM_KEYDOWN Escape through IsDialogMessage
+    Wait-Until { -not [VibDockNative]::IsWindowVisible($window) } 'Escape did not hide the panel'
+    [void][VibDockNative]::PostMessage($window, 0x8002, [IntPtr]::Zero, [IntPtr]::Zero)
+    Wait-Until { [VibDockNative]::IsWindowVisible($window) } 'Panel did not restore after Escape'
+    [void][VibDockNative]::PostMessage($window, 0x0111, [IntPtr]103, [IntPtr]::Zero) # actual Exit command
     if (-not $first.WaitForExit(15000) -or $first.ExitCode -ne 0) { throw 'Exit did not finish cleanly' }
     Wait-Until { -not (Test-Path -LiteralPath $recordPath) } 'Exit left the service instance record behind'
-    $report = [ordered]@{ platform='Windows'; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; checks=@('native-window-visible','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','close-hides','second-launch-restores-singleton','service-record-unchanged','authenticated-exit-cleans-service'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
+    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:GITHUB_SHA; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; checks=@('native-window-visible','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
     $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
     Write-Output 'PASS: native panel, context menu, singleton restoration, and authenticated Exit. Captures are native PrintWindow renders; physical-device and default-browser acceptance remain separate.'
 } finally {
     $stop = Start-Entry 'vibdock.exe' 'service-stop'
     if (-not $stop.WaitForExit(5000)) { $stop.Kill(); $stop.WaitForExit() }
     foreach ($process in @($second, $first)) { if ($null -ne $process -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() } }
-    # Only this run's newly created, isolated state directory is removed.
+    # Do not discard credentials while an uncertain detached service may still
+    # be running. Preserve the isolated state so authenticated cleanup can retry.
+    if (Test-Path -LiteralPath (Join-Path $state 'VibDock/service.json')) {
+        throw "Cleanup could not confirm service shutdown; isolated state retained at $state"
+    }
     Remove-Item -LiteralPath $state -Recurse -Force
 }
