@@ -1,6 +1,6 @@
-//! Windows resident entry: one interactive floating panel and one tray icon.
+//! Windows resident entry: notification icons and authenticated Web Settings.
 //!
-//! Closing the panel hides it; only Exit asks the authenticated service to stop.
+//! The hidden owner keeps the tray and compact software strip alive; only Exit stops the service.
 //! The independent, mouse-transparent action feedback overlay is unchanged.
 
 use crate::service;
@@ -12,22 +12,29 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    core::PCWSTR,
+    core::{w, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND, LPARAM,
-            LRESULT, POINT, WPARAM,
+            LRESULT, POINT, RECT, WPARAM,
         },
-        Graphics::Gdi::{GetStockObject, GetSysColorBrush, COLOR_WINDOW, DEFAULT_GUI_FONT},
+        Graphics::Gdi::{
+            GetStockObject, GetSysColorBrush, InvalidateRect, COLOR_WINDOW, DEFAULT_GUI_FONT,
+        },
         System::{
             LibraryLoader::GetModuleHandleW,
             Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD},
             Threading::CreateMutexW,
         },
         UI::{
+            Controls::{
+                InitCommonControlsEx, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, TTF_IDISHWND,
+                TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX,
+                TTTOOLINFOW,
+            },
             Shell::{
-                ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD,
-                NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+                ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP,
+                NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
             },
             WindowsAndMessaging::*,
         },
@@ -35,22 +42,20 @@ use windows::{
 };
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
-const SHOW_PANEL: u32 = WM_APP + 2;
+const OPEN_SETTINGS: u32 = WM_APP + 2;
 const UI_COMMAND: u32 = WM_APP + 3;
 const UI_MENU: u32 = WM_APP + 4;
 const FIRST_SESSION_COMMAND: u32 = 1000;
-const RESULT_LABEL: i32 = 13;
-const ROW_TOP: i32 = 274;
-const PANEL_HEIGHT: i32 = 326;
 const MENU_OPEN: u32 = 101;
 const MENU_STATUS: u32 = 102;
 const MENU_EXIT: u32 = 103;
-const MENU_SHOW: u32 = 104;
-const MENU_HIDE: u32 = 105;
-const STATUS_LABEL: i32 = 10;
 const TIMER: usize = 1;
 const CLASS: &str = "VibDockTray";
 const TRAY_MUTEX: &str = "VibDockTraySingleton";
+const STRIP_CELL: i32 = 44;
+const STRIP_CLASS: PCWSTR = w!("VibDockSoftwareStrip");
+// SDK TTTOOLINFOW_V2_SIZE also works without a common-controls v6 manifest.
+const TOOLINFO_SIZE: u32 = std::mem::offset_of!(TTTOOLINFOW, lpReserved) as u32;
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -191,7 +196,7 @@ fn send_worker_event(
 
 fn action_result(selection: &PlaybackSelection, message: &str) -> WorkerEvent {
     WorkerEvent::ActionResult(format!(
-        "{} · PID {}\n{message}",
+        "{message}\n{} · PID {}",
         selection.label, selection.process_id
     ))
 }
@@ -422,8 +427,8 @@ impl Drop for Poller {
     }
 }
 
-/// Reuses the existing named mutex. A second launch reveals the original panel
-/// without opening another browser, adding another icon, or stopping the service.
+/// Reuses the existing named mutex. A second launch opens authenticated Settings
+/// through the original tray, without adding another icon or service.
 pub fn run() -> crate::Result<()> {
     let _singleton = match TraySingleton::acquire()? {
         Some(guard) => guard,
@@ -433,7 +438,7 @@ pub fn run() -> crate::Result<()> {
             for _ in 0..40 {
                 if let Ok(window) = unsafe { FindWindowW(PCWSTR(class.as_ptr()), None) } {
                     unsafe {
-                        PostMessageW(Some(window), SHOW_PANEL, WPARAM(0), LPARAM(0))?;
+                        PostMessageW(Some(window), OPEN_SETTINGS, WPARAM(0), LPARAM(0))?;
                     }
                     return Ok(());
                 }
@@ -450,188 +455,57 @@ pub fn run() -> crate::Result<()> {
             hInstance: instance,
             lpszClassName: PCWSTR(class.as_ptr()),
             hIcon: LoadIconW(Some(instance), PCWSTR(std::ptr::without_provenance(1)))?,
-            hCursor: LoadCursorW(None, IDC_ARROW)?,
-            hbrBackground: GetSysColorBrush(COLOR_WINDOW),
             ..Default::default()
         };
         if RegisterClassW(&wc) == 0 {
             return Err(windows::core::Error::from_win32().into());
         }
+        let strip_class = WNDCLASSW {
+            lpfnWndProc: Some(strip_proc),
+            lpszClassName: STRIP_CLASS,
+            hbrBackground: GetSysColorBrush(COLOR_WINDOW),
+            ..wc
+        };
+        if RegisterClassW(&strip_class) == 0 {
+            let _ = UnregisterClassW(PCWSTR(class.as_ptr()), Some(instance));
+            return Err(windows::core::Error::from_win32().into());
+        }
         let title = wide("VibDock");
-        // A normal, movable small window with a taskbar entry. Windows chooses
-        // the initial position; no fixed corner or monitor is assumed.
+        // A hidden top-level owner receives Explorer's TaskbarCreated broadcast.
         let window = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             PCWSTR(class.as_ptr()),
             PCWSTR(title.as_ptr()),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            440,
-            PANEL_HEIGHT,
+            WS_OVERLAPPED,
+            0,
+            0,
+            0,
+            0,
             None,
             None,
             Some(instance),
             None,
         )?;
         let result = (|| -> crate::Result<()> {
-            child(
-                window,
-                instance,
-                "STATIC",
-                "VibDock · resident controls",
-                20,
-                16,
-                390,
-                24,
-                11,
-                false,
-            )?;
-            child(
-                window,
-                instance,
-                "STATIC",
-                "Checking service identity…",
-                20,
-                48,
-                390,
-                44,
-                STATUS_LABEL,
-                false,
-            )?;
-            child(window, instance, "STATIC", "Right-click a software tray icon to choose a playback session.\nPlayback controls never change microphone mute.", 20, 94, 390, 50, 12, false)?;
-            child(
-                window,
-                instance,
-                "BUTTON",
-                "&Settings…",
-                20,
-                164,
-                120,
-                32,
-                MENU_OPEN as i32,
-                true,
-            )?;
-            child(
-                window,
-                instance,
-                "BUTTON",
-                "&Hide panel",
-                152,
-                164,
-                120,
-                32,
-                MENU_HIDE as i32,
-                true,
-            )?;
-            child(
-                window,
-                instance,
-                "EDIT",
-                "No playback action requested.",
-                20,
-                206,
-                390,
-                60,
-                RESULT_LABEL,
-                true,
-            )?;
-            for index in 0..8 {
-                child(
-                    window,
-                    instance,
-                    "STATIC",
-                    "",
-                    20,
-                    ROW_TOP + index * 40,
-                    32,
-                    32,
-                    200 + index * 2,
-                    false,
-                )?;
-                if let Ok(icon) = GetDlgItem(Some(window), 200 + index * 2) {
-                    SetWindowLongPtrW(
-                        icon,
-                        GWL_STYLE,
-                        (WS_CHILD | WINDOW_STYLE(0x0000_0003)/* SS_ICON */).0 as isize,
-                    );
-                }
-                child(
-                    window,
-                    instance,
-                    "STATIC",
-                    "",
-                    62,
-                    ROW_TOP + index * 40,
-                    345,
-                    36,
-                    201 + index * 2,
-                    false,
-                )?;
-            }
             add_icon(window)?;
             if SetTimer(Some(window), TIMER, 250, None) == 0 {
                 return Err(windows::core::Error::from_win32().into());
             }
             let (poller, receiver) = Poller::start()?;
-            let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+            let _ = poller.request(WorkerCommand::Settings);
             message_loop(window, receiver, &poller)
         })();
         let _ = KillTimer(Some(window), TIMER);
         let _ = Shell_NotifyIconW(NIM_DELETE, &icon(window));
         let _ = DestroyWindow(window);
+        let _ = UnregisterClassW(STRIP_CLASS, Some(instance));
         let _ = UnregisterClassW(PCWSTR(class.as_ptr()), Some(instance));
         result
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-unsafe fn child(
-    parent: HWND,
-    instance: HINSTANCE,
-    class: &str,
-    text: &str,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    id: i32,
-    tab: bool,
-) -> crate::Result<()> {
-    // Read-only multiline receipts stay keyboard-scrollable even for long
-    // session names and unconfirmed outcomes; no hidden tail implies success.
-    let extra = if class == "EDIT" {
-        WS_VSCROLL | WINDOW_STYLE(0x0004 | 0x0800) // ES_MULTILINE | ES_READONLY
-    } else {
-        WINDOW_STYLE(0)
-    };
-    let class = wide(class);
-    let text = wide(text);
-    let window = CreateWindowExW(
-        WINDOW_EX_STYLE(0),
-        PCWSTR(class.as_ptr()),
-        PCWSTR(text.as_ptr()),
-        WS_CHILD | WS_VISIBLE | extra | if tab { WS_TABSTOP } else { WINDOW_STYLE(0) },
-        x,
-        y,
-        width,
-        height,
-        Some(parent),
-        Some(HMENU(id as usize as *mut _)),
-        Some(instance),
-        None,
-    )?;
-    SendMessageW(
-        window,
-        WM_SETFONT,
-        Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
-        Some(LPARAM(1)),
-    );
-    Ok(())
-}
-
 fn icon(window: HWND) -> NOTIFYICONDATAW {
-    let tip = wide("VibDock — show controls / right-click for settings");
+    let tip = wide("VibDock — Settings / right-click for controls");
     let mut data = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: window,
@@ -866,10 +740,8 @@ fn show_menu(
                 AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             }
             for (id, label) in [
-                (MENU_SHOW, "Show controls"),
                 (MENU_OPEN, "Settings…"),
                 (MENU_STATUS, "Service status"),
-                (MENU_HIDE, "Hide panel (keep running)"),
                 (MENU_EXIT, "Exit VibDock"),
             ] {
                 let label = wide(label);
@@ -951,21 +823,27 @@ fn notify(title: &str, body: &str, style: MESSAGEBOX_STYLE) {
         );
     }
 }
-fn show_panel(window: HWND) {
-    unsafe {
-        let _ = ShowWindow(window, SW_RESTORE);
-        let _ = SetForegroundWindow(window);
+fn notification_text<const N: usize>(value: &str) -> [u16; N] {
+    let mut result = [0; N];
+    let text = wide(value);
+    let mut count = (text.len() - 1).min(N.saturating_sub(1));
+    if count > 0 && (0xd800..=0xdbff).contains(&text[count - 1]) {
+        count -= 1;
+    }
+    result[..count].copy_from_slice(&text[..count]);
+    result
+}
+fn notify_playback(window: HWND, result: &str) {
+    let mut data = icon(window);
+    data.uFlags = NIF_INFO;
+    data.szInfoTitle = notification_text("VibDock playback result");
+    data.szInfo = notification_text(result);
+    data.dwInfoFlags = NIIF_INFO;
+    if !unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool() {
+        notify("VibDock notification unavailable", result, MB_ICONWARNING);
     }
 }
-fn set_result(window: HWND, text: &str) {
-    unsafe {
-        if let Ok(label) = GetDlgItem(Some(window), RESULT_LABEL) {
-            let text = wide(&text.replace('\n', "\r\n"));
-            let _ = SetWindowTextW(label, PCWSTR(text.as_ptr()));
-        }
-    }
-}
-fn command(window: HWND, id: u32, poller: &Poller, observation: Option<&Observation>) {
+fn command(id: u32, poller: &Poller, observation: Option<&Observation>) {
     let requested = match id {
         MENU_OPEN => Some(poller.request(WorkerCommand::Settings)),
         MENU_EXIT => Some(poller.request(WorkerCommand::Shutdown)),
@@ -973,24 +851,15 @@ fn command(window: HWND, id: u32, poller: &Poller, observation: Option<&Observat
             report_status(observation);
             None
         }
-        MENU_SHOW => {
-            show_panel(window);
-            None
-        }
-        MENU_HIDE | 2 => {
-            unsafe {
-                let _ = ShowWindow(window, SW_HIDE);
-            }
-            None
-        }
         // Session commands are accepted only from this menu's frozen returned
         // binding. A posted numeric WM_COMMAND is not a playback selection.
         _ => None,
     };
     if requested == Some(false) {
-        set_result(
-            window,
+        notify(
+            "VibDock",
             "A request is already queued. Please wait and try again.",
+            MB_ICONINFORMATION,
         );
     }
 }
@@ -1000,9 +869,8 @@ fn message_loop(
     poller: &Poller,
 ) -> crate::Result<()> {
     let mut observation: Option<Observation> = None;
-    let mut shown = String::new();
     let mut busy = false;
-    let mut apps = AppIcons::new(window);
+    let mut apps = AppIcons::new(window)?;
     unsafe {
         let mut message = MSG::default();
         loop {
@@ -1017,7 +885,7 @@ fn message_loop(
                         WorkerEvent::Observation(next) => observation = Some(next),
                         WorkerEvent::ActionResult(result) => {
                             busy = false;
-                            set_result(window, &result);
+                            notify_playback(window, &result);
                         }
                         WorkerEvent::Notice(message) => {
                             notify("VibDock settings", &message, MB_ICONERROR)
@@ -1027,36 +895,15 @@ fn message_loop(
                         }
                         WorkerEvent::Shutdown(Err(error)) => {
                             busy = false;
-                            set_result(window, "Playback outcome may be unconfirmed after cancelling its receipt check.");
-                            notify("VibDock could not exit", &format!("{error}\n\nThe panel and tray remain available. Retry Exit to stop the verified service."), MB_ICONWARNING);
+                            notify("VibDock could not exit", &format!("{error}\n\nPlayback outcome may be unconfirmed after cancelling its receipt check. The tray remains available. Retry Exit to stop the verified service."), MB_ICONWARNING);
                         }
                     }
                 }
-                let port = observation
-                    .as_ref()
-                    .filter(|value| value.fresh())
-                    .and_then(|value| value.port);
-                let text = match port {
-                    Some(port) => format!("Service: connected (verified, port {port})\nPlayback actions require an explicit session selection"),
-                    None => "Service: unavailable / unknown\nNo current observation; playback controls are disabled".into(),
-                };
                 if let Some(current) = observation.as_ref() {
                     apps.update(&current.apps, current.fresh());
                 }
-                if text != shown {
-                    if let Ok(label) = GetDlgItem(Some(window), STATUS_LABEL) {
-                        let value = wide(&text);
-                        let _ = SetWindowTextW(label, PCWSTR(value.as_ptr()));
-                    }
-                    shown = text;
-                }
             } else if message.message == UI_COMMAND {
-                command(
-                    window,
-                    message.wParam.0 as u32,
-                    poller,
-                    observation.as_ref(),
-                );
+                command(message.wParam.0 as u32, poller, observation.as_ref());
                 continue;
             } else if message.message == UI_MENU {
                 // Revoke stale icon data before opening, then retain this exact
@@ -1065,33 +912,21 @@ fn message_loop(
                     apps.update(&current.apps, current.fresh());
                 }
                 match show_menu(window, message.wParam.0, &apps, observation.as_ref(), busy) {
-                    Some(MenuChoice::Command(id)) => {
-                        command(window, id, poller, observation.as_ref())
-                    }
+                    Some(MenuChoice::Command(id)) => command(id, poller, observation.as_ref()),
                     Some(MenuChoice::Playback(selection)) => {
-                        let pending_text = format!(
-                            "{} · PID {}\n{} request pending; result not yet verified.",
-                            selection.label,
-                            selection.process_id,
-                            if selection.requested_muted {
-                                "Mute"
-                            } else {
-                                "Unmute"
-                            }
-                        );
                         if busy
                             || !observation
                                 .as_ref()
                                 .is_some_and(|view| reference_is_current(view, &selection))
                         {
-                            set_result(window, "Selection expired while the menu was open. Refresh and select the exact session again.");
+                            notify("VibDock playback", "Selection expired while the menu was open. Refresh and select the exact session again.", MB_ICONWARNING);
                         } else if poller.request(WorkerCommand::Playback(selection)) {
                             busy = true;
-                            set_result(window, &pending_text);
                         } else {
-                            set_result(
-                                window,
+                            notify(
+                                "VibDock playback",
                                 "A request is already queued. Please wait and select again.",
+                                MB_ICONINFORMATION,
                             );
                         }
                     }
@@ -1099,10 +934,8 @@ fn message_loop(
                 }
                 continue;
             }
-            if !IsDialogMessageW(window, &message).as_bool() {
-                let _ = TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
     }
 }
@@ -1113,28 +946,30 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    // Explorer restarts remove notification icons. Restore ours, including while
-    // the panel is hidden, without restarting or changing the service.
+    // Explorer restarts remove notification icons. Restore ours without
+    // restarting or changing the service.
     let taskbar_created = RegisterWindowMessageW(PCWSTR(wide("TaskbarCreated").as_ptr()));
     if taskbar_created != 0 && message == taskbar_created {
         if add_icon(window).is_err() {
-            show_panel(window);
+            notify("VibDock tray unavailable", "Windows could not restore the notification icon. Reopen VibDock to access Settings.", MB_ICONWARNING);
         }
         return LRESULT(0);
     }
     match message {
-        SHOW_PANEL => {
-            show_panel(window);
+        OPEN_SETTINGS => {
+            let _ = PostMessageW(
+                Some(window),
+                UI_COMMAND,
+                WPARAM(MENU_OPEN as usize),
+                LPARAM(0),
+            );
             LRESULT(0)
         }
         WM_SETTINGCHANGE => {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &icon(window));
             DefWindowProcW(window, message, wparam, lparam)
         }
-        WM_CLOSE => {
-            let _ = ShowWindow(window, SW_HIDE);
-            LRESULT(0)
-        }
+        WM_CLOSE => LRESULT(0),
         WM_COMMAND => {
             let _ = PostMessageW(
                 Some(window),
@@ -1150,7 +985,9 @@ unsafe extern "system" fn window_proc(
         }
         TRAY_MESSAGE => {
             match lparam.0 as u32 {
-                WM_LBUTTONUP => show_panel(window),
+                WM_LBUTTONUP if wparam.0 == 1 => {
+                    let _ = PostMessageW(Some(window), OPEN_SETTINGS, WPARAM(0), LPARAM(0));
+                }
                 WM_RBUTTONUP => {
                     // With the legacy notify-icon protocol wParam is the
                     // actual uID. Do not substitute the primary icon's menu.
@@ -1189,10 +1026,89 @@ fn displayed_rows(
     rows
 }
 
+fn playback_badge(row: &serde_json::Value) -> (&'static str, &'static str) {
+    let unknown = ("?", "Playback unknown");
+    if row["complete"] != true {
+        return unknown;
+    }
+    if row["state"] == "not_connected" {
+        return ("–", "No playback session");
+    }
+    let Some(sessions) = row["sessions"]
+        .as_array()
+        .filter(|sessions| !sessions.is_empty())
+    else {
+        return unknown;
+    };
+    if row["state"] != "connected"
+        || sessions.iter().any(|session| {
+            session["muted"].as_bool().is_none() || session["active"].as_bool().is_none()
+        })
+    {
+        return unknown;
+    }
+    if sessions.iter().all(|session| session["muted"] == true) {
+        ("×", "Playback all muted")
+    } else if sessions.iter().any(|session| session["active"] == true) {
+        ("▶", "Playback session active")
+    } else {
+        ("II", "Playback session idle")
+    }
+}
+
+fn strip_style() -> WINDOW_EX_STYLE {
+    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+}
+
+fn strip_layout(work: RECT, count: usize) -> Option<RECT> {
+    let width = count.min(8) as i32 * STRIP_CELL;
+    if width == 0 || work.right - work.left < width + 16 || work.bottom - work.top < STRIP_CELL + 16
+    {
+        return None;
+    }
+    Some(RECT {
+        left: work.left + 8,
+        top: work.bottom - STRIP_CELL - 8,
+        right: work.left + 8 + width,
+        bottom: work.bottom - 8,
+    })
+}
+
+unsafe extern "system" fn strip_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_COMMAND if lparam.0 != 0 => {
+            if let Ok(owner) = GetWindow(window, GW_OWNER) {
+                let _ = PostMessageW(Some(owner), OPEN_SETTINGS, WPARAM(0), LPARAM(0));
+            }
+            LRESULT(0)
+        }
+        WM_CONTEXTMENU => {
+            let uid = GetPropW(HWND(wparam.0 as *mut _), w!("VibDockUID")).0 as usize;
+            if uid >= 2 {
+                if let Ok(owner) = GetWindow(window, GW_OWNER) {
+                    let _ = PostMessageW(Some(owner), UI_MENU, WPARAM(uid), LPARAM(0));
+                }
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE => LRESULT(0),
+        _ => DefWindowProcW(window, message, wparam, lparam),
+    }
+}
+
 // Each pinned entry has its own notification-area icon and exact uID-to-row
 // mapping. Its menu captures one explicit session, never the first or all.
 struct AppIcons {
     window: HWND,
+    strip: HWND,
+    tooltip: HWND,
+    tips: Vec<Vec<u16>>,
     key: String,
     icons: Vec<(HICON, bool)>,
     data: Vec<NOTIFYICONDATAW>,
@@ -1201,16 +1117,112 @@ struct AppIcons {
     next_uid: u32,
 }
 impl AppIcons {
-    fn new(window: HWND) -> Self {
-        Self {
+    fn new(window: HWND) -> crate::Result<Self> {
+        let mut apps = Self {
             window,
+            strip: HWND::default(),
+            tooltip: HWND::default(),
+            tips: (0..8).map(|_| wide("")).collect(),
             key: String::new(),
             icons: vec![],
             data: vec![],
             rows: vec![],
             uids: vec![],
             next_uid: 2,
+        };
+        unsafe {
+            let common = INITCOMMONCONTROLSEX {
+                dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+                dwICC: ICC_WIN95_CLASSES,
+            };
+            if !InitCommonControlsEx(&common).as_bool() {
+                return Err(windows::core::Error::from_win32().into());
+            }
+            let instance = HINSTANCE(GetModuleHandleW(None)?.0);
+            apps.strip = CreateWindowExW(
+                strip_style(),
+                STRIP_CLASS,
+                w!("VibDock playback indicators; voice activity unknown"),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                Some(window),
+                None,
+                Some(instance),
+                None,
+            )?;
+            apps.tooltip = CreateWindowExW(
+                strip_style(),
+                w!("tooltips_class32"),
+                None,
+                WS_POPUP | WINDOW_STYLE(TTS_ALWAYSTIP | TTS_NOPREFIX),
+                0,
+                0,
+                0,
+                0,
+                Some(apps.strip),
+                None,
+                Some(instance),
+                None,
+            )?;
+            for index in 0..8 {
+                let button = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("BUTTON"),
+                    None,
+                    WS_CHILD | WS_CLIPCHILDREN | WINDOW_STYLE((BS_ICON | BS_FLAT) as u32),
+                    index * STRIP_CELL,
+                    0,
+                    STRIP_CELL,
+                    STRIP_CELL,
+                    Some(apps.strip),
+                    Some(HMENU((200 + index) as usize as *mut _)),
+                    Some(instance),
+                    None,
+                )?;
+                let badge = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    w!("?"),
+                    WS_CHILD | WS_VISIBLE | WS_DISABLED | WINDOW_STYLE(1), // SS_CENTER
+                    27,
+                    27,
+                    17,
+                    17,
+                    Some(button),
+                    Some(HMENU(std::ptr::without_provenance_mut(1))),
+                    Some(instance),
+                    None,
+                )?;
+                SendMessageW(
+                    badge,
+                    WM_SETFONT,
+                    Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
+                    Some(LPARAM(1)),
+                );
+                let tool = TTTOOLINFOW {
+                    cbSize: TOOLINFO_SIZE,
+                    uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+                    hwnd: apps.strip,
+                    uId: button.0 as usize,
+                    lpszText: PWSTR(apps.tips[index as usize].as_mut_ptr()),
+                    ..Default::default()
+                };
+                if SendMessageW(
+                    apps.tooltip,
+                    TTM_ADDTOOLW,
+                    None,
+                    Some(LPARAM(&tool as *const _ as isize)),
+                )
+                .0 == 0
+                {
+                    return Err("Could not register a software status tooltip.".into());
+                }
+            }
         }
+        Ok(apps)
     }
     fn clear(&mut self) {
         unsafe {
@@ -1218,9 +1230,18 @@ impl AppIcons {
                 let _ = Shell_NotifyIconW(NIM_DELETE, data);
             }
             self.data.clear();
-            for index in 0..8 {
-                if let Ok(child) = GetDlgItem(Some(self.window), 200 + index * 2) {
-                    SendMessageW(child, STM_SETICON, Some(WPARAM(0)), Some(LPARAM(0)));
+            if !self.strip.is_invalid() {
+                for index in 0..8 {
+                    if let Ok(button) = GetDlgItem(Some(self.strip), 200 + index) {
+                        SendMessageW(
+                            button,
+                            BM_SETIMAGE,
+                            Some(WPARAM(IMAGE_ICON.0 as usize)),
+                            Some(LPARAM(0)),
+                        );
+                        let _ = RemovePropW(button, w!("VibDockUID"));
+                        let _ = ShowWindow(button, SW_HIDE);
+                    }
                 }
             }
             for (icon, owned) in self.icons.drain(..) {
@@ -1235,28 +1256,22 @@ impl AppIcons {
             let rows = displayed_rows(value, &self.rows, fresh);
             self.uids = stable_tray_ids(&self.rows, &self.uids, &rows, &mut self.next_uid);
             self.rows = rows.clone();
-            let key = serde_json::to_string(&rows).unwrap_or_default();
+            let complete = fresh && value["complete"] == true;
+            let key = serde_json::to_string(&(&rows, complete)).unwrap_or_default();
             if self.key == key {
-                // Explorer can restart while the panel is hidden. Failed modify
+                // Explorer can restart while the owner is hidden. Failed modify
                 // re-adds only our icons, without spawning another resident entry.
                 for data in &self.data {
                     if !Shell_NotifyIconW(NIM_MODIFY, data).as_bool() {
                         let _ = Shell_NotifyIconW(NIM_ADD, data);
                     }
                 }
+                self.place_strip();
                 return;
             }
             self.clear();
             self.key = key;
-            for index in 0..8 {
-                let Some(row) = rows.get(index as usize) else {
-                    for id in [200 + index * 2, 201 + index * 2] {
-                        if let Ok(child) = GetDlgItem(Some(self.window), id) {
-                            let _ = ShowWindow(child, SW_HIDE);
-                        }
-                    }
-                    continue;
-                };
+            for (index, row) in rows.iter().enumerate() {
                 let label = row["label"].as_str().unwrap_or("Software");
                 let status = match row["state"].as_str() {
                     Some("not_connected") => "No playback session",
@@ -1285,24 +1300,10 @@ impl AppIcons {
                 let owned = created.is_some();
                 let icon =
                     created.unwrap_or_else(|| LoadIconW(None, IDI_APPLICATION).unwrap_or_default());
-                if let Ok(child) = GetDlgItem(Some(self.window), 200 + index * 2) {
-                    SendMessageW(
-                        child,
-                        STM_SETICON,
-                        Some(WPARAM(icon.0 as usize)),
-                        Some(LPARAM(0)),
-                    );
-                    let _ = ShowWindow(child, SW_SHOW);
-                }
-                if let Ok(child) = GetDlgItem(Some(self.window), 201 + index * 2) {
-                    let text = wide(&format!("{label}\n{status}"));
-                    let _ = SetWindowTextW(child, PCWSTR(text.as_ptr()));
-                    let _ = ShowWindow(child, SW_SHOW);
-                }
                 let mut data = NOTIFYICONDATAW {
                     cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                     hWnd: self.window,
-                    uID: self.uids[index as usize],
+                    uID: self.uids[index],
                     uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
                     uCallbackMessage: TRAY_MESSAGE,
                     hIcon: icon,
@@ -1314,22 +1315,108 @@ impl AppIcons {
                 let _ = Shell_NotifyIconW(NIM_ADD, &data);
                 self.data.push(data);
                 self.icons.push((icon, owned));
+                let (badge, playback) = if complete {
+                    playback_badge(row)
+                } else {
+                    ("?", "Playback unknown")
+                };
+                let name = format!("{label}: {playback}. Voice activity unknown. Opens Settings.");
+                if self.configure_button(index, icon, badge, &name).is_err() {
+                    if let Ok(button) = GetDlgItem(Some(self.strip), 200 + index as i32) {
+                        let _ = ShowWindow(button, SW_HIDE);
+                    }
+                }
             }
-            let _ = SetWindowPos(
-                self.window,
-                None,
-                0,
-                0,
-                440,
-                PANEL_HEIGHT + rows.len() as i32 * 40,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            self.place_strip();
+        }
+    }
+    fn configure_button(
+        &mut self,
+        index: usize,
+        icon: HICON,
+        badge: &str,
+        name: &str,
+    ) -> windows::core::Result<HWND> {
+        unsafe {
+            let button = GetDlgItem(Some(self.strip), 200 + index as i32)?;
+            let badge_control = GetDlgItem(Some(button), 1)?;
+            let next_tip = wide(name);
+            SetPropW(
+                button,
+                w!("VibDockUID"),
+                Some(HANDLE(self.uids[index] as usize as *mut _)),
+            )?;
+            SetWindowTextW(button, PCWSTR(next_tip.as_ptr()))?;
+            SetWindowTextW(badge_control, PCWSTR(wide(badge).as_ptr()))?;
+            SendMessageW(
+                button,
+                BM_SETIMAGE,
+                Some(WPARAM(IMAGE_ICON.0 as usize)),
+                Some(LPARAM(icon.0 as isize)),
             );
+            let previous_tip = std::mem::replace(&mut self.tips[index], next_tip);
+            let tool = TTTOOLINFOW {
+                cbSize: TOOLINFO_SIZE,
+                uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+                hwnd: self.strip,
+                uId: button.0 as usize,
+                lpszText: PWSTR(self.tips[index].as_mut_ptr()),
+                ..Default::default()
+            };
+            SendMessageW(
+                self.tooltip,
+                TTM_UPDATETIPTEXTW,
+                None,
+                Some(LPARAM(&tool as *const _ as isize)),
+            );
+            drop(previous_tip);
+            let _ = ShowWindow(button, SW_SHOWNOACTIVATE);
+            let _ = InvalidateRect(Some(button), None, true);
+            Ok(button)
+        }
+    }
+    fn place_strip(&self) {
+        unsafe {
+            // shortcut: primary work area only; add per-monitor placement when requested.
+            let mut work = RECT::default();
+            let area = SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                Some((&mut work as *mut RECT).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+            .ok()
+            .and_then(|_| strip_layout(work, self.rows.len()));
+            if let Some(area) = area {
+                if SetWindowPos(
+                    self.strip,
+                    Some(HWND_TOPMOST),
+                    area.left,
+                    area.top,
+                    area.right - area.left,
+                    STRIP_CELL,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )
+                .is_ok()
+                {
+                    return;
+                }
+            }
+            let _ = ShowWindow(self.strip, SW_HIDE);
         }
     }
 }
 impl Drop for AppIcons {
     fn drop(&mut self) {
         self.clear();
+        unsafe {
+            if !self.tooltip.is_invalid() {
+                let _ = DestroyWindow(self.tooltip);
+            }
+            if !self.strip.is_invalid() {
+                let _ = DestroyWindow(self.strip);
+            }
+        }
     }
 }
 
@@ -1337,6 +1424,254 @@ impl Drop for AppIcons {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    #[ignore = "Bounded native fixture view for project-owned dcc-cua inspection; no live audio"]
+    fn native_strip_render_probe() -> crate::Result<()> {
+        unsafe extern "system" fn probe_owner(
+            window: HWND,
+            message: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
+            match message {
+                OPEN_SETTINGS | UI_COMMAND | UI_MENU | WM_CLOSE => LRESULT(0),
+                _ => DefWindowProcW(window, message, wparam, lparam),
+            }
+        }
+        struct ProbeWindows {
+            instance: HINSTANCE,
+            owner: HWND,
+            owner_class: bool,
+            strip_class: bool,
+        }
+        impl Drop for ProbeWindows {
+            fn drop(&mut self) {
+                unsafe {
+                    if !self.owner.is_invalid() {
+                        let _ = DestroyWindow(self.owner);
+                    }
+                    if self.strip_class {
+                        let _ = UnregisterClassW(STRIP_CLASS, Some(self.instance));
+                    }
+                    if self.owner_class {
+                        let _ = UnregisterClassW(w!("VibDockStripProbeOwner"), Some(self.instance));
+                    }
+                }
+            }
+        }
+        unsafe {
+            let instance = HINSTANCE(GetModuleHandleW(None)?.0);
+            let mut windows = ProbeWindows {
+                instance,
+                owner: HWND::default(),
+                owner_class: false,
+                strip_class: false,
+            };
+            let owner_class = WNDCLASSW {
+                lpfnWndProc: Some(probe_owner),
+                hInstance: instance,
+                lpszClassName: w!("VibDockStripProbeOwner"),
+                ..Default::default()
+            };
+            if RegisterClassW(&owner_class) == 0 {
+                return Err(windows::core::Error::from_win32().into());
+            }
+            windows.owner_class = true;
+            let strip_class = WNDCLASSW {
+                lpfnWndProc: Some(strip_proc),
+                lpszClassName: STRIP_CLASS,
+                hbrBackground: GetSysColorBrush(COLOR_WINDOW),
+                ..owner_class
+            };
+            if RegisterClassW(&strip_class) == 0 {
+                return Err(windows::core::Error::from_win32().into());
+            }
+            windows.strip_class = true;
+            windows.owner = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                owner_class.lpszClassName,
+                w!("VibDock synthetic strip probe; no live app/audio"),
+                WS_OVERLAPPED,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(instance),
+                None,
+            )?;
+            let mut apps = AppIcons::new(windows.owner)?;
+            apps.rows = vec![
+                json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":false}]}),
+                json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":true}]}),
+                json!({"complete":true,"state":"connected","sessions":[{"active":false,"muted":false}]}),
+                json!({"complete":false,"state":"unknown","sessions":[]}),
+            ];
+            apps.uids = vec![2, 3, 4, 5];
+            let mut buttons = vec![];
+            for (index, resource) in [IDI_INFORMATION, IDI_WARNING, IDI_APPLICATION, IDI_ERROR]
+                .into_iter()
+                .enumerate()
+            {
+                let icon = CopyIcon(LoadIconW(None, resource)?)?;
+                apps.icons.push((icon, true));
+                let (badge, playback) = playback_badge(&apps.rows[index]);
+                let name = format!("Synthetic fixture {}: {playback}. No live app/audio; voice unknown. Probe ignores Settings actions.", index + 1);
+                let button = apps.configure_button(index, icon, badge, &name)?;
+                let style = GetWindowLongPtrW(button, GWL_STYLE) as u32;
+                assert_eq!(
+                    style & 0x0f,
+                    0,
+                    "Native push-button semantics must remain enabled"
+                );
+                assert_ne!(style & BS_ICON as u32, 0);
+                let badge_control = GetDlgItem(Some(button), 1)?;
+                assert_ne!(
+                    GetWindowLongPtrW(badge_control, GWL_STYLE) as u32 & WS_DISABLED.0,
+                    0
+                );
+                assert_eq!(
+                    SendMessageW(
+                        button,
+                        BM_GETIMAGE,
+                        Some(WPARAM(IMAGE_ICON.0 as usize)),
+                        None
+                    )
+                    .0,
+                    icon.0 as isize
+                );
+                let mut text = [0u16; 256];
+                let len = GetWindowTextW(button, &mut text) as usize;
+                assert_eq!(String::from_utf16_lossy(&text[..len]), name);
+                buttons.push(json!({"hwnd":button.0 as usize,"name":name}));
+            }
+            assert!(
+                apps.data.is_empty(),
+                "Probe must not add notification-area icons"
+            );
+            let foreground = GetForegroundWindow();
+            apps.place_strip();
+            assert_eq!(GetForegroundWindow(), foreground);
+            assert!(IsWindowVisible(apps.strip).as_bool());
+            assert!(!IsWindowVisible(windows.owner).as_bool());
+            let ex_style = GetWindowLongPtrW(apps.strip, GWL_EXSTYLE) as u32;
+            for flag in [WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST] {
+                assert_ne!(ex_style & flag.0, 0);
+            }
+            let mut work = RECT::default();
+            SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                Some((&mut work as *mut RECT).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )?;
+            let expected = strip_layout(work, apps.rows.len()).unwrap();
+            let mut actual = RECT::default();
+            GetWindowRect(apps.strip, &mut actual)?;
+            assert_eq!(
+                (actual.left, actual.top, actual.right, actual.bottom),
+                (expected.left, expected.top, expected.right, expected.bottom)
+            );
+            for index in 0..apps.rows.len() {
+                let button = GetDlgItem(Some(apps.strip), 200 + index as i32)?;
+                let mut rect = RECT::default();
+                GetWindowRect(button, &mut rect)?;
+                assert!(IsWindowVisible(button).as_bool());
+                assert_eq!(rect.left, actual.left + index as i32 * STRIP_CELL);
+                assert_eq!(
+                    (rect.right - rect.left, rect.bottom - rect.top),
+                    (STRIP_CELL, STRIP_CELL)
+                );
+                assert!(rect.right <= work.right && rect.bottom <= work.bottom);
+            }
+            eprintln!(
+                "VIBDOCK_NATIVE_STRIP_PROBE {}",
+                json!({"pid":std::process::id(),"strip_hwnd":apps.strip.0 as usize,"owner_hwnd":windows.owner.0 as usize,"fixture_only":true,"duration_ms":30_000,"buttons":buttons})
+            );
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut message = MSG::default();
+            while Instant::now() < deadline {
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let strip = apps.strip;
+            drop(apps);
+            assert!(!IsWindow(Some(strip)).as_bool());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn strip_badges_require_complete_known_playback_and_never_infer_voice() {
+        let mut row =
+            json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":false}]});
+        assert_eq!(playback_badge(&row), ("▶", "Playback session active"));
+        row["sessions"][0]["muted"] = json!(true);
+        assert_eq!(playback_badge(&row), ("×", "Playback all muted"));
+        row["sessions"][0] = json!({"active":false,"muted":false});
+        assert_eq!(playback_badge(&row), ("II", "Playback session idle"));
+        row["complete"] = json!(false);
+        assert_eq!(playback_badge(&row).0, "?");
+        row["complete"] = json!(true);
+        row["sessions"][0]["active"] = serde_json::Value::Null;
+        assert_eq!(playback_badge(&row).0, "?");
+        row["state"] = json!("not_connected");
+        row["sessions"] = json!([]);
+        assert_eq!(playback_badge(&row), ("–", "No playback session"));
+        let stale = displayed_rows(&json!({"entries":[row]}), &[], false);
+        assert_eq!(playback_badge(&stale[0]).0, "?");
+    }
+
+    #[test]
+    fn strip_layout_stays_inside_work_area_and_never_takes_focus() {
+        let work = RECT {
+            left: -1920,
+            top: 40,
+            right: 0,
+            bottom: 1080,
+        };
+        let area = strip_layout(work, 12).unwrap();
+        assert_eq!(area.right - area.left, 8 * STRIP_CELL);
+        assert_eq!(area.bottom - area.top, STRIP_CELL);
+        assert!(area.left >= work.left && area.right <= work.right);
+        assert!(area.top >= work.top && area.bottom < work.bottom);
+        assert!(strip_layout(work, 0).is_none());
+        assert!(strip_layout(
+            RECT {
+                right: 40,
+                bottom: 40,
+                ..Default::default()
+            },
+            1
+        )
+        .is_none());
+        for style in [WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW] {
+            assert_ne!(strip_style().0 & style.0, 0);
+        }
+        assert_eq!(strip_style().0 & WS_EX_APPWINDOW.0, 0);
+    }
+
+    #[test]
+    fn notification_text_keeps_null_termination_and_complete_utf16() {
+        assert_eq!(notification_text::<4>("abcdef"), [97, 98, 99, 0]);
+        assert_eq!(notification_text::<3>("a😀"), [97, 0, 0]);
+        assert_eq!(notification_text::<4>("a😀b"), [97, 0xd83d, 0xde00, 0]);
+        assert_eq!(notification_text::<1>("result"), [0]);
+    }
+
+    #[test]
+    fn tooltip_contract_uses_the_sdk_v2_prefix() {
+        assert_eq!(
+            TOOLINFO_SIZE as usize,
+            std::mem::offset_of!(TTTOOLINFOW, lParam) + std::mem::size_of::<LPARAM>()
+        );
+        assert!((TOOLINFO_SIZE as usize) < std::mem::size_of::<TTTOOLINFOW>());
+    }
 
     fn fixture_observation() -> Observation {
         Observation {
