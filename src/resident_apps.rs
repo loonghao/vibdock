@@ -499,7 +499,7 @@ pub(crate) fn decode_icon(value: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::new();
-    for (index, chunk) in value.as_bytes().chunks_exact(4).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<4>().0.iter().enumerate() {
         let mut n = 0u32;
         let mut pad = 0;
         for (position, c) in chunk.iter().enumerate() {
