@@ -61,10 +61,15 @@ service identity proof, Settings-code issuance and authenticated Quit. It captur
 the application's own native view via `NSBitmapImageRep`; this is an AppKit view
 render, not a full-desktop/menu-bar screenshot or physical pointer test. Reports
 must name the source revision, binary hash, OS version, PID and native window.
+The actual root view paints the system window background. Acceptance captures
+the same native view in light and dark appearances and requires opaque,
+distinct backgrounds; evidence images are not post-composited.
 
 Software acceptance distinguishes a deliberately offline saved fixture from the
 actual running bundled VibDock application. The latter must be independently
 observed with a native icon before lifecycle acceptance begins. It verifies
+the expected original teal logo's observed pixels, rather than accepting any
+decodable image as correct branding. It also verifies
 software rows in the panel/menu-bar/Dock menus and expiry-to-Unknown/icon removal.
 Browser checks exercise the real isolated Mac service at desktop and mobile
 widths, pin a genuinely enumerated application, restart the service and verify

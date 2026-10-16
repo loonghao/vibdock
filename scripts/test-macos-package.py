@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline package contracts; stub Mach-O bytes are fixtures, never executed."""
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -110,6 +111,46 @@ class PackageTests(unittest.TestCase):
         path.write_text(json.dumps(hashes))
         with self.assertRaises(ValueError):
             self.package()
+
+    def test_icns_uses_modern_png_slots_with_original_source_hashes(self):
+        brand = self.root / "assets/brand"
+        payload = (brand / "vibdock.icns").read_bytes()
+        expected = {b"ic07": 128, b"ic08": 256, b"ic09": 512, b"ic10": 1024}
+        originals = json.loads((brand / "MACOS-PNG-SHA256.json").read_text())
+        self.assertEqual(set(originals), {"16", "32", "64", "128", "256", "512", "1024"})
+        offset, seen = 8, set()
+        while offset < len(payload):
+            kind, length = struct.unpack_from(">4sI", payload, offset)
+            self.assertIn(kind, expected)
+            self.assertNotIn(kind, seen)
+            png = payload[offset + 8:offset + length]
+            self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(struct.unpack_from(">II", png, 16), (expected[kind], expected[kind]))
+            self.assertEqual(hashlib.sha256(png).hexdigest(), originals[str(expected[kind])])
+            seen.add(kind)
+            offset += length
+        self.assertEqual(offset, len(payload))
+        self.assertEqual(seen, set(expected))
+
+    def test_legacy_small_png_slots_rejected_with_updated_container_hash(self):
+        brand = self.root / "assets/brand"
+        icon = brand / "vibdock.icns"
+        original = icon.read_bytes()
+        first_size = struct.unpack_from(">I", original, 12)[0]
+        png = original[16:8 + first_size]
+        hashes_path = brand / "SHA256.json"
+        hashes = json.loads(hashes_path.read_text())
+        for kind in (b"icp4", b"icp5", b"icp6"):
+            with self.subTest(kind=kind):
+                legacy = kind + struct.pack(">I", len(png) + 8) + png
+                body = legacy + original[8:]
+                changed = b"icns" + struct.pack(">I", len(body) + 8) + body
+                icon.write_bytes(changed)
+                hashes["vibdock.icns"] = hashlib.sha256(changed).hexdigest()
+                hashes_path.write_text(json.dumps(hashes))
+                with self.assertRaisesRegex(ValueError, "Legacy small-icon ICNS"):
+                    self.package()
+                self.assertFalse((self.root / "out").exists())
 
     def test_existing_output_is_preserved(self):
         output = self.root / "out"
