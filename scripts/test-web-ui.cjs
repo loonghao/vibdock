@@ -45,6 +45,7 @@ async function unusedPort() {
       await page.goto(`${origin}/#bootstrap=${code}`, {waitUntil:'networkidle'});
       assert.equal(new URL(page.url()).hash,'','one-use code remained in URL');
       await page.waitForFunction(()=>document.querySelector('#conn').textContent.includes('已授权'));
+      assert((await page.locator('#persistNote').innerText()).includes('后台绑定见上方'),'storage labels contradict the live service');
       const replay=await fetch(`${origin}/api/bootstrap`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
       assert.equal(replay.status,401,'browser code was reusable');
       const storage=await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}));
