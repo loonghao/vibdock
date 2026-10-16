@@ -302,6 +302,10 @@ impl ControlConnection {
     /// Read exactly one framed response, without waiting for EOF or consuming
     /// the next response. Both exchanges share the original wall-clock budget.
     fn exchange(&mut self, request: &str) -> io::Result<(u16, String)> {
+        self.exchange_limited(request, MAX_CHALLENGE_RESPONSE)
+    }
+
+    fn exchange_limited(&mut self, request: &str, limit: usize) -> io::Result<(u16, String)> {
         use std::io::Read;
         let mut unwritten = request.as_bytes();
         while !unwritten.is_empty() {
@@ -354,7 +358,7 @@ impl ControlConnection {
             }
         }
         let length = length
-            .filter(|length| *length <= MAX_CHALLENGE_RESPONSE - head.len())
+            .filter(|length| *length <= limit.saturating_sub(head.len()))
             .ok_or_else(invalid)?;
         let mut body = vec![0; length];
         let mut unread = body.as_mut_slice();
@@ -1833,6 +1837,62 @@ mod tests {
         worker.join().unwrap();
     }
 
+    #[test]
+    fn software_summary_has_a_separate_body_budget_but_keeps_proof_small() {
+        use std::time::Duration;
+        for (size, allowed) in [(12_000, true), (128 * 1024, false)] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let worker = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                fixture_proof(&mut stream, "fixture-admin");
+                let request = fixture_request(&mut stream);
+                assert!(request.starts_with("GET /api/apps/summary "));
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n{}",
+                    "a".repeat(size)
+                );
+                let _ = stream.write_all(response.as_bytes());
+            });
+            let mut connection = ControlConnection::connect(port, Duration::from_secs(2)).unwrap();
+            assert!(connection.prove_instance("fixture-admin").unwrap());
+            let result=connection.exchange_limited("GET /api/apps/summary HTTP/1.1\r\nAuthorization: Bearer fixture-admin\r\nContent-Length: 0\r\n\r\n",128*1024);
+            assert_eq!(result.is_ok(), allowed);
+            worker.join().unwrap();
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = fixture_request(&mut stream);
+            assert!(!request.contains("fixture-admin"));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12000\r\n\r\n");
+        });
+        let mut connection = ControlConnection::connect(port, Duration::from_secs(2)).unwrap();
+        assert!(connection.prove_instance("fixture-admin").is_err());
+        worker.join().unwrap();
+    }
+    #[test]
+    fn software_summary_does_not_reset_the_proof_deadline() {
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_secs(1));
+            fixture_proof(&mut stream, "fixture-admin");
+            fixture_request(&mut stream);
+            std::thread::sleep(Duration::from_millis(2500));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        });
+        let started = Instant::now();
+        let mut connection = ControlConnection::connect(port, Duration::from_secs(3)).unwrap();
+        assert!(connection.prove_instance("fixture-admin").unwrap());
+        assert!(connection.exchange_limited("GET /api/apps/summary HTTP/1.1\r\nAuthorization: Bearer fixture-admin\r\nContent-Length: 0\r\n\r\n",128*1024).is_err());
+        assert!(started.elapsed() < Duration::from_secs(4));
+        worker.join().unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn atomic_state_files_are_private_on_creation_and_replacement() {
@@ -1870,4 +1930,22 @@ mod tests {
         assert!(is_allowed_host(&format!("127.0.0.1:{}", port())));
         assert!(!is_allowed_host("evil.example"));
     }
+}
+
+/// Read only the verified instance's bounded software summary over its proved
+/// socket. The proof keeps its original 8 KiB cap; only this data reply is larger.
+#[cfg(windows)]
+pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
+    let instance = read_instance().ok_or("No service instance")?;
+    let mut connection =
+        ControlConnection::connect(instance.port, std::time::Duration::from_secs(2))?;
+    if !connection.prove_instance(&instance.token)? {
+        return Err("Listener failed instance proof".into());
+    }
+    let request = format!("GET /api/apps/summary HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n", instance.port, instance.token);
+    let (status, body) = connection.exchange_limited(&request, 128 * 1024)?;
+    if status != 200 {
+        return Err("Software status is unavailable".into());
+    }
+    Ok((instance.port, serde_json::from_str(&body)?))
 }

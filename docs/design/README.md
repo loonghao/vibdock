@@ -131,3 +131,12 @@ Authenticated `GET /api/config` includes `hotkey_live` (the service currently ho
 The sequence starts at zero for each service instance and advances after each handled hotkey action. A successful audio readback sets `state` to `LIVE` or `MUTED`; failure clears `state` and sets `error`. Registration and saving alone do not create a successful action. Each queued press is handled separately; Windows `MOD_NOREPEAT` suppresses held-key repeats. This status is a completed action result, not a continuous meter of changes made by other applications. Clients must reset their event cursor on service restart.
 
 The native adapter remains Windows-only. Physical Ulanzi identity, hold-to-talk, desktop overlay, and application-specific voice controls require separate implementation and host acceptance.
+
+## Persisted software observation
+
+The authenticated Software page now supports the read-only Windows resident
+software increment: pin/remove current observed playback locations, preserve pins
+across restart, and show native resource icons with explicitly partial/unknown
+status. It does not activate the planned voice integrations above. See
+[resident software contract](../resident-software.md) for API, lifecycle, privacy
+and real-device evidence limits.

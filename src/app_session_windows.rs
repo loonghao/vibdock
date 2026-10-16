@@ -56,6 +56,60 @@ unsafe fn co_string(raw: windows::core::PWSTR) -> Result<String> {
     Ok(value?)
 }
 
+// Resident scans never share the CLI's intentionally unbounded string and
+// enumeration paths. These are hard ceilings, even if a caller supplies MAX.
+const RESIDENT_ENDPOINT_LIMIT: usize = 8;
+const RESIDENT_SESSION_LIMIT: usize = 24;
+const RESIDENT_ID_LIMIT: usize = 1024;
+
+fn bounded_identifier(units: &[u16]) -> Result<String> {
+    if units.len() > RESIDENT_ID_LIMIT {
+        return Err("Playback identifier exceeds the resident read budget.".into());
+    }
+    let value = String::from_utf16(units)?;
+    if value.len() > RESIDENT_ID_LIMIT || value.chars().any(char::is_control) {
+        return Err("Playback identifier is not a bounded printable string.".into());
+    }
+    Ok(value)
+}
+
+/// Reads at most the identifier budget plus a terminator, freeing the COM
+/// allocation on success and every failure. Native API allocation is owned by
+/// Windows; no unbounded Rust conversion/copy or display-name request occurs.
+unsafe fn co_identifier_bounded(raw: windows::core::PWSTR) -> Result<String> {
+    if raw.is_null() {
+        return Ok(String::new());
+    }
+    let length = (0..=RESIDENT_ID_LIMIT).find(|index| *raw.0.add(*index) == 0);
+    let result = match length {
+        Some(length) => bounded_identifier(std::slice::from_raw_parts(raw.0, length)),
+        None => Err("Playback identifier exceeds the resident read budget.".into()),
+    };
+    CoTaskMemFree(Some(raw.0.cast()));
+    result
+}
+
+/// Resolve only among the bounded active render enumeration. Returning its
+/// device directly avoids a second unrestricted lookup or fallback endpoint.
+unsafe fn render_endpoint_bounded(manager: &IMMDeviceEnumerator, id: &str) -> Result<IMMDevice> {
+    if id.is_empty() || id.len() > RESIDENT_ID_LIMIT || id.chars().any(char::is_control) {
+        return Err("Invalid resident playback endpoint identifier.".into());
+    }
+    let render = manager.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
+    let count = (render.GetCount()? as usize).min(RESIDENT_ENDPOINT_LIMIT);
+    let mut found = None;
+    for index in 0..count {
+        let device = render.Item(index as u32)?;
+        if co_identifier_bounded(device.GetId()?)? == id {
+            if found.is_some() || device.GetState()? != DEVICE_STATE_ACTIVE {
+                return Err("Playback endpoint is ambiguous or no longer active.".into());
+            }
+            found = Some(device);
+        }
+    }
+    found.ok_or_else(|| "Endpoint is absent from the bounded active playback scan.".into())
+}
+
 /// Reads one device's endpoint id.
 unsafe fn device_id(device: &IMMDevice) -> Result<String> {
     let raw = device.GetId()?;
@@ -112,14 +166,46 @@ unsafe fn observe(
     control: &IAudioSessionControl2,
     endpoint_id: &str,
 ) -> Result<Option<AppSession>> {
-    let instance_id = co_string(control.GetSessionInstanceIdentifier()?)?;
+    observe_inner(control, endpoint_id, false)
+}
+
+/// Resident observations deliberately omit display names. The resident module
+/// obtains its label from the verified process image and never uses this slot.
+unsafe fn observe_inner(
+    control: &IAudioSessionControl2,
+    endpoint_id: &str,
+    bounded: bool,
+) -> Result<Option<AppSession>> {
+    let raw = control.GetSessionInstanceIdentifier()?;
+    let instance_id = if bounded {
+        co_identifier_bounded(raw)?
+    } else {
+        co_string(raw)?
+    };
     if instance_id.is_empty() {
         // A session with no instance identifier cannot be addressed later, so
         // it is skipped rather than surfaced as a selectable target.
         return Ok(None);
     }
-    let pid = process_identity(control);
-    let display_name = co_string(control.GetDisplayName()?)?;
+    let pid = if bounded {
+        let mut pid = 0;
+        let status = (control.vtable().GetProcessId)(control.as_raw(), &mut pid);
+        let system = (control.vtable().IsSystemSoundsSession)(control.as_raw());
+        // The projected GetProcessId Result discards the successful
+        // AUDCLNT_S_NO_SINGLE_PROCESS warning. Only exact S_OK is ownership.
+        if status.0 == 0 && system.0 == 1 && pid != 0 {
+            ProcessIdentity::Known(pid)
+        } else {
+            ProcessIdentity::Unknown
+        }
+    } else {
+        process_identity(control)
+    };
+    let display_name = if bounded {
+        String::new()
+    } else {
+        co_string(control.GetDisplayName()?)?
+    };
     let state = control.GetState()?;
     let volume: ISimpleAudioVolume = control.cast()?;
     Ok(Some(AppSession {
@@ -131,7 +217,7 @@ unsafe fn observe(
                 ProcessIdentity::Unknown => 0,
             },
         },
-        display_name: if display_name.is_empty() {
+        display_name: if !bounded && display_name.is_empty() {
             // An empty name is unhelpful in a selection list, but inventing a
             // name from the process would invite exactly the name-similarity
             // grouping this module must not do.
@@ -207,17 +293,50 @@ pub(crate) unsafe fn list(
     manager: &IMMDeviceEnumerator,
     endpoint_id: &str,
 ) -> Result<(Vec<AppSession>, Vec<SkippedSessionEntry>)> {
-    let device = render_endpoint(manager, endpoint_id)?;
+    let (sessions, skipped, _) = list_inner(manager, endpoint_id, None)?;
+    Ok((sessions, skipped))
+}
+
+/// Bounded read-only enumeration for the resident observation helper.
+pub(crate) unsafe fn list_bounded(
+    manager: &IMMDeviceEnumerator,
+    endpoint_id: &str,
+    limit: usize,
+) -> Result<(Vec<AppSession>, Vec<SkippedSessionEntry>, usize)> {
+    list_inner(
+        manager,
+        endpoint_id,
+        Some(limit.min(RESIDENT_SESSION_LIMIT)),
+    )
+}
+
+unsafe fn list_inner(
+    manager: &IMMDeviceEnumerator,
+    endpoint_id: &str,
+    limit: Option<usize>,
+) -> Result<(Vec<AppSession>, Vec<SkippedSessionEntry>, usize)> {
+    let device = if limit.is_some() {
+        render_endpoint_bounded(manager, endpoint_id)?
+    } else {
+        render_endpoint(manager, endpoint_id)?
+    };
     let manager2: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
     let enumerator = manager2.GetSessionEnumerator()?;
     let mut sessions = Vec::new();
     let mut skipped = Vec::new();
-    for index in 0..enumerator.GetCount()? {
+    let count = usize::try_from(enumerator.GetCount()?).map_err(|_| "Invalid session count")?;
+    let taken = count.min(limit.unwrap_or(usize::MAX));
+    for index in 0..taken as i32 {
         let control: IAudioSessionControl = enumerator.GetSession(index)?;
         let control2: IAudioSessionControl2 = control.cast()?;
         // Both arms skip for the same safety reason — neither can be acted on —
         // but they are recorded separately because only one is a fault.
-        let reason = match observe(&control2, endpoint_id) {
+        let observed = if limit.is_some() {
+            observe_inner(&control2, endpoint_id, true)
+        } else {
+            observe(&control2, endpoint_id)
+        };
+        let reason = match observed {
             Ok(Some(session)) => {
                 sessions.push(session);
                 continue;
@@ -227,7 +346,7 @@ pub(crate) unsafe fn list(
         };
         skipped.push(SkippedSessionEntry { index, reason });
     }
-    Ok((sessions, skipped))
+    Ok((sessions, skipped, count - taken))
 }
 
 /// Finds the live session matching `identity`, or reports why it is gone.
@@ -562,6 +681,16 @@ fn readback_error(action: SessionAction, written: Option<bool>, cause: &str) -> 
 /// output devices, and offering capture endpoints here would invite pointing
 /// playback control at a microphone.
 pub(crate) fn render_endpoints() -> Result<Vec<(String, String)>> {
+    render_endpoints_inner(None).map(|(endpoints, _)| endpoints)
+}
+
+/// Resident callers need IDs only. Empty name slots are intentional: do not
+/// fetch a property store/friendly name just to discard it in the observer.
+pub(crate) fn render_endpoints_bounded(limit: usize) -> Result<(Vec<(String, String)>, usize)> {
+    render_endpoints_inner(Some(limit.min(RESIDENT_ENDPOINT_LIMIT)))
+}
+
+fn render_endpoints_inner(limit: Option<usize>) -> Result<(Vec<(String, String)>, usize)> {
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED)
             .ok()
@@ -570,8 +699,14 @@ pub(crate) fn render_endpoints() -> Result<Vec<(String, String)>> {
         let manager: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let devices = manager.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
         let mut found = Vec::new();
-        for i in 0..devices.GetCount()? {
+        let count = devices.GetCount()? as usize;
+        let taken = count.min(limit.unwrap_or(usize::MAX));
+        for i in 0..taken as u32 {
             let device = devices.Item(i)?;
+            if limit.is_some() {
+                found.push((String::new(), co_identifier_bounded(device.GetId()?)?));
+                continue;
+            }
             let store = device.OpenPropertyStore(STGM_READ)?;
             let mut value = store.GetValue(&PKEY_Device_FriendlyName)?;
             let raw = StructuredStorage::PropVariantToStringAlloc(&value);
@@ -579,7 +714,7 @@ pub(crate) fn render_endpoints() -> Result<Vec<(String, String)>> {
             let name = co_string(raw?)?;
             found.push((name, device_id(&device)?));
         }
-        Ok(found)
+        Ok((found, count - taken))
     }
 }
 
@@ -609,6 +744,38 @@ mod tests {
             muted: false,
             volume: 1.0,
             active: true,
+        }
+    }
+
+    #[test]
+    fn resident_identifier_budget_checks_units_bytes_and_invalid_text() {
+        assert_eq!(bounded_identifier(&[b'a' as u16]).unwrap(), "a");
+        assert!(bounded_identifier(&[]).unwrap().is_empty());
+        assert!(bounded_identifier(&[b'a' as u16; RESIDENT_ID_LIMIT]).is_ok());
+        assert!(bounded_identifier(&[b'a' as u16; RESIDENT_ID_LIMIT + 1]).is_err());
+        assert!(bounded_identifier(&[0x4e00; RESIDENT_ID_LIMIT]).is_err());
+        assert!(bounded_identifier(&[0xd800]).is_err());
+        assert!(bounded_identifier(&[b'a' as u16, 0, b'b' as u16]).is_err());
+    }
+
+    #[test]
+    fn resident_com_string_scan_stops_at_the_hard_limit() {
+        unsafe {
+            for terminated in [true, false] {
+                let units = RESIDENT_ID_LIMIT + 1;
+                let raw = CoTaskMemAlloc(units * std::mem::size_of::<u16>()).cast::<u16>();
+                assert!(!raw.is_null());
+                std::slice::from_raw_parts_mut(raw, units).fill(b'a' as u16);
+                if terminated {
+                    *raw.add(RESIDENT_ID_LIMIT) = 0;
+                }
+                // The helper owns and frees the allocation in both cases.
+                let result = co_identifier_bounded(windows::core::PWSTR(raw));
+                assert_eq!(result.is_ok(), terminated);
+                if let Ok(value) = result {
+                    assert_eq!(value.len(), RESIDENT_ID_LIMIT);
+                }
+            }
         }
     }
 
