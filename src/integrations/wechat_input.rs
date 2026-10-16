@@ -1,7 +1,8 @@
 //! WeChat Input (微信输入法 / WeType) voice integration probe.
 //!
 //! This probe is a static declaration. It does not inspect an installed client,
-//! so no result here implies the local environment was examined.
+//! so no result here implies the local environment was examined. Nothing in the
+//! [`Probe`] output may describe the machine it runs on.
 //!
 //! Evidence basis differs from [`crate::integrations::codex::Codex`] in one
 //! important way: no official source could be retrieved for WeChat Input. The
@@ -12,14 +13,12 @@
 //! documentation does not describe. Here there is no documentation at all, so
 //! every capability sits at [`Support::Unknown`].
 //!
-//! Local read-only host inspection is recorded separately and deliberately does
-//! not raise any grade: it confirmed the client is *installed and running*
-//! (WeType 2.1.4.6) and ships voice assets, and it confirmed no listening TCP
-//! port, no named pipe, and no CLI arguments. That establishes the absence of
-//! an obvious local control surface. It does not establish that no control
-//! exists — a private, undocumented interface remains possible — so
-//! [`Support::Unsupported`] is still withheld. See
-//! `docs/integrations/wechat-input.md` for the full evidence record.
+//! A dated, read-only snapshot was taken on one developer host, but it is
+//! historical single-host evidence held in `docs/integrations/wechat-input.md`,
+//! never in this module: it says what that one machine looked like on
+//! 2026-10-15 and cannot be replayed as a result on any other machine. It
+//! carries no grade either way. See that document for the record and for what
+//! it does not establish.
 //!
 //! Grade axis, applied uniformly: with no retrievable official source, nothing
 //! is graded [`Support::Unverified`] (which would claim documentation describes
@@ -36,9 +35,11 @@ const SOURCE: &str = "https://shurufa.weixin.qq.com/";
 
 const NOT_INSPECTED: &str = "no installed-client capability inspection performed";
 
-/// Notes the one fact local inspection did establish, without letting it be
-/// read as capability evidence.
-const HOST_NOTE: &str = "read-only host check confirmed WeType 2.1.4.6 is installed and running with voice assets, and exposed no listening TCP port, named pipe, or CLI switch; a private undocumented interface is not excluded";
+/// States that no local client was examined, without naming any machine,
+/// version, or process: this text reaches every runtime capability report and
+/// must stay true on any host.
+const NO_LOCAL_STATE: &str =
+    "no installed client is detected or described here; this declaration makes no claim about whether WeChat Input is present or running on this machine";
 
 impl Probe for WeChatInput {
     fn integration(&self) -> &'static str {
@@ -49,41 +50,45 @@ impl Probe for WeChatInput {
         let detail = match capability {
             Capability::Show => format!(
                 "{SOURCE} was unreachable and no official-domain documentation described a \
-                 programmatic show or focus API. {HOST_NOTE}. Undocumented, not disproven; \
-                 {NOT_INSPECTED}."
+                 programmatic show or focus API. Undocumented, not disproven; {NOT_INSPECTED}. \
+                 {NO_LOCAL_STATE}."
             ),
             Capability::StartVoice => format!(
-                "Voice entry is user-configurable in the client rather than fixed, so the \
-                 trigger must be read from the user's own settings and never hard-coded. \
+                "A configured trigger must be supplied by the user from their own client \
+                 settings; no trigger may be hard-coded, and no default is asserted here. \
                  {SOURCE} was unreachable and no official source documented a default voice \
-                 shortcut or an external start API. {HOST_NOTE}. Undocumented, not disproven; \
-                 {NOT_INSPECTED}."
+                 shortcut or an external start API, so neither a specific trigger nor \
+                 user-configurability is established by this declaration. Undocumented, not \
+                 disproven; {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::EndVoice => format!(
                 "{SOURCE} was unreachable and no official source documented how an in-progress \
-                 voice session ends, or any external API for ending one. {HOST_NOTE}. \
-                 Undocumented, not disproven; {NOT_INSPECTED}."
+                 voice session ends, or any external API for ending one. Undocumented, not \
+                 disproven; {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::AudioIdentity => format!(
-                "Target audio identity requires live readback from the installed client. {SOURCE} \
-                 was unreachable and no public API is documented; {HOST_NOTE}. {NOT_INSPECTED}."
+                "Target audio identity requires live readback from an installed client. {SOURCE} \
+                 was unreachable and no public API is documented. Undocumented, not disproven; \
+                 {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::InputMute => format!(
                 "Microphone input mute is handled by the device endpoint rather than by this \
                  integration. {SOURCE} was unreachable and a WeType-native input mute is \
-                 undocumented, not disproven. {HOST_NOTE}; {NOT_INSPECTED}."
+                 undocumented, not disproven. {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::AppMute => format!(
                 "{SOURCE} was unreachable and no official source documented an output-mute API \
                  or a dedicated mute shortcut for this client. Undocumented is not absent; a \
                  WeType-native output mute remains unverified rather than unsupported. \
-                 {HOST_NOTE}; {NOT_INSPECTED}."
+                 {NOT_INSPECTED}. {NO_LOCAL_STATE}."
             ),
             Capability::PlaybackSessionMute => format!(
-                "Windows application-playback-session mute is a separate planned adapter, out \
-                 of scope for this integration; {SOURCE} was unreachable and no official source \
-                 described a WeType-native equivalent. Not conflated with any WeType-native mute \
-                 control. {NOT_INSPECTED}."
+                "Windows application-playback-session mute is a separate Windows session CLI \
+                 under native acceptance hold, out of scope for this integration and carrying \
+                 no WeType action integration; {SOURCE} was unreachable and no official source \
+                 described a WeType-native equivalent. Undocumented, not disproven. Not \
+                 conflated with any WeType-native mute control. {NOT_INSPECTED}. \
+                 {NO_LOCAL_STATE}."
             ),
         };
         Finding {
@@ -130,9 +135,8 @@ mod tests {
         }
     }
 
-    /// The local host check excluded an obvious control surface, but that is not
-    /// a disproof of a private one. Unsupported claims a disproof, so it must
-    /// not appear.
+    /// No inspection of a control surface happened, so a private one is not
+    /// disproven. Unsupported claims a disproof, so it must not appear.
     #[test]
     fn absent_control_surface_is_unknown_not_unsupported() {
         let report = inspect(&WeChatInput);
@@ -155,10 +159,11 @@ mod tests {
         );
     }
 
-    /// The integration must not ship a hard-coded wake-up shortcut: the trigger
-    /// is user-configured, so the detail must say to read it from the client.
+    /// The integration must not ship a hard-coded wake-up shortcut, and must not
+    /// assert user-configurability as a verified fact: no retrieved
+    /// documentation and no inspected settings established that here.
     #[test]
-    fn start_voice_requires_reading_the_configured_trigger() {
+    fn start_voice_requires_a_user_supplied_trigger_and_claims_no_default() {
         let report = inspect(&WeChatInput);
         let finding = report
             .findings
@@ -166,13 +171,23 @@ mod tests {
             .find(|f| f.capability == Capability::StartVoice)
             .unwrap();
         assert!(
-            finding.detail.contains("never hard-coded"),
+            finding.detail.contains("no trigger may be hard-coded"),
             "must refuse to hard-code a voice trigger"
         );
         assert!(
-            finding.detail.contains("user's own settings"),
-            "must direct the caller to the configured shortcut"
+            finding
+                .detail
+                .contains("supplied by the user from their own client settings"),
+            "must direct the caller to supply the configured trigger"
         );
+        assert!(
+            finding.detail.contains("neither a specific trigger")
+                && finding
+                    .detail
+                    .contains("user-configurability is established"),
+            "must not present user-configurability as an established fact"
+        );
+        assert_eq!(finding.support, Support::Unknown);
     }
 
     /// Every detail must carry the unreachable-source note so the gap is
@@ -206,7 +221,9 @@ mod tests {
             .unwrap()
             .detail
             .clone();
-        assert!(playback.contains("separate planned adapter"));
+        assert!(playback.contains("separate Windows session CLI"));
+        assert!(playback.contains("no WeType action integration"));
+        assert!(!playback.contains("planned adapter"));
         assert!(app_mute.contains("WeType-native"));
     }
 
@@ -227,6 +244,80 @@ mod tests {
                     finding.capability.as_str()
                 );
             }
+        }
+    }
+
+    /// Runtime detail is machine-independent. A dated single-host snapshot is
+    /// documentation, not detection: it must never appear in capability output,
+    /// because the same text is emitted on every machine that runs this binary.
+    #[test]
+    fn runtime_detail_carries_no_machine_specific_host_facts() {
+        let report = inspect(&WeChatInput);
+        for finding in &report.findings {
+            let lower = finding.detail.to_lowercase();
+            for phrase in [
+                "2.1.4.6",
+                "is installed",
+                "installed and running",
+                "running with voice assets",
+                "no listening tcp",
+                "named pipe",
+                "cli switch",
+                "wetype_service",
+                "wetype_server",
+                "host check",
+            ] {
+                assert!(
+                    !lower.contains(phrase),
+                    "{} leaks a single-host snapshot fact into runtime output: {phrase}",
+                    finding.capability.as_str()
+                );
+            }
+        }
+    }
+
+    /// Every detail states plainly that no client was detected, so a reader of a
+    /// runtime report cannot mistake the declaration for a host check.
+    #[test]
+    fn runtime_detail_states_no_client_was_detected() {
+        let report = inspect(&WeChatInput);
+        for finding in &report.findings {
+            assert!(
+                finding.detail.contains(NO_LOCAL_STATE),
+                "{} must state that no installed client is detected here",
+                finding.capability.as_str()
+            );
+        }
+    }
+
+    /// Unknown must be truthful: the detail may say why evidence is missing but
+    /// must not assert the capability is absent, unsupported, or disproven.
+    #[test]
+    fn unknown_details_are_truthful_about_missing_evidence() {
+        let report = inspect(&WeChatInput);
+        for finding in &report.findings {
+            assert_eq!(finding.support, Support::Unknown);
+            let lower = finding.detail.to_lowercase();
+            for phrase in [
+                "is not supported",
+                "does not support",
+                "no control surface exists",
+                "proves there is no",
+                "confirms there is no",
+            ] {
+                assert!(
+                    !lower.contains(phrase),
+                    "{} asserts an absence that was never inspected",
+                    finding.capability.as_str()
+                );
+            }
+            assert!(
+                lower.contains("undocumented, not disproven")
+                    || lower.contains("undocumented is not absent")
+                    || lower.contains("neither a specific trigger"),
+                "{} must say the gap is missing evidence, not disproof",
+                finding.capability.as_str()
+            );
         }
     }
 }
