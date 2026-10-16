@@ -425,7 +425,7 @@ pub(crate) fn browser_code(instance: &Instance) -> Result<String> {
     Ok(code.to_owned())
 }
 
-/// True when something is accepting TCP connections on this loopback port.
+/// True when something accepts TCP on the IPv4 address the service binds.
 ///
 /// Only used to detect that a port is occupied by a foreign process, never as
 /// proof that our service is running — see [`instance_answers`].
@@ -434,12 +434,6 @@ pub(crate) fn probe_port(port: u16) -> bool {
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
         std::time::Duration::from_millis(150),
     )
-    .or_else(|_| {
-        std::net::TcpStream::connect_timeout(
-            &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
-            std::time::Duration::from_millis(150),
-        )
-    })
     .is_ok()
 }
 
@@ -1695,6 +1689,19 @@ mod tests {
             body.len()
         )
         .unwrap();
+    }
+
+    #[test]
+    fn ipv6_only_listeners_do_not_block_ipv4_startup_or_shutdown() {
+        let ipv4 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = ipv4.local_addr().unwrap().port();
+        let Ok(ipv6) = std::net::TcpListener::bind(("::1", port)) else {
+            return; // IPv6 is optional; the actual service always binds IPv4.
+        };
+        ipv6.set_nonblocking(true).unwrap();
+        drop(ipv4);
+        assert!(!probe_port(port));
+        assert_eq!(ipv6.accept().unwrap_err().kind(), io::ErrorKind::WouldBlock);
     }
 
     #[test]
