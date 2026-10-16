@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import socket
 import struct
@@ -24,6 +25,21 @@ REQUIRED = ["service_ownership_proved", "native_panel_visible", "floating_panel"
             "settings_handoff_issued", "authenticated_shutdown_and_port_released",
             "native_view_rendered", "native_view_png_written", "native_resources_released",
             "second_launcher_exited", "owner_ipc_reopen_restores"]
+
+
+def diagnostic_text(value):
+    # This subprocess uses fresh synthetic state only. Still remove URLs,
+    # capabilities and filesystem paths before publishing bounded diagnostics.
+    value = re.sub(r"https?://[^\s\"']+", "<url>", value)
+    value = re.sub(r"[A-Fa-f0-9]{24,}", "<redacted>", value)
+    value = re.sub(r"(?:[A-Za-z]:)?/[^\s\"']+", "<path>", value)
+    return value[:2048]
+
+
+def port_is_closed(port):
+    with socket.socket() as probe:
+        probe.settimeout(0.3)
+        return probe.connect_ex(("127.0.0.1", port)) != 0
 
 
 def run(app, evidence, system_quit=False):
@@ -43,7 +59,10 @@ def run(app, evidence, system_quit=False):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    env = dict(os.environ, LOCALAPPDATA=str(state), VIBDOCK_PORT=str(port),
+    # Python and Darwin Rust have different fallback temporary roots when
+    # TMPDIR is absent. Give the child the exact parent we just selected;
+    # the launcher still validates canonical containment and a fresh record.
+    env = dict(os.environ, TMPDIR=str(state.parent), LOCALAPPDATA=str(state), VIBDOCK_PORT=str(port),
                VIBDOCK_NATIVE_ACCEPTANCE="1", VIBDOCK_NATIVE_ACCEPTANCE_IMAGE=str(image),
                VIBDOCK_OVERLAY="0",
                VIBDOCK_NATIVE_ACCEPTANCE_SYSTEM_QUIT="1" if system_quit else "0")
@@ -60,7 +79,14 @@ def run(app, evidence, system_quit=False):
                                 timeout=40, check=False, text=True)
         reports = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
         if len(reports) != 1:
-            raise RuntimeError("Native entry did not emit one redacted acceptance report")
+            diagnostic = {"passed": False, "stage": "native-entry-report",
+                          "launcherReturnCode": result.returncode,
+                          "stderr": diagnostic_text(result.stderr),
+                          "stdoutBytes": len(result.stdout.encode()),
+                          "serviceRecordPresent": (state / "VibDock/service.json").exists(),
+                          "privatePortClosed": port_is_closed(port)}
+            (evidence / f"report{suffix}.json").write_text(json.dumps(diagnostic, indent=2) + "\n")
+            raise RuntimeError(f"Native entry did not emit an acceptance report (exit {result.returncode}); inspect redacted report")
         report = reports[0]
         lock_path = state / "VibDock/macos-launcher.lock"
         # This local-only read is a Show capability, never a service token.
@@ -106,9 +132,15 @@ def run(app, evidence, system_quit=False):
     finally:
         # Recovery addresses only this isolated service through the existing
         # proof protocol. Never use killall, a process-name match, or a token log.
-        stop = subprocess.run([str(cli), "service-stop"], env=env, timeout=8,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if stop.returncode != 0 or (state / "VibDock/service.json").exists():
+        marker = state / "VibDock/service.json"
+        if marker.exists():
+            stop = subprocess.run([str(cli), "service-stop"], env=env, timeout=8,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            if stop.returncode != 0:
+                raise RuntimeError("Isolated service cleanup unconfirmed; private test state retained")
+        # An already successful authenticated Quit has no service left to stop.
+        # Absence alone is insufficient: the isolated listening port must close.
+        if marker.exists() or not port_is_closed(port):
             raise RuntimeError("Isolated service cleanup unconfirmed; private test state retained")
         shutil.rmtree(state)
 
