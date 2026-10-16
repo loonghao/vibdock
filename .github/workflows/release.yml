@@ -77,7 +77,7 @@ jobs:
         run: |
           # Windows target packages vibdock.exe + vibdock-launcher.exe + README.md,
           # fails on any missing artifact, and verifies the console/GUI subsystems.
-          # Unix targets package the CLI entry only; the launcher is Windows-only.
+          # Linux packages the CLI only; macOS uses the native .app step below.
           ./scripts/package-release.ps1 `
             -Tag $env:RELEASE_TAG `
             -Target $env:RELEASE_TARGET `

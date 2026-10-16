@@ -256,6 +256,7 @@ struct DelegateState {
     system_termination: Cell<bool>,
     cleaned: Cell<bool>,
     timer: OnceCell<Retained<NSTimer>>,
+    system_quit_timer: OnceCell<Retained<NSTimer>>,
 }
 
 define_class!(
@@ -345,6 +346,16 @@ define_class!(
         fn timer_fired(&self, _timer: &NSTimer) {
             self.tick();
         }
+
+        #[unsafe(method(acceptanceSystemQuit:))]
+        fn acceptance_system_quit(&self, _timer: &NSTimer) {
+            if self.ivars().system_quit_acceptance && !self.ivars().stopped.get() {
+                self.check("system_termination_trigger_deferred", true);
+                // This is a separate callback: the repeating poll timer must
+                // be free to drain replies in TerminateLater's modal loop.
+                NSApplication::sharedApplication(self.mtm()).terminate(None);
+            }
+        }
     }
 );
 
@@ -376,6 +387,7 @@ impl ResidentDelegate {
             system_termination: Cell::new(false),
             cleaned: Cell::new(false),
             timer: OnceCell::new(),
+            system_quit_timer: OnceCell::new(),
         });
         // SAFETY: NSObject's designated initializer has this signature.
         Ok(unsafe { msg_send![super(this), init] })
@@ -628,15 +640,37 @@ impl ResidentDelegate {
             2 => {
                 self.ivars().stage.set(3);
                 if self.ivars().system_quit_acceptance {
-                    // Exercise AppKit's genuine TerminateLater/modal callback
-                    // path. Its successful true reply exits rather than returns.
-                    NSApplication::sharedApplication(self.mtm()).terminate(None);
+                    if let Err(error) = self.schedule_system_quit() {
+                        self.fail_acceptance(&error.to_string());
+                    }
                 } else if let Some(ui) = self.ivars().ui.get() {
                     ui.dock_menu.performActionForItemAtIndex(MENU_QUIT);
                 }
             }
             _ => {}
         }
+    }
+
+    fn schedule_system_quit(&self) -> crate::Result<()> {
+        // Never enter terminate() from the service poll timer: a timer cannot
+        // refire while its callback is inside AppKit's nested modal run loop.
+        // SAFETY: The selector takes an NSTimer sender and runs on the main
+        // thread. Retain/invalidate this one-shot alongside the polling timer.
+        let timer = unsafe {
+            NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
+                0.001,
+                self,
+                sel!(acceptanceSystemQuit:),
+                None,
+                false,
+            )
+        };
+        self.ivars()
+            .system_quit_timer
+            .set(timer.clone())
+            .map_err(|_| "Native system Quit was already scheduled.")?;
+        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        Ok(())
     }
 
     fn exercise_widgets(&self) -> crate::Result<()> {
@@ -768,6 +802,9 @@ impl ResidentDelegate {
             return;
         }
         if let Some(timer) = self.ivars().timer.get() {
+            timer.invalidate();
+        }
+        if let Some(timer) = self.ivars().system_quit_timer.get() {
             timer.invalidate();
         }
         if let Some(ui) = self.ivars().ui.get() {
