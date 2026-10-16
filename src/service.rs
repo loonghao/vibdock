@@ -906,6 +906,24 @@ pub(crate) fn validate_patch(body: &str) -> std::result::Result<Patch, &'static 
     Ok(patch)
 }
 
+/// Read only the verified instance's bounded software summary over its proved
+/// socket. The proof keeps its original 8 KiB cap; only this data reply is larger.
+#[cfg(windows)]
+pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
+    let instance = read_instance().ok_or("No service instance")?;
+    let mut connection =
+        ControlConnection::connect(instance.port, std::time::Duration::from_secs(2))?;
+    if !connection.prove_instance(&instance.token)? {
+        return Err("Listener failed instance proof".into());
+    }
+    let request = format!("GET /api/apps/summary HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n", instance.port, instance.token);
+    let (status, body) = connection.exchange_limited(&request, 128 * 1024)?;
+    if status != 200 {
+        return Err("Software status is unavailable".into());
+    }
+    Ok((instance.port, serde_json::from_str(&body)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1930,22 +1948,4 @@ mod tests {
         assert!(is_allowed_host(&format!("127.0.0.1:{}", port())));
         assert!(!is_allowed_host("evil.example"));
     }
-}
-
-/// Read only the verified instance's bounded software summary over its proved
-/// socket. The proof keeps its original 8 KiB cap; only this data reply is larger.
-#[cfg(windows)]
-pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
-    let instance = read_instance().ok_or("No service instance")?;
-    let mut connection =
-        ControlConnection::connect(instance.port, std::time::Duration::from_secs(2))?;
-    if !connection.prove_instance(&instance.token)? {
-        return Err("Listener failed instance proof".into());
-    }
-    let request = format!("GET /api/apps/summary HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n", instance.port, instance.token);
-    let (status, body) = connection.exchange_limited(&request, 128 * 1024)?;
-    if status != 200 {
-        return Err("Software status is unavailable".into());
-    }
-    Ok((instance.port, serde_json::from_str(&body)?))
 }
