@@ -76,6 +76,7 @@ impl Drop for TraySingleton {
 /// text, messages, screenshots, or notification tooltips.
 struct Observation {
     port: Option<u16>,
+    apps: serde_json::Value,
     checked: Instant,
 }
 struct Poller {
@@ -91,10 +92,14 @@ impl Poller {
             .name("desktop-status".into())
             .spawn(move || {
                 while !worker_stop.load(Ordering::Relaxed) {
-                    let port = service::live_instance().map(|instance| instance.port);
+                    let (port, apps) = match service::resident_app_view() {
+                        Ok((port, apps)) => (Some(port), apps),
+                        Err(_) => (None, serde_json::Value::Null),
+                    };
                     if matches!(
                         sender.try_send(Observation {
                             port,
+                            apps,
                             checked: Instant::now()
                         }),
                         Err(mpsc::TrySendError::Disconnected(_))
@@ -121,7 +126,7 @@ impl Poller {
 impl Drop for Poller {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // Discovery has a 700 ms total deadline; sleeping checks stop every 100 ms.
+        // Proof + read-only summary has a 2 second total deadline; sleeping checks stop every 100 ms.
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -205,7 +210,7 @@ pub fn run() -> crate::Result<()> {
                 STATUS_LABEL,
                 false,
             )?;
-            child(window, instance, "STATIC", "App controls: unavailable (not verified).\nRight-click for settings. Closing this panel keeps VibDock running.", 20, 94, 390, 50, 12, false)?;
+            child(window, instance, "STATIC", "Read-only software entries; pin them in Settings.\nPlayback activity does not prove microphone or voice state.", 20, 94, 390, 50, 12, false)?;
             child(
                 window,
                 instance,
@@ -230,6 +235,39 @@ pub fn run() -> crate::Result<()> {
                 MENU_HIDE as i32,
                 true,
             )?;
+            for index in 0..8 {
+                child(
+                    window,
+                    instance,
+                    "STATIC",
+                    "",
+                    20,
+                    210 + index * 40,
+                    32,
+                    32,
+                    200 + index * 2,
+                    false,
+                )?;
+                if let Ok(icon) = GetDlgItem(Some(window), 200 + index * 2) {
+                    SetWindowLongPtrW(
+                        icon,
+                        GWL_STYLE,
+                        (WS_CHILD | WINDOW_STYLE(SS_ICON)).0 as isize,
+                    );
+                }
+                child(
+                    window,
+                    instance,
+                    "STATIC",
+                    "",
+                    62,
+                    210 + index * 40,
+                    345,
+                    36,
+                    201 + index * 2,
+                    false,
+                )?;
+            }
             add_icon(window)?;
             if SetTimer(Some(window), TIMER, 250, None) == 0 {
                 return Err(windows::core::Error::from_win32().into());
@@ -420,6 +458,7 @@ fn command(window: HWND, id: u32) {
 fn message_loop(window: HWND, receiver: mpsc::Receiver<Observation>) -> crate::Result<()> {
     let mut observation: Option<Observation> = None;
     let mut shown = String::new();
+    let mut apps = AppIcons::new(window);
     unsafe {
         let mut message = MSG::default();
         loop {
@@ -437,6 +476,12 @@ fn message_loop(window: HWND, receiver: mpsc::Receiver<Observation>) -> crate::R
                     .filter(|value| value.checked.elapsed() < Duration::from_secs(4))
                     .and_then(|value| value.port);
                 let text = match port { Some(port) => format!("Service: connected (verified, port {port})\nAudio action / app voice state: not verified here"), None => "Service: unavailable / unknown\nNo current instance proof; audio state is unknown".into() };
+                let fresh = observation.as_ref().is_some_and(|v| {
+                    v.checked.elapsed() < Duration::from_secs(4) && v.port.is_some()
+                });
+                if let Some(current) = observation.as_ref() {
+                    apps.update(&current.apps, fresh);
+                }
                 if text != shown {
                     if let Ok(label) = GetDlgItem(Some(window), STATUS_LABEL) {
                         let value = wide(&text);
@@ -501,5 +546,152 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         _ => DefWindowProcW(window, message, wparam, lparam),
+    }
+}
+
+// Each pinned entry has its own notification-area icon. Clicking any entry
+// restores this one panel; this read-only increment has no audio action target.
+struct AppIcons {
+    window: HWND,
+    key: String,
+    icons: Vec<(HICON, bool)>,
+    data: Vec<NOTIFYICONDATAW>,
+    rows: Vec<serde_json::Value>,
+}
+impl AppIcons {
+    fn new(window: HWND) -> Self {
+        Self {
+            window,
+            key: String::new(),
+            icons: vec![],
+            data: vec![],
+            rows: vec![],
+        }
+    }
+    fn clear(&mut self) {
+        unsafe {
+            for data in &self.data {
+                let _ = Shell_NotifyIconW(NIM_DELETE, data);
+            }
+            self.data.clear();
+            for index in 0..8 {
+                if let Ok(child) = GetDlgItem(Some(self.window), 200 + index * 2) {
+                    SendMessageW(child, STM_SETICON, Some(WPARAM(0)), Some(LPARAM(0)));
+                }
+            }
+            for (icon, owned) in self.icons.drain(..) {
+                if owned {
+                    let _ = DestroyIcon(icon);
+                }
+            }
+        }
+    }
+    fn update(&mut self, value: &serde_json::Value, fresh: bool) {
+        unsafe {
+            if let Some(rows) = value["entries"].as_array() {
+                self.rows = rows.iter().take(8).cloned().collect();
+            }
+            let mut rows = self.rows.clone();
+            if !fresh {
+                for row in &mut rows {
+                    row["state"] = serde_json::json!("unknown");
+                    row["playback_label"] = serde_json::json!("Playback state unknown");
+                }
+            }
+            let key = serde_json::to_string(&rows).unwrap_or_default();
+            if self.key == key {
+                // Explorer can restart while the panel is hidden. Failed modify
+                // re-adds only our icons, without spawning another resident entry.
+                for data in &self.data {
+                    if !Shell_NotifyIconW(NIM_MODIFY, data).as_bool() {
+                        let _ = Shell_NotifyIconW(NIM_ADD, data);
+                    }
+                }
+                return;
+            }
+            self.clear();
+            self.key = key;
+            for index in 0..8 {
+                let Some(row) = rows.get(index as usize) else {
+                    for id in [200 + index * 2, 201 + index * 2] {
+                        if let Ok(child) = GetDlgItem(Some(self.window), id) {
+                            let _ = ShowWindow(child, SW_HIDE);
+                        }
+                    }
+                    continue;
+                };
+                let label = row["label"].as_str().unwrap_or("Software");
+                let status = match row["state"].as_str() {
+                    Some("not_connected") => "No playback session",
+                    Some("connected") if row["complete"] != true => "Partial playback observation",
+                    Some("connected") => row["playback_label"]
+                        .as_str()
+                        .unwrap_or("Playback observed"),
+                    _ => "Playback state unknown",
+                };
+                let resource = row["icon_b64"]
+                    .as_str()
+                    .and_then(crate::resident_apps::decode_icon);
+                let created = resource.and_then(|bytes| {
+                    let payload = &bytes[22..];
+                    // presbits must be DWORD-aligned; the ICO payload at offset
+                    // 22 is not. Copy into aligned storage without padding the
+                    // byte length passed to the decoder.
+                    let mut aligned = vec![0u32; payload.len().div_ceil(4)];
+                    let data = std::slice::from_raw_parts_mut(
+                        aligned.as_mut_ptr().cast::<u8>(),
+                        payload.len(),
+                    );
+                    data.copy_from_slice(payload);
+                    CreateIconFromResourceEx(data, true, 0x00030000, 32, 32, IMAGE_FLAGS(0)).ok()
+                });
+                let owned = created.is_some();
+                let icon =
+                    created.unwrap_or_else(|| LoadIconW(None, IDI_APPLICATION).unwrap_or_default());
+                if let Ok(child) = GetDlgItem(Some(self.window), 200 + index * 2) {
+                    SendMessageW(
+                        child,
+                        STM_SETICON,
+                        Some(WPARAM(icon.0 as usize)),
+                        Some(LPARAM(0)),
+                    );
+                    let _ = ShowWindow(child, SW_SHOW);
+                }
+                if let Ok(child) = GetDlgItem(Some(self.window), 201 + index * 2) {
+                    let text = wide(&format!("{label}\n{status}"));
+                    let _ = SetWindowTextW(child, PCWSTR(text.as_ptr()));
+                    let _ = ShowWindow(child, SW_SHOW);
+                }
+                let mut data = NOTIFYICONDATAW {
+                    cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                    hWnd: self.window,
+                    uID: 2 + index as u32,
+                    uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+                    uCallbackMessage: TRAY_MESSAGE,
+                    hIcon: icon,
+                    ..Default::default()
+                };
+                let tip = wide(&format!("{label}: {status}"));
+                let count = (tip.len() - 1).min(data.szTip.len() - 1);
+                data.szTip[..count].copy_from_slice(&tip[..count]);
+                let _ = Shell_NotifyIconW(NIM_ADD, &data);
+                self.data.push(data);
+                self.icons.push((icon, owned));
+            }
+            let _ = SetWindowPos(
+                self.window,
+                None,
+                0,
+                0,
+                440,
+                262 + rows.len() as i32 * 40,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+impl Drop for AppIcons {
+    fn drop(&mut self) {
+        self.clear();
     }
 }

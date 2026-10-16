@@ -82,6 +82,10 @@ function Save-Window([IntPtr]$Handle, [string]$Name) {
         $bitmap.Save((Join-Path $evidence $Name), [Drawing.Imaging.ImageFormat]::Png)
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
+# A saved offline fixture validates persistence rendering, not live app audio.
+$fixtureDirectory = Join-Path $state 'VibDock'
+New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
+@{schema_version=1;revision=1;entries=@(@{id=('a' * 64);label='Offline saved fixture';endpoint_id='fixture-output';executable_path='C:\VibDockFixture\NeverExecuted.exe'})} | ConvertTo-Json -Depth 5 -Compress | Set-Content -LiteralPath (Join-Path $fixtureDirectory 'apps.json') -Encoding utf8NoBOM
 $first = $null; $second = $null; $window = [IntPtr]::Zero
 try {
     $first = Start-Entry 'vibdock-launcher.exe'
@@ -93,6 +97,11 @@ try {
     $recordPath = Join-Path $state 'VibDock/service.json'
     # Private comparison only: never print or upload this file/token.
     $initialRecord = [IO.File]::ReadAllText($recordPath)
+    $serviceChildren = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($first.Id)" | Where-Object { $_.Name -eq 'vibdock.exe' } | Select-Object -ExpandProperty ProcessId)
+    if ($serviceChildren.Count -ne 1) { throw 'Expected one owned service child for observer cleanup acceptance' }
+    Wait-Until { (Window-Text ([VibDockNative]::GetDlgItem($window, 201))).Contains('Offline saved fixture') } 'Saved software fixture did not appear'
+    if (-not (Window-Text ([VibDockNative]::GetDlgItem($window, 201))).Contains('unknown')) { throw 'Offline fixture invented live playback evidence' }
+    if ([VibDockNative]::SendMessage([VibDockNative]::GetDlgItem($window, 200), 0x0171, [IntPtr]::Zero, [IntPtr]::Zero) -eq [IntPtr]::Zero) { throw 'Offline software placeholder icon is missing' } # STM_GETICON
     Save-Window $window 'resident-panel.png'
     [void][VibDockNative]::PostMessage($window, 0x007B, $window, [IntPtr](-1)) # WM_CONTEXTMENU
     $menuWindow = [IntPtr]::Zero
@@ -126,7 +135,10 @@ try {
     [void][VibDockNative]::PostMessage($window, 0x0111, [IntPtr]103, [IntPtr]::Zero) # actual Exit command
     if (-not $first.WaitForExit(15000) -or $first.ExitCode -ne 0) { throw 'Exit did not finish cleanly' }
     Wait-Until { -not (Test-Path -LiteralPath $recordPath) } 'Exit left the service instance record behind'
-    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; checks=@('native-window-visible','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
+    foreach ($servicePid in $serviceChildren) {
+        Wait-Until { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$servicePid" | Where-Object { $_.Name -eq 'vibdock.exe' }).Count -eq 0 } 'Exit left a native observation helper running'
+    }
+    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; checks=@('native-window-visible','saved-offline-software-fixture-unknown','placeholder-icon-present','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
     $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
     Write-Output 'PASS: native panel, context menu, singleton restoration, and authenticated Exit. Captures are native PrintWindow renders; physical-device and default-browser acceptance remain separate.'
 } finally {

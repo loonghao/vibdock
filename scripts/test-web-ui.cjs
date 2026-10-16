@@ -17,10 +17,13 @@ async function unusedPort() {
 }
 (async () => {
   fs.mkdirSync(output, {recursive:true});
-  for(const name of ['report.json','homepage-1280.png','homepage-390.png','homepage-320.png','original-logo-light-dark.png'])fs.rmSync(path.join(output,name),{force:true});
+  for(const name of ['report.json','homepage-1280.png','homepage-390.png','homepage-320.png','original-logo-light-dark.png','apps-1280.png','apps-390.png','apps-320.png'])fs.rmSync(path.join(output,name),{force:true});
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibdock-web-'));
   const port = await unusedPort(); const origin = `http://127.0.0.1:${port}`;
   const env = {...process.env, LOCALAPPDATA:root, HOME:root, VIBDOCK_PORT:String(port), VIBDOCK_OVERLAY:'0'};
+  // Saved-state fixture only. This is deliberately not an observed audio session.
+  fs.mkdirSync(path.join(root,'VibDock'));
+  fs.writeFileSync(path.join(root,'VibDock','apps.json'),JSON.stringify({schema_version:1,revision:1,entries:[{id:'a'.repeat(64),label:'离线持久化测试软件 Fixture',endpoint_id:'fixture-output',executable_path:'C:\\VibDockFixture\\NeverExecuted.exe'}]}));
   const child = spawn(binary, ['service-start'], {env, stdio:'ignore'});
   let browser;
   try {
@@ -59,12 +62,29 @@ async function unusedPort() {
       assert.equal(await page.evaluate(()=>localStorage.getItem('vibdock.token')),null);
       assert.deepEqual(external,[],'page loaded external resources'); assert.deepEqual(errors,[]);
       await page.screenshot({path:path.join(output,`homepage-${viewport.width}.png`),fullPage:true});
+      await page.locator('button[data-view=apps]').click();
+      await page.waitForFunction(()=>!document.querySelector('#appReadStatus').textContent.includes('授权后读取'));
+      const apps=await page.evaluate(async()=>{const response=await api('/api/apps');return response.json()});
+      assert.equal(apps.actions_enabled,false,'read-only software view enabled an action');
+      assert.equal(apps.available,false,'Linux fixture invented native playback evidence');
+      assert.equal(apps.entries.length,1);assert.equal(apps.entries[0].state,'unknown');
+      assert((await page.locator('#pinnedApps').innerText()).includes('离线持久化测试软件 Fixture'));
+      assert(!JSON.stringify(apps).includes('executable_path'),'software view leaked executable locations');
+      assert((await page.locator('#appReadStatus').innerText()).length>0);
+      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'software view overflows mobile width');
+      await page.screenshot({path:path.join(output,`apps-${viewport.width}.png`),fullPage:true});
       results.push({viewport,logo:box,externalRequests:0,javascriptErrors:0,mode:await page.locator('#banner').innerText()});
       await page.close();
     }
+    assert.equal((await fetch(`${origin}/api/apps`)).status,401,'software metadata exposed without authentication');
+    assert.equal((await fetch(`${origin}/api/apps`,{headers:{Authorization:`Bearer ${record.token}`,Origin:'https://attacker.invalid'}})).status,403,'software metadata accepted a foreign origin');
     const settings=await browser.newPage();
     await settings.goto(`${origin}/#bootstrap=${await browserCode()}`,{waitUntil:'networkidle'});
     await settings.waitForFunction(()=>document.querySelector('#conn').textContent.includes('已授权'));
+    await settings.locator('button[data-view=apps]').click();
+    await settings.getByRole('button',{name:'移除固定'}).click();
+    await settings.waitForFunction(()=>document.querySelector('#pinnedApps').textContent.includes('尚未固定软件'));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root,'VibDock','apps.json'))).entries.length,0,'remove did not persist');
     const saved=await settings.evaluate(()=>saveToService({device_id:null,hotkey:'Ctrl + Alt + F9'}));
     assert.equal(saved,true,'idle shortcut configuration was not saved');
     await settings.close();
@@ -79,7 +99,7 @@ async function unusedPort() {
     await page.setContent(`<html><body style="margin:0;display:flex">${images.map(({name,source})=>`<section style="background:${name==='light'?'#10233a':'#faf9f6'};width:400px;height:400px;display:grid;place-content:center"><img alt="VibDock ${name}" width="256" height="256" src="data:image/svg+xml;base64,${source}"></section>`).join('')}</body></html>`);
     for(const image of await page.locator('img').all())assert(await image.evaluate(img=>img.complete&&img.naturalWidth===512));
     await page.screenshot({path:path.join(output,'original-logo-light-dark.png')});
-    fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({sourceRevision:process.env.VIBDOCK_SOURCE_REVISION||process.env.GITHUB_SHA||null,binarySHA256:crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),browser:await browser.version(),service:'real isolated process',mockedRoutes:false,oneUseHandoff:true,credentialStorage:false,idleShortcutSavedAndReopened:true,results,exclusions:['native Windows launcher','actual audio/hardware','macOS menu bar']},null,2));
+    fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({sourceRevision:process.env.VIBDOCK_SOURCE_REVISION||process.env.GITHUB_SHA||null,binarySHA256:crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),browser:await browser.version(),service:'real isolated process',mockedRoutes:false,oneUseHandoff:true,credentialStorage:false,idleShortcutSavedAndReopened:true,softwareReadOnlyAndUnsupportedHonest:true,savedSoftwareFixtureReadRemovedAndReopened:true,results,exclusions:['native Windows launcher','actual audio/hardware','macOS menu bar']},null,2));
     console.log(`PASS: real service homepage at 1280/390/320px; original logo bytes, alt text, no external requests or JS errors. Browser ${await browser.version()}`);
   } finally {
     if(browser)await browser.close();

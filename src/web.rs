@@ -768,6 +768,7 @@ fn accept_loop(
     mut activation: Activation,
 ) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
+    let mut apps = crate::resident_apps::Registry::start(token.is_some());
     let mut feedback = ActionFeedback::default();
     // The indicator is opt-in, resolved from the documented environment
     // variable. When it is off, no overlay thread starts and no window is ever
@@ -776,6 +777,7 @@ fn accept_loop(
     let overlay = start_overlay_if_enabled(&crate::feedback::config_from_process_env());
     let mut overlay_cursor = OverlayCursor::default();
     loop {
+        apps.poll();
         // Deliver any hotkey press that arrived since the last request. A
         // Win32 binding only reaches us through this thread's message queue,
         // so without this drain a registered binding could never fire.
@@ -816,7 +818,12 @@ fn accept_loop(
         let method = Method::parse(received.method.as_str());
         let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
-        let browser_scope = path == "/api/config" || path.starts_with("/api/actions/");
+        let browser_scope = path == "/api/config"
+            || path.starts_with("/api/actions/")
+            || matches!(
+                path.as_str(),
+                "/api/apps" | "/api/apps/summary" | "/api/apps/pin" | "/api/apps/remove"
+            );
         let authorized = administrator
             || (browser_scope && browser_auth.accepts(service::request_token(&received.headers)));
         // The body was read on the worker, so public endpoints that take their
@@ -839,6 +846,8 @@ fn accept_loop(
         let (mut code, mut mime, mut payload) =
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
+            } else if path.starts_with("/api/apps") {
+                apps_route(&routed_request, token.is_some(), &mut apps)
             } else if bootstrap {
                 bootstrap_route(
                     &routed_request,
@@ -1731,5 +1740,88 @@ mod tests {
             call(Method::Other, "/", host().as_str(), None, true, "", true).0,
             405
         );
+    }
+}
+
+fn apps_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    apps: &mut crate::resident_apps::Registry,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    let (code, value) = match (request.method, request.path) {
+        (Method::Get, "/api/apps") => (200, apps.view(false)),
+        (Method::Get, "/api/apps/summary") => (200, apps.view(true)),
+        (Method::Post, "/api/apps/pin") => apps.mutate("pin", request.body),
+        (Method::Post, "/api/apps/remove") => apps.mutate("remove", request.body),
+        _ => (404, serde_json::json!({"error":"Unknown app route"})),
+    };
+    (code, "application/json", value.to_string())
+}
+
+#[cfg(test)]
+mod resident_api_tests {
+    use super::*;
+    #[test]
+    fn software_reads_and_writes_require_authentication_and_origin() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
+        for path in [
+            "/api/apps",
+            "/api/apps/summary",
+            "/api/apps/pin",
+            "/api/apps/remove",
+        ] {
+            let mut request = Request {
+                method: if path.ends_with("pin") || path.ends_with("remove") {
+                    Method::Post
+                } else {
+                    Method::Get
+                },
+                path,
+                host: Some(&host),
+                origin: None,
+                authorized: false,
+                body: "{}",
+                body_rejected: false,
+            };
+            assert_eq!(apps_route(&request, true, &mut apps).0, 401);
+            request.authorized = true;
+            request.origin = Some("https://attacker.invalid");
+            assert_eq!(apps_route(&request, true, &mut apps).0, 403);
+            request.origin = None;
+            request.host = Some("attacker.invalid");
+            assert_eq!(apps_route(&request, true, &mut apps).0, 403);
+            request.host = Some(&host);
+            request.body_rejected = true;
+            assert_eq!(apps_route(&request, true, &mut apps).0, 413);
+        }
+    }
+    #[test]
+    fn software_api_has_no_audio_mutation_or_path_routes() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
+        for path in [
+            "/api/apps/mute",
+            "/api/apps/toggle",
+            "/api/apps/icon?path=C:\u{005c}private.exe",
+            "/api/apps/launch",
+        ] {
+            let request = Request {
+                method: Method::Post,
+                path,
+                host: Some(&host),
+                origin: None,
+                authorized: true,
+                body: "{}",
+                body_rejected: false,
+            };
+            assert_eq!(apps_route(&request, true, &mut apps).0, 404);
+        }
     }
 }

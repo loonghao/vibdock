@@ -18,6 +18,9 @@ pub mod feedback;
 mod feedback_windows;
 mod instance_proof;
 mod integrations;
+pub mod resident_apps;
+#[cfg(windows)]
+mod resident_windows;
 
 pub mod hotkey;
 pub mod service;
@@ -725,3 +728,6 @@ mod tests {
         });
     }
 }
+
+#[cfg(windows)]
+mod resident_worker;
