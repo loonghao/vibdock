@@ -20,6 +20,10 @@ $evidence = (Resolve-Path -LiteralPath $EvidenceDirectory).Path
 foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-software-menu.png', 'resident-result-overflow-fixture.png', 'resident-restored.png')) {
     $old = Join-Path $evidence $name
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
+    if ($name.EndsWith('.png')) {
+        $oldBlank = Join-Path $evidence ([IO.Path]::GetFileNameWithoutExtension($name) + '-blank.png')
+        if (Test-Path -LiteralPath $oldBlank) { Remove-Item -LiteralPath $oldBlank -Force }
+    }
 }
 $state = Join-Path ([IO.Path]::GetTempPath()) ('vibdock-desktop-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $state | Out-Null
@@ -69,21 +73,40 @@ function Window-Text([IntPtr]$Handle) {
     return $text.ToString()
 }
 function Save-Window([IntPtr]$Handle, [string]$Name) {
-    $rect = [VibDockNative+Rect]::new()
-    if (-not [VibDockNative]::GetWindowRect($Handle, [ref]$rect)) { throw 'Window rectangle unavailable' }
-    $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
-    if ($width -lt 100 -or $height -lt 30 -or $width -gt 2000 -or $height -gt 1200) { throw 'Unexpected capture bounds' }
-    $bitmap = [Drawing.Bitmap]::new($width, $height)
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    $dc = $graphics.GetHdc()
-    try { if (-not [VibDockNative]::PrintWindow($Handle, $dc, 2)) { throw 'Native PrintWindow failed' } }
-    finally { $graphics.ReleaseHdc($dc) }
-    try {
-        $colors = [Collections.Generic.HashSet[int]]::new()
-        for ($x = 0; $x -lt $width; $x += 3) { for ($y = 0; $y -lt $height; $y += 3) { [void]$colors.Add($bitmap.GetPixel($x,$y).ToArgb()) } }
-        if ($colors.Count -lt 4) { throw 'Native capture is blank; visual acceptance is unavailable' }
-        $bitmap.Save((Join-Path $evidence $Name), [Drawing.Imaging.ImageFormat]::Png)
-    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    # Menu handles/labels can exist before their opening animation has painted.
+    # Retry capture readiness only, never an action or a semantic assertion.
+    $captureWait = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        [uint32]$capturePid = 0
+        [void][VibDockNative]::GetWindowThreadProcessId($Handle, [ref]$capturePid)
+        if ($capturePid -ne $first.Id) { throw 'Capture target no longer belongs to the tested launcher' }
+        if (-not [VibDockNative]::IsWindowVisible($Handle)) { throw 'Capture target is no longer visible' }
+        $rect = [VibDockNative+Rect]::new()
+        if (-not [VibDockNative]::GetWindowRect($Handle, [ref]$rect)) { throw 'Window rectangle unavailable' }
+        $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
+        if ($width -lt 100 -or $height -lt 30 -or $width -gt 2000 -or $height -gt 1200) { throw 'Unexpected capture bounds' }
+        $bitmap = [Drawing.Bitmap]::new($width, $height)
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $dc = $graphics.GetHdc()
+            try { if (-not [VibDockNative]::PrintWindow($Handle, $dc, 2)) { throw 'Native PrintWindow failed' } }
+            finally { $graphics.ReleaseHdc($dc) }
+            $colors = [Collections.Generic.HashSet[int]]::new()
+            for ($x = 0; $x -lt $width; $x += 3) { for ($y = 0; $y -lt $height; $y += 3) { [void]$colors.Add($bitmap.GetPixel($x,$y).ToArgb()) } }
+            if ($colors.Count -ge 4) {
+                $bitmap.Save((Join-Path $evidence $Name), [Drawing.Imaging.ImageFormat]::Png)
+                return
+            }
+            if ($captureWait.ElapsedMilliseconds -ge 5000) {
+                # Preserve the actual failed render for diagnosis; never label
+                # it as a successful capture or weaken the blank-frame guard.
+                $failedName = [IO.Path]::GetFileNameWithoutExtension($Name) + '-blank.png'
+                $bitmap.Save((Join-Path $evidence $failedName), [Drawing.Imaging.ImageFormat]::Png)
+                throw "Native capture stayed blank: $Name; visual acceptance is unavailable"
+            }
+        } finally { $graphics.Dispose(); $bitmap.Dispose() }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
 }
 # A saved offline fixture validates persistence rendering, not live app audio.
 $fixtureDirectory = Join-Path $state 'VibDock'
