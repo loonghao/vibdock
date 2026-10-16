@@ -284,6 +284,11 @@ fn self_brand_colors_match(sampled: usize, teal: usize, red: usize) -> bool {
         && red < sampled.div_ceil(20)
 }
 
+fn presence_disclosure_is_complete(text: &str) -> bool {
+    text.contains("application presence only")
+        && text.contains("Audio, voice and global shortcuts are unavailable.")
+}
+
 impl SoftwareAcceptance {
     fn from_environment(acceptance: bool) -> crate::Result<Option<Self>> {
         if !acceptance {
@@ -1249,8 +1254,7 @@ impl ResidentDelegate {
         );
         self.check(
             "software_presence_only",
-            CAPABILITY_TEXT.contains("application presence only")
-                && CAPABILITY_TEXT.contains("Playback")
+            presence_disclosure_is_complete(CAPABILITY_TEXT)
                 && ui.software_menus.iter().all(|menu| {
                     entries.iter().enumerate().all(|(index, _)| {
                         menu.itemAtIndex(SOFTWARE_MENU_START + index as isize)
@@ -2487,8 +2491,13 @@ mod tests {
             "Service unknown / unavailable"
         );
         assert_eq!(service_text(None, checked), "Service unknown / unavailable");
-        assert!(CAPABILITY_TEXT.contains("application presence only"));
-        assert!(CAPABILITY_TEXT.contains("Audio, voice and global shortcuts are unavailable."));
+        assert!(presence_disclosure_is_complete(CAPABILITY_TEXT));
+        assert!(!presence_disclosure_is_complete(
+            "application presence only"
+        ));
+        assert!(!presence_disclosure_is_complete(
+            "Audio, voice and global shortcuts are unavailable."
+        ));
     }
 
     #[test]
