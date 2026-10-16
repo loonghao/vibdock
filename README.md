@@ -9,9 +9,9 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Pending source changes add authenticated Web configuration, a resident Windows shortcut binding, two executable entry points, and dual-entry packaging. These changes have local integration evidence but are not a new published release. Physical Ulanzi buttons and native launcher/tray interaction still need acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting controls remain planned; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, two executable entry points, and dual-entry packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
 
-**Service acceptance:** Earlier pending builds failed slow-client responsiveness and browser authorization checks. Source candidate `576d1d3` passes local resilience and authorization checks and [hosted CI on Windows, Linux, and macOS](https://github.com/loonghao/vibdock/actions/runs/38701582512). Independent review and complete device and desktop acceptance remain pending. That CI result covers the pinned candidate, not later integration changes. Current review builds are not accepted for unattended use.
+**Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline does not validate the later desktop panel. New desktop candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
 **Desktop status feedback:** The corner status indicator is implemented in source as an opt-in Windows overlay, **off by default**. Enable it by setting `VIBDOCK_OVERLAY=1` (`on`, `true`, and `yes` also work) before starting the service; `VIBDOCK_OVERLAY_CORNER` selects a corner (`bottom-right` default, or `bottom-left`, `top-right`, `top-left`). The window is placed in the taskbar-free work area of the primary monitor; if that work area cannot be read it falls back to the full monitor rectangle, which is **not** taskbar-aware and may let the indicator overlap a taskbar band. It has unit tests for its status contracts and placement but has **not** been accepted against live Windows: no run has verified typing/focus behaviour, multi-monitor placement, or failed-action feedback on a real desktop. The optional breathing border is planned and not implemented.
 
@@ -29,12 +29,12 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 
 This workflow requires a build containing both `vibdock.exe` and `vibdock-launcher.exe`; the published v0.1.0 download does not contain the launcher.
 
-1. Extract both executables into the same directory. Start `vibdock-launcher.exe` to open the local configuration page. Native double-click and tray interaction are implemented but still await desktop acceptance.
+1. Extract both executables into the same directory. Start `vibdock-launcher.exe` to show the small resident control panel. Right-click the panel or tray and choose **Settings…**, or use the panel’s **Settings…** button, to open the local configuration page.
 2. Select the intended microphone from the service's device list. In the binding editor, record a combination such as **Ctrl+Alt+Shift+F9** and save it.
 3. Check the separate **background binding** row. “Registered” means Windows accepted the shortcut; it does not mean an audio action already ran. A conflict leaves the previous configuration and registration in place.
 4. In Ulanzi Studio, map the desired button to that exact keyboard combination using its shortcut action. Physical-device identification is not inferred from a mapped keyboard event.
 5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
-6. Close the browser to leave the service running. Reopen configuration from the tray; use **Exit** or `vibdock.exe service-stop` to stop the service.
+6. Close the browser to leave the service running. Reopen **Settings…** from the panel or tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
 
 Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input, per-application playback mute, and voice-session start/stop are separate planned controls.
 
@@ -117,22 +117,30 @@ clears its instance marker as it exits.
 ## Tray entry (Windows)
 
 Double-click `vibdock-launcher.exe` to start or reuse an authenticated resident
-service, open its configuration page, and show a notification icon with
-**Open configuration**, **Status**, and **Exit**. The launcher and console CLI
-share the same Rust core. Keep both executables in the same directory.
+service and show a small movable control panel with a taskbar entry and notification
+icon. Keep both executables in the same directory. Windows chooses the initial
+panel position; no fixed corner is assumed.
 
-```powershell
-.\vibdock-launcher.exe
-```
+- **Settings…** (button or right-click menu) opens a fresh one-use handoff to the
+  proved service’s actual address. A browser launch failure is visible.
+- Close, **Hide panel**, or Escape hides the panel without stopping the service.
+  Click the tray icon or double-click the launcher again to restore the same panel.
+- **Service status** reports service ownership/liveness only. It does not claim an
+  audio action, application voice session, or hardware input is working.
+- **Exit VibDock** asks the verified service to stop. A shutdown failure leaves the
+  controls available for retry. No process-name termination is used.
 
-The tray owns no business logic: Open launches the service's own bound URL,
-Status reports whether a service is answering, and Exit performs the same
-authenticated shutdown as `service-stop`. Repeated launches reuse the running
-instance rather than starting a second one. The service is a separate process:
-closing the browser or terminating the launcher leaves it running. Tray Exit
-requests an authenticated shutdown; a shutdown error keeps the tray available.
-Native tray interaction still requires desktop acceptance. Service mode provides
-authenticated configuration; `serve` keeps the separate read-only design preview.
+The existing named mutex keeps one desktop entry. Status is checked off the UI
+thread, expires after four seconds, and falls back to unknown/unavailable.
+Original monochrome icon variants follow the Windows system tray light/dark
+setting; Explorer taskbar recreation re-adds the icon. Original artwork is also
+embedded in the executable and settings homepage; it requires no external request.
+The separate optional mouse-transparent feedback overlay is unchanged.
+
+The current app controls are explicitly unavailable without verified adapters.
+Per-software icons, persistent software selections and working-state controls are
+not yet implemented. macOS still packages only the CLI, with no menu-bar/Dock entry.
+See [desktop acceptance and platform plan](docs/design/desktop-candidate.md).
 
 Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
 tests, so they do not disturb a service already on the default one.

@@ -36,11 +36,11 @@ use windows::{
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const SHOW_PANEL: u32 = WM_APP + 2;
-const MENU_OPEN: u32 = 1;
-const MENU_STATUS: u32 = 2;
-const MENU_EXIT: u32 = 3;
-const MENU_SHOW: u32 = 4;
-const MENU_HIDE: u32 = 5;
+const MENU_OPEN: u32 = 101;
+const MENU_STATUS: u32 = 102;
+const MENU_EXIT: u32 = 103;
+const MENU_SHOW: u32 = 104;
+const MENU_HIDE: u32 = 105;
 const STATUS_LABEL: i32 = 10;
 const TIMER: usize = 1;
 const CLASS: &str = "VibDockTray";
@@ -155,7 +155,7 @@ pub fn run() -> crate::Result<()> {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             lpszClassName: PCWSTR(class.as_ptr()),
-            hIcon: LoadIconW(Some(instance), PCWSTR(1usize as *const u16))?,
+            hIcon: LoadIconW(Some(instance), PCWSTR(std::ptr::without_provenance(1)))?,
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             hbrBackground: GetSysColorBrush(COLOR_WINDOW),
             ..Default::default()
@@ -409,7 +409,7 @@ fn show_panel(window: HWND) {
 fn command(window: HWND, id: u32) {
     match id {
         MENU_OPEN => open_configuration(), MENU_STATUS => report_status(), MENU_SHOW => show_panel(window),
-        MENU_HIDE => unsafe { let _ = ShowWindow(window, SW_HIDE); },
+        MENU_HIDE | 2 => unsafe { let _ = ShowWindow(window, SW_HIDE); },
         MENU_EXIT => match service::request_shutdown() {
             Ok(_) => unsafe { PostQuitMessage(0); },
             Err(error) => notify("VibDock could not exit", &format!("{error}\n\nThe panel and tray remain available. Retry Exit to stop the verified service."), MB_ICONWARNING),

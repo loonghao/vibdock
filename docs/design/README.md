@@ -56,7 +56,7 @@ In **design-preview mode** (`audio_control: false`, no token published) the serv
 In **service mode** (`audio_control: true`) the backend exposes an authenticated API. The page then:
 
 - accepts a one-use bootstrap code when the launcher opens the page with one, exchanges it for a scoped session token, and erases the code from the address bar so it cannot be replayed from a shared link. The session token is held in memory only — never in `localStorage`, never in the URL, never logged — and is sent as `X-Vibdock-Token` on each request. The bootstrap endpoint is service-owned;
-- falls back to a manual token paste **only while that endpoint does not exist**, labelled in the UI as a temporary route rather than the finished flow;
+- offers manual token paste only as an explicitly labelled advanced troubleshooting route; the normal desktop flow uses one-use browser codes;
 - verifies any token against `GET /api/config` before treating the session as authorized, and reports an invalid token as such;
 - loads real capture devices from `POST /api/actions/devices` and requires one to be selected before saving;
 - writes configuration with `POST /api/config` and updates the page draft **only after the backend confirms the write**, so a failed save never replaces what is actually configured;
@@ -90,7 +90,7 @@ The feedback view previews each result state separately: trigger received, actio
 - Request bodies are bounded: an oversized or non-UTF-8 body yields 413 and is never parsed or truncated at an arbitrary byte offset.
 - No arbitrary command or shell endpoint is exposed. `/api/actions/{devices,status,mute,unmute,toggle}` run through the same closed allowlist and the shared Windows adapter; an unrecognised verb is a 404 that never reaches the adapter. Actions always name their endpoint, taken from the request body or the user's saved device, never a platform default, so an action cannot silently apply to a microphone the caller did not choose. Results report the mute state read back from the device, and a failed action is an error rather than an assumed success.
 - Single instance: a second launch reuses the running service only after the listener on that port answers a fresh nonce at `POST /instance/challenge` with an HMAC-SHA256 proof derived from the recorded token. The discovery request does not transmit the bearer. Browser handoff and shutdown prove ownership again on the same pinned IPv4 connection used for the privileged request, sharing one two-second deadline; they never reconnect or fall back to IPv6 after proof. A successful challenge permits at most one additional exchange. Atomic state writes use exclusive fresh temporary files, created with mode 0600 on Unix; Windows protection still relies on inherited directory ACLs. TCP reachability or HTTP 200 alone is not accepted, so an unrelated process that inherits the port is not mistaken for our service. A stale marker is recovered only after proving no owner answers; if an unrelated process holds the port, startup fails loudly and leaves the marker in place.
-- `service-status` reports whether a service is listening. `service-stop` performs a real authenticated shutdown: it posts to the running service's `/api/shutdown` with the recorded token and waits for the port to be released, so an unrelated process on that port is never stopped by name. `tray` (Windows) runs a notification-area icon with Open configuration, Status, and Exit, sharing the same service core as the CLI.
+- `service-status` reports whether a service is listening. `service-stop` performs a real authenticated shutdown: it posts to the running service's `/api/shutdown` with the recorded token and waits for the port to be released, so an unrelated process on that port is never stopped by name. `tray` (Windows) runs the resident panel and notification-area icon with Settings, Service status, Hide, and Exit VibDock, sharing the same service core as the CLI.
 - `VIBDOCK_PORT` overrides the bound loopback port so acceptance runs can use a private port instead of disturbing a service on the default one.
 
 The `serve` preview remains read-only and unauthenticated: it serves the page and reports `design-preview` mode.
@@ -98,9 +98,17 @@ The `serve` preview remains read-only and unauthenticated: it serves the page an
 
 ## Resident-service lifecycle requirement
 
-The product version must start by double-clicking the executable, launch one local service, and open its configuration page. Closing the browser does not stop the service. A Windows notification-area icon provides Open configuration, status, and Exit. A separate small floating status indicator may be optional; it is not a replacement for a discoverable Exit control.
+The Windows source now starts by double-clicking the launcher, reuses one local
+service, and shows a small interactive floating panel. Settings opens from its
+button or right-click menu with a one-use browser code. Closing the panel, pressing
+Escape or closing the browser leaves the service running. The taskbar/tray entry
+restores the panel; **Exit VibDock** is the discoverable authenticated shutdown.
+The independent optional mouse-transparent feedback indicator remains separate.
 
-Repeated launches must discover and reuse the existing service instead of starting a second listener. Hardware and authorized agents connect while that service is alive. Exiting unregisters hotkeys and stops listeners without unexpectedly changing audio mute state. Open configuration must navigate to the actual bound local address, not a guessed port. The current CLI preview does not implement this lifecycle yet.
+Repeated launches reuse the existing service and panel. Exiting unregisters
+hotkeys and stops listeners without changing microphone mute state. Settings
+navigates to the proved service's actual bound address, never a guessed port.
+See [candidate evidence and platform limits](desktop-candidate.md).
 
 ## Delivery priorities
 
@@ -110,7 +118,7 @@ P1: application output mute with meeting isolation, non-focus-stealing feedback,
 
 P2: Slack/Tencent Meeting scenarios, more hardware/platform adapters, and genuinely supported macOS/Linux audio backends. Cross-platform build success is not platform audio acceptance.
 
-Latest launch decision: use two thin Windows entry executables (a double-click launcher/tray application and a console CLI) backed by the same Rust core and one resident service. This supersedes the earlier single-entry launch proposal; it does not duplicate business logic. The current preview still ships only the CLI executable.
+Latest launch decision: use two thin Windows entry executables (a double-click launcher/tray application and a console CLI) backed by the same Rust core and one resident service. This supersedes the earlier single-entry launch proposal; it does not duplicate business logic. The published v0.1.0 preview still ships only the CLI executable; current Windows source builds and packages both entries.
 
 ### Resident hotkey action feedback (Windows source)
 
