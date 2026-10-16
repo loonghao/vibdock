@@ -36,8 +36,11 @@ state. This is read-only presence, with no software control or audio inference.
 Audio, global shortcuts and voice actions remain unavailable on macOS.
 
 The disposable helper enumerates NSWorkspace applications for the current user,
-rechecks native launch identity and kernel process creation time, and verifies
-canonical bundle/executable locations before publication. It never launches a
+rechecks native application identity and kernel process creation time, and verifies
+canonical bundle/executable locations before publication. Kernel start seconds
+and microseconds bind transient selections; optional AppKit launchDate is an
+additional check, so direct executable launches do not require LaunchServices
+metadata to establish identity. It never launches a
 saved application or loads arbitrary icon URLs. Icons are rasterized through
 AppKit to fixed 32×32 RGBA PNGs, with no source metadata. The helper has a
 three-second parent deadline, a four-second self-watchdog and an stdin parent-
