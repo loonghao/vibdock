@@ -49,7 +49,8 @@ async function unusedPort() {
       const homeResponse=await page.goto(`${origin}/#bootstrap=${code}`, {waitUntil:'networkidle'});
       assert.equal(homeResponse.status(),200,'homepage response failed');
       assert.deepEqual(errors,[],'homepage JavaScript failed before handoff');
-      assert.equal(new URL(page.url()).hash,'','one-use code remained in URL; console errors: '+JSON.stringify(consoleErrors));
+      // Query the document directly: Playwright's cached URL can lag the inline history.replaceState event.
+      assert.equal(await page.evaluate(()=>location.hash),'','one-use code remained in URL; console errors: '+JSON.stringify(consoleErrors));
       await page.waitForFunction(()=>document.querySelector('#conn').textContent.includes('已授权'));
       assert((await page.locator('#persistNote').innerText()).includes('后台绑定见上方'),'storage labels contradict the live service');
       const replay=await fetch(`${origin}/api/bootstrap`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
