@@ -527,14 +527,14 @@ pub fn run() -> crate::Result<()> {
             child(
                 window,
                 instance,
-                "STATIC",
+                "EDIT",
                 "No playback action requested.",
                 20,
                 206,
                 390,
                 60,
                 RESULT_LABEL,
-                false,
+                true,
             )?;
             for index in 0..8 {
                 child(
@@ -598,13 +598,20 @@ unsafe fn child(
     id: i32,
     tab: bool,
 ) -> crate::Result<()> {
+    // Read-only multiline receipts stay keyboard-scrollable even for long
+    // session names and unconfirmed outcomes; no hidden tail implies success.
+    let extra = if class == "EDIT" {
+        WS_VSCROLL | WINDOW_STYLE(0x0004 | 0x0800) // ES_MULTILINE | ES_READONLY
+    } else {
+        WINDOW_STYLE(0)
+    };
     let class = wide(class);
     let text = wide(text);
     let window = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         PCWSTR(class.as_ptr()),
         PCWSTR(text.as_ptr()),
-        WS_CHILD | WS_VISIBLE | if tab { WS_TABSTOP } else { WINDOW_STYLE(0) },
+        WS_CHILD | WS_VISIBLE | extra | if tab { WS_TABSTOP } else { WINDOW_STYLE(0) },
         x,
         y,
         width,
@@ -953,7 +960,7 @@ fn show_panel(window: HWND) {
 fn set_result(window: HWND, text: &str) {
     unsafe {
         if let Ok(label) = GetDlgItem(Some(window), RESULT_LABEL) {
-            let text = wide(text);
+            let text = wide(&text.replace('\n', "\r\n"));
             let _ = SetWindowTextW(label, PCWSTR(text.as_ptr()));
         }
     }

@@ -17,7 +17,7 @@ foreach ($name in @('vibdock.exe', 'vibdock-launcher.exe')) {
 }
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $evidence = (Resolve-Path -LiteralPath $EvidenceDirectory).Path
-foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-software-menu.png', 'resident-restored.png')) {
+foreach ($name in @('report.json', 'resident-panel.png', 'resident-context-menu.png', 'resident-software-menu.png', 'resident-result-overflow-fixture.png', 'resident-restored.png')) {
     $old = Join-Path $evidence $name
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force }
 }
@@ -43,6 +43,8 @@ public class VibDockNative {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint index, StringBuilder text, int count, uint flags);
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr hwnd, string text);
 }
 '@
 function Start-Entry([string]$Name, [string]$Argument = '') {
@@ -126,6 +128,19 @@ try {
         if ([int]$response.StatusCode -ne $check.expected) { throw 'Playback action authorization or exact-selection rejection failed' }
     }
     Save-Window $window 'resident-panel.png'
+    # A labelled synthetic long receipt verifies accessibility/layout only.
+    # It is never sent to an audio endpoint or presented as action evidence.
+    $resultControl = [VibDockNative]::GetDlgItem($window, 13)
+    $resultStyle = [VibDockNative]::GetWindowLongPtr($resultControl, -16).ToInt64()
+    if (($resultStyle -band 0x00200804) -ne 0x00200804) { throw 'Playback result is not a scrollable read-only multiline control' }
+    $longFixture = "Synthetic overflow fixture; no audio action occurred.`r`n" + (("Fixture line, not a live action result.`r`n") * 14) + 'END OF SYNTHETIC FIXTURE'
+    [void][VibDockNative]::SetWindowText($resultControl, $longFixture)
+    [void][VibDockNative]::SendMessage($resultControl, 0x00B1, [IntPtr]$longFixture.Length, [IntPtr]$longFixture.Length) # EM_SETSEL
+    [void][VibDockNative]::SendMessage($resultControl, 0x00B7, [IntPtr]::Zero, [IntPtr]::Zero) # EM_SCROLLCARET
+    if ([VibDockNative]::SendMessage($resultControl, 0x00CE, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -le 0) { throw 'Long playback receipt cannot scroll to its final lines' } # EM_GETFIRSTVISIBLELINE
+    Save-Window $window 'resident-result-overflow-fixture.png'
+    [void][VibDockNative]::SetWindowText($resultControl, 'No playback action requested.')
+
     [void][VibDockNative]::PostMessage($window, 0x007B, $window, [IntPtr](-1)) # WM_CONTEXTMENU
     $menuWindow = [IntPtr]::Zero
     Wait-Until { $script:menuWindow = [VibDockNative]::FindWindow('#32768', $null); $script:menuWindow -ne [IntPtr]::Zero } 'Context menu did not open'
@@ -178,7 +193,7 @@ try {
     foreach ($servicePid in $serviceChildren) {
         Wait-Until { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$servicePid" | Where-Object { $_.Name -eq 'vibdock.exe' }).Count -eq 0 } 'Exit left a native observation helper running'
     }
-    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('native-window-visible','saved-offline-software-fixture-unknown','placeholder-icon-present','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','playback-action-auth-origin-forged-selection-rejected','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
+    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('native-window-visible','saved-offline-software-fixture-unknown','placeholder-icon-present','original-icon-resource-built','verified-service-status','real-context-menu-settings-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','long-result-readonly-scrollable-synthetic-fixture','playback-action-auth-origin-forged-selection-rejected','close-hides','second-launch-restores-singleton','escape-hides','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native rendering'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','actual default-browser launch') }
     $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
     Write-Output 'PASS: native panel, context menu, singleton restoration, and authenticated Exit. Captures are native PrintWindow renders; physical-device and default-browser acceptance remain separate.'
 } finally {
