@@ -30,6 +30,10 @@ mod macos_observer;
 pub mod macos_resident;
 #[cfg(target_os = "macos")]
 mod macos_worker;
+#[cfg(all(test, unix, not(target_os = "macos")))]
+#[allow(dead_code)]
+#[path = "macos_worker.rs"]
+mod macos_worker_tests;
 #[cfg(not(target_os = "macos"))]
 pub mod resident_apps;
 #[cfg(target_os = "macos")]

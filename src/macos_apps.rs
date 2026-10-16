@@ -673,7 +673,7 @@ pub(crate) fn decode_icon(value: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::with_capacity(value.len() / 4 * 3);
-    for (index, chunk) in value.as_bytes().chunks_exact(4).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<4>().0.iter().enumerate() {
         let mut word = 0u32;
         let mut padding = 0;
         for (position, c) in chunk.iter().enumerate() {
@@ -772,11 +772,13 @@ fn valid_png(bytes: &[u8]) -> bool {
                         return None;
                     }
                 }
-                b"bKGD" if size == 6 && data.chunks_exact(2).all(|sample| sample[0] == 0) => {}
+                b"bKGD"
+                    if size == 6 && data.as_chunks::<2>().0.iter().all(|sample| sample[0] == 0) => {
+                }
                 b"tRNS"
                     if color == Some(2)
                         && size == 6
-                        && data.chunks_exact(2).all(|sample| sample[0] == 0) => {}
+                        && data.as_chunks::<2>().0.iter().all(|sample| sample[0] == 0) => {}
                 _ => return None,
             }
             offset = end;
