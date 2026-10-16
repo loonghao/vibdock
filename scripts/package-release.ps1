@@ -183,6 +183,22 @@ try {
         Copy-Item -LiteralPath $source -Destination $packagePath -Recurse
     }
 
+    # Git must not rewrite original SVG line endings on Windows. Verify the
+    # shipped bytes rather than assuming a successful copy preserved the art.
+    $brand = Join-Path $packagePath 'assets/brand'
+    $manifest = Join-Path $brand 'SHA256.json'
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { throw 'Original brand SHA256 manifest is missing' }
+    $hashes = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json -AsHashtable
+    if ($hashes -isnot [System.Collections.IDictionary] -or $hashes.Count -eq 0) { throw 'Original brand SHA256 manifest must be a nonempty object' }
+    foreach ($entry in $hashes.GetEnumerator()) {
+        Assert-SafeSegment $entry.Key 'Brand asset'
+        if ($entry.Value -isnot [string] -or $entry.Value -notmatch '^[0-9a-f]{64}$') { throw 'Invalid original brand SHA256 value' }
+        $asset = Join-Path $brand $entry.Key
+        if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Original brand asset is missing: $($entry.Key)" }
+        $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -cne $entry.Value) { throw "Original brand checksum mismatch: $($entry.Key)" }
+    }
+
     # Console CLI must be subsystem 3; GUI launcher must be subsystem 2.
     if ($isWindowsTarget) {
         $cliSubsystem = Get-PeSubsystem (Join-Path $packagePath $CliExecutable)
