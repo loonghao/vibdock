@@ -46,6 +46,12 @@ function New-Case([string]$Name, [string]$Target) {
         New-Item -ItemType Directory -Path $nested -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $nested 'fixture.txt') -Value 'fixture' -NoNewline
     }
+    $brand = Join-Path $dir 'assets/brand'
+    New-Item -ItemType Directory -Path $brand -Force | Out-Null
+    $art = Join-Path $brand 'vibdock-symbol.svg'
+    Set-Content -LiteralPath $art -Value '<svg/>' -NoNewline
+    $digest = (Get-FileHash -LiteralPath $art -Algorithm SHA256).Hash.ToLowerInvariant()
+    @{ 'vibdock-symbol.svg' = $digest } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $brand 'SHA256.json')
     return $dir
 }
 
@@ -176,6 +182,15 @@ Assert-Case 'windows missing LICENSE is rejected' {
     Remove-Item -LiteralPath (Join-Path $dir 'LICENSE')
     $run = Invoke-Package $dir $winTarget 'vibdock.exe' 'vibdock-launcher.exe'
     return Assert-FailsWith $run 'LICENSE'
+}
+
+Assert-Case 'producer rejects altered original brand bytes' {
+    $dir = New-Case 'brand-mismatch' $winTarget
+    New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock.exe") 3
+    New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock-launcher.exe") 2
+    Add-Content -LiteralPath (Join-Path $dir 'assets/brand/vibdock-symbol.svg') -Value 'changed'
+    $run = Invoke-Package $dir $winTarget 'vibdock.exe' 'vibdock-launcher.exe'
+    return Assert-FailsWith $run 'brand checksum mismatch'
 }
 
 # 6. Windows missing README must fail.
