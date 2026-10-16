@@ -55,25 +55,31 @@ Before recommending unattended desktop use, verify on an actual interactive host
    replacement and missing outputs. No stale observation may claim a current
    state; partial enumeration must not report all sessions muted or idle.
 
-## macOS next phase (planned, not implemented)
+## macOS native source and remaining acceptance
 
-The current macOS artifact is CLI-only; neither menu-bar GUI nor audio is implied
-by a successful macOS build. A native adapter can use AppKit `NSStatusItem`,
-`NSMenu`, `NSPanel` and `NSApplication` through scoped `objc2`/`objc2-app-kit`
-bindings. Keep all AppKit objects and callbacks on the main thread; initialize
-after applicationDidFinishLaunching. A menu-bar resident accessory need not have
-a permanent Dock entry; opening its control panel can use the appropriate regular
-activation policy, while window close preserves the resident service. Quit must
-call the same authenticated service shutdown contract.
+Current source packages an unsigned `VibDock.app` with the original supplied
+icon, native launcher and sibling CLI. AppKit `NSStatusItem`, `NSMenu`, `NSPanel`
+and `NSApplication` stay on the main thread. A persistent menu-bar entry and
+Dock entry restore the same floating panel; closing hides it, while Quit uses
+the authenticated service shutdown contract. Saved application-presence rows
+and native icons appear in the panel, menu-bar menu and Dock menu.
 
-Before introducing it, add a proper `.app` bundle (Info.plist, original icon,
-launcher and sibling CLI), verify framework/dependency licenses and minimum OS,
-and test reopen/single-instance/quit on a real macOS GUI session. Distribution
-signing/notarization or new credentials require their own setup; do not weaken
-Gatekeeper or claim a CLI tarball is a native desktop release.
+Hosted macOS acceptance runs the actual bundled executable and isolated service,
+checks native menu selectors, singleton reopen, close-to-hide and both Quit
+paths, and captures the real own-content view in light/dark appearances. It
+checks opaque system backgrounds and the observed original teal logo pixels.
+Browser acceptance pins an actually enumerated application and verifies its
+saved row across service restart and removal. These are native widget and
+application-presence checks, not physical pointer, Finder/default-browser,
+full-desktop or audio-control evidence.
 
-Windows now has a bounded read-only implementation described in the
-[software contract](../resident-software.md). macOS still requires its separate
+Physical desktop focus/monitor behavior, localized native wording and visual
+polish still need separate acceptance. macOS audio, voice and global shortcuts
+remain unsupported. Developer ID signing/notarization is not configured; no
+credential, permission or Gatekeeper bypass is part of this candidate.
+
+See the [software contract](../resident-software.md),
+[native macOS behavior and evidence limits](../macos-desktop.md) and
 [native identity and packaging plan](../macos-resident-plan.md).
 Future software action adapters must preserve the following boundary: Bind each action to stable app identity plus the exact current process,
 audio endpoint/session or connection instance. Detection is not connection;
