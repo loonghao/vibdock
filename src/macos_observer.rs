@@ -793,10 +793,7 @@ mod tests {
             None::<f64>.map(native_launch_stamp).transpose_option(),
             Some(None)
         );
-        assert_eq!(
-            Some(f64::NAN).map(native_launch_stamp).transpose_option(),
-            None
-        );
+        assert_eq!(Some(native_launch_stamp(f64::NAN)).transpose_option(), None);
         for value in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert!(native_launch_stamp(value).is_none());
         }
