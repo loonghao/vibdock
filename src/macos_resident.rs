@@ -284,7 +284,10 @@ define_class!(
             true
         }
 
-        #[unsafe(method(applicationDockMenu:))]
+        // method_id applies objc2's owned-return ABI conversion, including
+        // autorelease for this non-owning Objective-C method family.
+        #[unsafe(method_id(applicationDockMenu:))]
+        #[unsafe(method_family = none)]
         fn dock_menu(&self, _application: &NSApplication) -> Option<Retained<NSMenu>> {
             self.ivars().ui.get().map(|ui| ui.dock_menu.clone())
         }
