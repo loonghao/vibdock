@@ -3,7 +3,8 @@
 The native AppKit shell, original-logo menu-bar/Dock entry, floating panel,
 service lifecycle and .app packaging are now implemented in source. See
 [the native candidate contract](macos-desktop.md) for verification boundaries.
-The application-observation/persistence scope below remains a later increment.
+The separate application-presence observer, persistent pins and native icons are
+also implemented in source. Playback/voice control remains a later increment.
 
 ## First native slice
 
@@ -23,7 +24,7 @@ termination state and available launch identity before publishing a selection.
 PID alone is insufficient, and launchDate may be absent. Do not persist live
 process identifiers or use a bundle identifier alone as trusted executable proof.
 
-A separately versioned macOS identity type should store a server-selected bundle
+A separately versioned macOS identity type stores a server-selected bundle
 location plus optional bundle identifier, keeping Windows output IDs distinct.
 Use the same random, short-lived selection, revision and atomic persistence
 contracts. Expose independent fields for process presence, observed playback,

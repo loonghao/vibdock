@@ -9,7 +9,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, saved read-only Windows software observations, a macOS native menu-bar/Dock/panel shell, and native desktop packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, a resident shortcut binding, a branded Windows floating panel/tray, saved read-only Windows software observations, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Codex/Dot, WorkBuddy, WeChat Input, Slack, and Tencent Meeting voice controls remain planned; VibDock is independent of these vendors.
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline does not validate the later desktop panel. New desktop candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
@@ -23,7 +23,7 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 | --- | --- | --- |
 | Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, launcher/tray, persistent read-only software entries, dual-entry archive |
 | Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
-| macOS Apple silicon | Design preview | Native .app, menu bar/Dock and floating panel, authenticated local configuration; audio and global shortcuts unsupported |
+| macOS Apple silicon | Design preview | Native .app, menu bar/Dock and floating panel, persistent application list/icons/running state, authenticated local configuration; audio and global shortcuts unsupported |
 
 ## macOS native candidate
 
@@ -34,8 +34,8 @@ service. Repeated launches restore the same panel, including direct binary
 launches from a second installed copy.
 
 Candidates are not Developer ID signed or notarized. Hosted checks distinguish
-real AppKit own-view rendering from a full desktop/pointer test. macOS per-app
-pinning/icons, audio, voice control and global shortcuts remain unavailable.
+real AppKit own-view rendering from a full desktop/pointer test. macOS software pins and native icons describe verified application presence only.
+Audio, voice control, software actions and global shortcuts remain unavailable.
 See [macOS native behavior and acceptance](docs/macos-desktop.md) for limits.
 
 ## Configure a hardware shortcut (pending Windows source)
@@ -156,13 +156,16 @@ observed software entry to keep its location/output selection across restart in
 area show its current native resource icon or a generic placeholder. Removal
 changes only the saved entry. Stale, partial or unsupported reads stay unknown;
 playback activity does not establish microphone use, voice state or agent work.
-All software controls remain read-only in this increment. See the
+Software status is read-only in this increment; it does not provide software controls. See the
 [software state, privacy and lifecycle contract](docs/resident-software.md).
 
-macOS still packages only the CLI, with no menu-bar/Dock entry. The separate
-[native macOS plan](docs/macos-resident-plan.md) and
-[desktop acceptance checklist](docs/design/desktop-candidate.md) distinguish
-hosted build/fixture evidence from real application and hardware acceptance.
+On macOS, Settings > **应用集成** instead lists native running applications.
+Pinned bundle locations survive restart in a separate `apps-macos.json`. The
+floating panel, menu-bar menu and Dock menu show native icons and Running, Not
+running or Unknown. Process presence never establishes playback, recording or
+agent work. Missing or stale icons use a placeholder. See the
+[macOS native contract](docs/macos-desktop.md) and
+[desktop acceptance checklist](docs/design/desktop-candidate.md) for validation limits.
 
 Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
 tests, so they do not disturb a service already on the default one.

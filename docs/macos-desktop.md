@@ -26,10 +26,23 @@ Do not disable macOS security controls to run a candidate.
   symbol uses the original monochrome shape as an AppKit template, adapting to
   system appearance without remote image requests.
 
-macOS application pinning, third-party software icons and playback/voice state
-are not implemented by this native shell. Windows output/session identities are
-not reinterpreted as macOS applications. Audio, global shortcuts and voice actions
-remain unavailable on macOS; process focus is never labeled working or recording.
+Settings can pin up to eight currently verified native applications. Saved bundle
+locations and optional bundle IDs live in `apps-macos.json`, separate from Windows
+`apps.json` and microphone configuration. The floating panel, menu-bar menu and
+Dock menu show each saved label, native 32px icon and application-presence state.
+Running requires a fresh verified match; Not running requires fresh complete
+absence; partial or stale absence is Unknown. UI expiry clears icons as well as
+state. This is read-only presence, with no software control or audio inference.
+Audio, global shortcuts and voice actions remain unavailable on macOS.
+
+The disposable helper enumerates NSWorkspace applications for the current user,
+rechecks native launch identity and kernel process creation time, and verifies
+canonical bundle/executable locations before publication. It never launches a
+saved application or loads arbitrary icon URLs. Icons are rasterized through
+AppKit to fixed 32×32 RGBA PNGs, with no source metadata. The helper has a
+three-second parent deadline, a four-second self-watchdog and an stdin parent-
+death gate. Owned output is unlinked immediately and bounded to 512KiB.
+See the [shared persistence/privacy contract](resident-software.md).
 
 ## Evidence and limits
 
@@ -46,6 +59,16 @@ the application's own native view via `NSBitmapImageRep`; this is an AppKit view
 render, not a full-desktop/menu-bar screenshot or physical pointer test. Reports
 must name the source revision, binary hash, OS version, PID and native window.
 
+Software acceptance distinguishes a deliberately offline saved fixture from the
+actual running bundled VibDock application. The latter must be independently
+observed with a native icon before lifecycle acceptance begins. It verifies
+software rows in the panel/menu-bar/Dock menus and expiry-to-Unknown/icon removal.
+Browser checks exercise the real isolated Mac service at desktop and mobile
+widths, pin a genuinely enumerated application, restart the service and verify
+its saved row, remove both live/offline pins, and check one-use handoff and
+reopening saved settings.
+These tests do not prove arbitrary third-party playback or application work.
+
 Real default-browser launch, physical pointer/focus behavior, multi-monitor/DPI,
 light/dark desktop appearance, Finder launch and installed/updated app experience
 still require logged-in desktop acceptance. No Accessibility, Automation, screen
@@ -57,6 +80,6 @@ created or accepted by this implementation or its tests.
 AppKit bindings are macOS-only, with narrow framework features and exact direct
 versions: objc2 0.6.3, objc2-foundation 0.3.2, objc2-app-kit 0.3.2. Cargo.lock also
 pins objc2-core-foundation 0.3.2, objc2-encode 4.1.0, dispatch2 0.3.1 and bitflags
-2.13.2. Their published manifests permit MIT; the optional Apache/Zlib alternatives
+2.13.2, plus libc 0.2.190 for typed process identifiers. Their published manifests permit MIT; the optional Apache/Zlib alternatives
 are not needed here. Notices are in [licenses](licenses/README.md). Apple SDKs
 remain supplied by the existing Xcode runner environment, not redistributed.

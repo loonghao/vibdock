@@ -908,7 +908,7 @@ pub(crate) fn validate_patch(body: &str) -> std::result::Result<Patch, &'static 
 
 /// Read only the verified instance's bounded software summary over its proved
 /// socket. The proof keeps its original 8 KiB cap; only this data reply is larger.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
     let instance = read_instance().ok_or("No service instance")?;
     let mut connection =

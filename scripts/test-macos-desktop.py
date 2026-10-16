@@ -17,6 +17,7 @@ import socket
 import struct
 import subprocess
 import tempfile
+import time
 
 REQUIRED = ["application_finished_launching", "service_ownership_proved", "native_panel_visible", "floating_panel",
             "original_template_image", "retained_status_item", "dock_entry",
@@ -25,6 +26,12 @@ REQUIRED = ["application_finished_launching", "service_ownership_proved", "nativ
             "settings_handoff_issued", "authenticated_shutdown_and_port_released",
             "native_view_rendered", "native_view_png_written", "native_resources_released",
             "second_launcher_exited", "owner_ipc_reopen_restores"]
+SOFTWARE_REQUIRED = ["software_rows_match_summary", "software_rows_within_panel",
+                     "software_status_menu_rows", "software_dock_menu_rows",
+                     "software_presence_only", "software_expiry_unknown",
+                     "software_expiry_clears_icons", "software_persisted_offline_label",
+                     "software_offline_not_running_or_unknown", "software_offline_placeholder",
+                     "software_self_running_observed", "software_self_native_icon"]
 
 
 def diagnostic_text(value):
@@ -40,6 +47,40 @@ def port_is_closed(port):
     with socket.socket() as probe:
         probe.settimeout(0.3)
         return probe.connect_ex(("127.0.0.1", port)) == errno.ECONNREFUSED
+
+
+def verify_helper_lifecycle(cli, env):
+    # Execute only the packaged helper, in the isolated synthetic state. No
+    # application identity, icon bytes or local paths are copied into reports.
+    child = subprocess.Popen([str(cli), "_resident_snapshot"], env=env,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    started = time.monotonic()
+    try:
+        # Hold stdin open but withhold activation. The helper's own hard
+        # watchdog must terminate even without its normal parent owner.
+        code = child.wait(timeout=7)
+        if code != 125 or not 3 <= time.monotonic() - started < 7:
+            raise RuntimeError("Native observer watchdog did not enforce its deadline")
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=2)
+    child = subprocess.Popen([str(cli), "_resident_snapshot"], env=env,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        child.stdin.write(b"V")
+        child.stdin.flush()
+        child.stdin.close()
+        child.stdin = None
+        code = child.wait(timeout=3)
+        output, _ = child.communicate(timeout=2)
+        if code not in (0, 125) or len(output) > 512 * 1024:
+            raise RuntimeError("Native observer parent-EOF cleanup was not confirmed")
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=2)
+    return {"observerHardWatchdog": True, "observerParentEofCleanup": True}
 
 
 def run(app, evidence, system_quit=False):
@@ -65,14 +106,33 @@ def run(app, evidence, system_quit=False):
     # the launcher still validates canonical containment and a fresh record.
     env = dict(os.environ, TMPDIR=str(state.parent), LOCALAPPDATA=str(state), VIBDOCK_PORT=str(port),
                VIBDOCK_NATIVE_ACCEPTANCE="1", VIBDOCK_NATIVE_ACCEPTANCE_IMAGE=str(image),
+               VIBDOCK_NATIVE_ACCEPTANCE_SOFTWARE_ID="b" * 64,
+               VIBDOCK_NATIVE_ACCEPTANCE_SOFTWARE_LABEL="Offline Mac software fixture",
+               VIBDOCK_NATIVE_ACCEPTANCE_RUNNING_ID="c" * 64,
                VIBDOCK_OVERLAY="0",
                VIBDOCK_NATIVE_ACCEPTANCE_SYSTEM_QUIT="1" if system_quit else "0")
     config = state / "VibDock/config.json"
     config.parent.mkdir()
     original = b'{"device_id":null,"hotkey":null}\n'
     config.write_bytes(original)
+    # One explicitly offline saved location, and the actual bundled app whose
+    # launch identity and icon must be independently observed by the helper.
+    # These fixtures never pretend to be audio/playback or application work.
+    software = state / "VibDock/apps-macos.json"
+    saved = json.dumps({"schema_version": 1, "platform": "macos", "revision": 1,
+                        "entries": [
+                            {"id": "b" * 64, "label": env["VIBDOCK_NATIVE_ACCEPTANCE_SOFTWARE_LABEL"],
+                             "bundle_path": "/Applications/VibDockFixture-NeverLaunched.app",
+                             "bundle_id": "invalid.vibdock.fixture"},
+                            {"id": "c" * 64, "label": "VibDock acceptance application",
+                             "bundle_path": str(app), "bundle_id": "com.loonghao.vibdock"}]}).encode()
+    software.write_bytes(saved)
+    windows_software = state / "VibDock/apps.json"
+    windows_original = b'{"windows-store-must-remain-untouched":true}\n'
+    windows_software.write_bytes(windows_original)
     result = None
     try:
+        helper_checks = verify_helper_lifecycle(cli, env)
         # The launcher starts/proves its own service. The same real UI worker
         # issues Settings handoff and authenticates Quit; no routes are mocked.
         try:
@@ -102,6 +162,7 @@ def run(app, evidence, system_quit=False):
             (evidence / f"report{suffix}.json").write_text(json.dumps(diagnostic, indent=2) + "\n")
             raise RuntimeError(f"Native entry did not emit an acceptance report (exit {result.returncode}); inspect redacted report")
         report = reports[0]
+        report.update(helper_checks)
         lock_path = state / "VibDock/macos-launcher.lock"
         # This local-only read is a Show capability, never a service token.
         # Do not copy either the socket name or nonce into public evidence.
@@ -117,6 +178,8 @@ def run(app, evidence, system_quit=False):
                       launcherSHA256=hashlib.sha256(launcher.read_bytes()).hexdigest(),
                       platform="macOS", mockedRoutes=False,
                       configPreserved=config.read_bytes() == original,
+                      softwarePinsPreserved=software.read_bytes() == saved,
+                      windowsSoftwareStoreUntouched=windows_software.read_bytes() == windows_original,
                       ownedIpcSocketRemoved=ipc_gone, launcherLockReleased=True,
                       entry="actual bundled Mach-O launcher",
                       exclusions=["physical pointer/focus and full-desktop menu-bar capture",
@@ -131,7 +194,8 @@ def run(app, evidence, system_quit=False):
             raise RuntimeError("System termination did not report pre-exit native cleanup")
         if system_quit and report.get("system_termination_trigger_deferred") is not True:
             raise RuntimeError("System termination was not requested outside the worker poll callback")
-        for key in REQUIRED + ["configPreserved", "ownedIpcSocketRemoved", "launcherLockReleased"]:
+        for key in REQUIRED + SOFTWARE_REQUIRED + ["configPreserved", "softwarePinsPreserved",
+                "windowsSoftwareStoreUntouched", "ownedIpcSocketRemoved", "launcherLockReleased"]:
             if report.get(key) is not True:
                 raise RuntimeError(f"Native acceptance missing required check: {key}")
         if report.get("browser_launched") is not False or report.get("audio_supported") is not False:

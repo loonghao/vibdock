@@ -73,6 +73,12 @@ jobs:
           fc-match :lang=zh
           npm install --prefix work/browser --no-package-lock --ignore-scripts playwright@1.60.0
           PLAYWRIGHT_MODULE="$PWD/work/browser/node_modules/playwright" CHROMIUM_PATH="$(command -v google-chrome)" node scripts/test-web-ui.cjs target/release/vibdock
+      - name: Verify macOS software settings in a real browser
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          npm install --prefix work/browser --no-package-lock --ignore-scripts playwright@1.60.0
+          PLAYWRIGHT_MODULE="$PWD/work/browser/node_modules/playwright" CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node scripts/test-web-ui.cjs target/release/vibdock
       - name: Verify packaging and create Windows candidate
         if: runner.os == 'Windows'
         shell: pwsh
