@@ -2487,7 +2487,8 @@ mod tests {
             "Service unknown / unavailable"
         );
         assert_eq!(service_text(None, checked), "Service unknown / unavailable");
-        assert!(CAPABILITY_TEXT.contains("unavailable on macOS"));
+        assert!(CAPABILITY_TEXT.contains("application presence only"));
+        assert!(CAPABILITY_TEXT.contains("Audio, voice and global shortcuts are unavailable."));
     }
 
     #[test]
