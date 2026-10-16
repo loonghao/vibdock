@@ -90,6 +90,9 @@ struct Identity {
     pid: i32,
     process: ProcessIdentity,
     started: String,
+    // LaunchServices may omit NSDate for a directly launched app. When present,
+    // it is additional evidence and must remain exactly unchanged.
+    launch_date: Option<String>,
     bundle_path: String,
     bundle_id: Option<String>,
     // Revalidate the native URL even when the process executable is unreadable.
@@ -102,6 +105,105 @@ struct Candidate {
     identity: Identity,
     display_name: String,
     icon_b64: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IdentityFailure {
+    Terminated,
+    UnreadableProcess,
+    OtherUser,
+    MissingLaunchDate,
+    InvalidLaunchDate,
+    MissingBundleUrl,
+    CanonicalBundle,
+    InvalidBundleIdentifier,
+    CanonicalExecutable,
+    ExecutableMismatch,
+    NativeChanged,
+    MissingCurrentApplication,
+    ChangedApplicationObject,
+    ChangedIdentity,
+}
+impl IdentityFailure {
+    const ALL: [Self; 14] = [
+        Self::Terminated,
+        Self::UnreadableProcess,
+        Self::OtherUser,
+        Self::MissingLaunchDate,
+        Self::InvalidLaunchDate,
+        Self::MissingBundleUrl,
+        Self::CanonicalBundle,
+        Self::InvalidBundleIdentifier,
+        Self::CanonicalExecutable,
+        Self::ExecutableMismatch,
+        Self::NativeChanged,
+        Self::MissingCurrentApplication,
+        Self::ChangedApplicationObject,
+        Self::ChangedIdentity,
+    ];
+    fn name(self) -> &'static str {
+        match self {
+            Self::Terminated => "terminated",
+            Self::UnreadableProcess => "unreadable_process",
+            Self::OtherUser => "other_user",
+            Self::MissingLaunchDate => "missing_launch_date",
+            Self::InvalidLaunchDate => "invalid_launch_date",
+            Self::MissingBundleUrl => "missing_bundle_url",
+            Self::CanonicalBundle => "canonical_bundle",
+            Self::InvalidBundleIdentifier => "invalid_bundle_identifier",
+            Self::CanonicalExecutable => "canonical_executable",
+            Self::ExecutableMismatch => "executable_mismatch",
+            Self::NativeChanged => "native_changed",
+            Self::MissingCurrentApplication => "missing_current_application",
+            Self::ChangedApplicationObject => "changed_application_object",
+            Self::ChangedIdentity => "changed_identity",
+        }
+    }
+}
+
+// Only fixed counters and static stage names may leave this diagnostic object.
+// No paths, names, PIDs, user IDs, launch timestamps, or OS error strings.
+#[derive(Default)]
+struct Diagnostics {
+    enumerated: u32,
+    inspected: u32,
+    other_user_excluded: u32,
+    unreadable_process: u32,
+    invalid_application_identity: u32,
+    changed_before_publish: u32,
+    missing_icons: u32,
+    collection_limited: u32,
+    publication_budget_expired: u32,
+    identity_stages: [u32; 14],
+}
+impl Diagnostics {
+    fn record(&mut self, stage: IdentityFailure) {
+        let count = &mut self.identity_stages[stage as usize];
+        *count = count.saturating_add(1);
+    }
+    fn json(&self) -> Value {
+        let stages: serde_json::Map<String, Value> = IdentityFailure::ALL
+            .into_iter()
+            .map(|stage| {
+                (
+                    stage.name().to_owned(),
+                    json!(self.identity_stages[stage as usize]),
+                )
+            })
+            .collect();
+        json!({
+            "enumerated": self.enumerated,
+            "inspected": self.inspected,
+            "other_user_excluded": self.other_user_excluded,
+            "unreadable_process": self.unreadable_process,
+            "invalid_application_identity": self.invalid_application_identity,
+            "changed_before_publish": self.changed_before_publish,
+            "missing_icons": self.missing_icons,
+            "collection_limited": self.collection_limited,
+            "publication_budget_expired": self.publication_budget_expired,
+            "identity_stages": stages,
+        })
+    }
 }
 
 /// Process presence only. A complete result concerns applications in this
@@ -127,12 +229,21 @@ fn collect_snapshot() -> Value {
     let count = running.count();
     let inspected = count.min(MAX_INSPECTED);
     let mut skipped = count.saturating_sub(inspected);
+    let mut diagnostics = Diagnostics {
+        enumerated: count.min(u32::MAX as usize) as u32,
+        collection_limited: skipped.min(u32::MAX as usize) as u32,
+        ..Diagnostics::default()
+    };
     let mut candidates = Vec::new();
     for index in 0..inspected {
         if started.elapsed() >= COLLECTION_BUDGET || candidates.len() == MAX_APPLICATIONS {
             skipped += inspected - index;
+            diagnostics.collection_limited = diagnostics
+                .collection_limited
+                .saturating_add((inspected - index) as u32);
             break;
         }
+        diagnostics.inspected += 1;
         let application = running.objectAtIndex(index);
         // Dock/menu visibility is not process presence. A pinned application
         // may become accessory/background while continuing to run; never filter
@@ -140,17 +251,36 @@ fn collect_snapshot() -> Value {
         // Explicitly exclude another user's process before resolving its paths
         // or icon. An unreadable identity is conservatively an incomplete read.
         match process_identity(application.processIdentifier()) {
-            Some(process) if process.uid != uid => continue,
+            Some(process) if process.uid != uid => {
+                diagnostics.other_user_excluded += 1;
+                continue;
+            }
             Some(_) => {}
             None => {
                 skipped += 1;
+                diagnostics.unreadable_process += 1;
+                diagnostics.record(IdentityFailure::UnreadableProcess);
                 continue;
             }
         }
-        let Some(identity) = read_identity(&application, uid) else {
-            skipped += 1;
-            continue;
+        let identity = match read_identity(&application, uid) {
+            Ok(identity) => identity,
+            Err(stage) => {
+                skipped += 1;
+                diagnostics.invalid_application_identity += 1;
+                diagnostics.record(stage);
+                continue;
+            }
         };
+        if identity.launch_date.is_none() {
+            // Informational: mandatory kernel creation identity still verified.
+            diagnostics.record(IdentityFailure::MissingLaunchDate);
+        }
+        if identity.executable_url.is_some() && identity.executable_path.is_none() {
+            // Optional executable proof remains absent, as before; this counter
+            // does not promote it to a trusted path or reject process presence.
+            diagnostics.record(IdentityFailure::ExecutableMismatch);
+        }
         let display_name = application
             .localizedName()
             .and_then(|name| bounded_string(&name, MAX_DISPLAY_BYTES))
@@ -163,6 +293,9 @@ fn collect_snapshot() -> Value {
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "Application".into());
         let icon_b64 = application.icon().and_then(|icon| rasterize_icon(&icon));
+        if icon_b64.is_none() {
+            diagnostics.missing_icons += 1;
+        }
         candidates.push(Candidate {
             application,
             identity,
@@ -180,10 +313,16 @@ fn collect_snapshot() -> Value {
     }
     let mut applications = Vec::new();
     for candidate in candidates {
-        if started.elapsed() >= SOFT_BUDGET
-            || !still_same_application(&candidate.application, &candidate.identity, uid)
+        if started.elapsed() >= SOFT_BUDGET {
+            skipped += 1;
+            diagnostics.publication_budget_expired += 1;
+            continue;
+        }
+        if let Err(stage) = still_same_application(&candidate.application, &candidate.identity, uid)
         {
             skipped += 1;
+            diagnostics.changed_before_publish += 1;
+            diagnostics.record(stage);
             continue;
         }
         let identity = candidate.identity;
@@ -204,33 +343,50 @@ fn collect_snapshot() -> Value {
         "error": if complete { None } else {
             Some("Application observation is partial; unobserved applications are unknown.")
         },
-        "applications": applications
+        "applications": applications,
+        "diagnostics": diagnostics.json(),
     })
 }
 
-fn read_identity(application: &NSRunningApplication, uid: u32) -> Option<Identity> {
+fn read_identity(
+    application: &NSRunningApplication,
+    uid: u32,
+) -> Result<Identity, IdentityFailure> {
     if application.isTerminated() {
-        return None;
+        return Err(IdentityFailure::Terminated);
     }
     let pid = application.processIdentifier();
-    let process = process_identity(pid)?;
+    let process = process_identity(pid).ok_or(IdentityFailure::UnreadableProcess)?;
     if process.uid != uid {
-        return None;
+        return Err(IdentityFailure::OtherUser);
     }
-    let started = launch_stamp(application.launchDate()?.timeIntervalSince1970())?;
-    let bundle_url = application.bundleURL()?;
-    let bundle_path = canonical_url(&bundle_url)?;
+    // Apple documents launchDate as unavailable for launches outside
+    // LaunchServices. Kernel creation time is mandatory regardless of launch
+    // route; NSDate, when present, remains additional exact identity evidence.
+    let started = launch_stamp(process.started_sec, process.started_usec)
+        .ok_or(IdentityFailure::UnreadableProcess)?;
+    let launch_date = application
+        .launchDate()
+        .map(|date| native_launch_stamp(date.timeIntervalSince1970()))
+        .transpose_option()
+        .ok_or(IdentityFailure::InvalidLaunchDate)?;
+    let bundle_url = application
+        .bundleURL()
+        .ok_or(IdentityFailure::MissingBundleUrl)?;
+    let bundle_path = canonical_url(&bundle_url).ok_or(IdentityFailure::CanonicalBundle)?;
     if !is_bundle_path(&bundle_path) || !bundle_path.is_dir() {
-        return None;
+        return Err(IdentityFailure::CanonicalBundle);
     }
     let bundle_id = application
         .bundleIdentifier()
         .map(|id| bounded_string(&id, 255))
-        .transpose_option()?;
+        .transpose_option()
+        .ok_or(IdentityFailure::InvalidBundleIdentifier)?;
     let executable_url = application
         .executableURL()
         .map(|url| canonical_url(&url))
-        .transpose_option()?;
+        .transpose_option()
+        .ok_or(IdentityFailure::CanonicalExecutable)?;
     let executable_path = executable_url.as_ref().and_then(|path| {
         (is_bundle_executable(&bundle_path, path) && process_executable(pid).as_ref() == Some(path))
             .then(|| path.to_str().unwrap().to_owned())
@@ -239,12 +395,19 @@ fn read_identity(application: &NSRunningApplication, uid: u32) -> Option<Identit
         pid,
         process,
         started,
-        bundle_path: bundle_path.to_str()?.to_owned(),
+        launch_date,
+        bundle_path: bundle_path
+            .to_str()
+            .ok_or(IdentityFailure::CanonicalBundle)?
+            .to_owned(),
         bundle_id,
         executable_url: executable_url.map(|p| p.to_str().unwrap().to_owned()),
         executable_path,
     };
-    (!application.isTerminated() && process_identity(pid) == Some(process)).then_some(identity)
+    if application.isTerminated() || process_identity(pid) != Some(process) {
+        return Err(IdentityFailure::NativeChanged);
+    }
+    Ok(identity)
 }
 
 // Option<Option<T>>: an absent native optional value is valid; a present but
@@ -261,21 +424,33 @@ impl<T> TransposeOption<T> for Option<Option<T>> {
     }
 }
 
-fn still_same_application(original: &NSRunningApplication, expected: &Identity, uid: u32) -> bool {
-    let Some(current) = NSRunningApplication::runningApplicationWithProcessIdentifier(expected.pid)
-    else {
-        return false;
-    };
+fn still_same_application(
+    original: &NSRunningApplication,
+    expected: &Identity,
+    uid: u32,
+) -> Result<(), IdentityFailure> {
+    let current = NSRunningApplication::runningApplicationWithProcessIdentifier(expected.pid)
+        .ok_or(IdentityFailure::MissingCurrentApplication)?;
     // NSRunningApplication equality is Apple's process-instance comparison;
     // PID alone is explicitly insufficient. Check both objects after the run
     // loop turn, including launchDate and canonical bundle/executable URLs.
-    original == &*current
-        && read_identity(original, uid).as_ref() == Some(expected)
-        && read_identity(&current, uid).as_ref() == Some(expected)
-        && !current.isTerminated()
+    if original != &*current {
+        return Err(IdentityFailure::ChangedApplicationObject);
+    }
+    if read_identity(original, uid)? != *expected || read_identity(&current, uid)? != *expected {
+        return Err(IdentityFailure::ChangedIdentity);
+    }
+    if current.isTerminated() {
+        return Err(IdentityFailure::NativeChanged);
+    }
+    Ok(())
 }
 
-fn launch_stamp(seconds: f64) -> Option<String> {
+fn launch_stamp(seconds: u64, microseconds: u64) -> Option<String> {
+    (seconds > 0 && microseconds < 1_000_000).then(|| format!("{seconds:016x}{microseconds:016x}"))
+}
+
+fn native_launch_stamp(seconds: f64) -> Option<String> {
     (seconds.is_finite() && seconds > 0.0).then(|| format!("{:016x}", seconds.to_bits()))
 }
 
@@ -545,6 +720,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn diagnostics_are_fixed_bounded_counters_without_application_data() {
+        let mut diagnostics = Diagnostics {
+            enumerated: 5,
+            inspected: 4,
+            ..Diagnostics::default()
+        };
+        diagnostics.record(IdentityFailure::MissingLaunchDate);
+        diagnostics.record(IdentityFailure::CanonicalBundle);
+        diagnostics.identity_stages[IdentityFailure::NativeChanged as usize] = u32::MAX;
+        diagnostics.record(IdentityFailure::NativeChanged);
+        let value = diagnostics.json();
+        assert_eq!(value["enumerated"], 5);
+        assert_eq!(value["inspected"], 4);
+        assert_eq!(value["identity_stages"]["missing_launch_date"], 1);
+        assert_eq!(value["identity_stages"]["canonical_bundle"], 1);
+        assert_eq!(value["identity_stages"]["native_changed"], u32::MAX);
+        let stages = value["identity_stages"].as_object().unwrap();
+        assert_eq!(stages.len(), IdentityFailure::ALL.len());
+        assert!(stages
+            .values()
+            .all(|v| v.as_u64().is_some_and(|n| n <= u32::MAX as u64)));
+        let encoded = value.to_string();
+        assert!(encoded.len() < 1024);
+        for private_key in [
+            "bundle_path",
+            "executable_path",
+            "process_id",
+            "process_started",
+            "display_name",
+        ] {
+            assert!(!encoded.contains(private_key));
+        }
+    }
+
+    #[test]
     fn process_presence_never_filters_on_dock_or_frontmost_policy() {
         // A source-level boundary guard also covers the native collection path:
         // there must be no presentation-policy read capable of excluding a
@@ -558,12 +768,40 @@ mod tests {
     }
 
     #[test]
-    fn launch_identity_is_exact_bounded_and_never_nan() {
+    fn kernel_launch_identity_retains_exact_seconds_and_microseconds() {
+        assert!(launch_stamp(0, 1).is_none());
+        assert!(launch_stamp(1, 1_000_000).is_none());
+        let stamp = launch_stamp(1_700_000_000, 123_456).unwrap();
+        assert_eq!(stamp.len(), 32);
+        assert!(stamp
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+        assert_eq!(
+            u64::from_str_radix(&stamp[..16], 16).unwrap(),
+            1_700_000_000
+        );
+        assert_eq!(u64::from_str_radix(&stamp[16..], 16).unwrap(), 123_456);
+        assert_ne!(stamp, launch_stamp(1_700_000_000, 123_457).unwrap());
+        assert_eq!(launch_stamp(u64::MAX, 999_999).unwrap().len(), 32);
+    }
+
+    #[test]
+    fn optional_native_launch_date_is_exact_and_never_nan() {
+        // The exact optional-value conversion used by read_identity accepts a
+        // direct launch without NSDate, but never accepts a malformed date.
+        assert_eq!(
+            None::<f64>.map(native_launch_stamp).transpose_option(),
+            Some(None)
+        );
+        assert_eq!(
+            Some(f64::NAN).map(native_launch_stamp).transpose_option(),
+            None
+        );
         for value in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(launch_stamp(value).is_none());
+            assert!(native_launch_stamp(value).is_none());
         }
         let seconds = 1_700_000_000.123_456_f64;
-        let stamp = launch_stamp(seconds).unwrap();
+        let stamp = native_launch_stamp(seconds).unwrap();
         assert_eq!(stamp.len(), 16);
         assert!(stamp
             .bytes()
@@ -571,7 +809,7 @@ mod tests {
         assert_eq!(u64::from_str_radix(&stamp, 16).unwrap(), seconds.to_bits());
         assert_ne!(
             stamp,
-            launch_stamp(f64::from_bits(seconds.to_bits() + 1)).unwrap()
+            native_launch_stamp(f64::from_bits(seconds.to_bits() + 1)).unwrap()
         );
     }
 
@@ -640,7 +878,8 @@ mod tests {
                 started_sec: 1_700_000_000,
                 started_usec: 123,
             },
-            started: launch_stamp(1_700_000_000.0).unwrap(),
+            started: launch_stamp(1_700_000_000, 123).unwrap(),
+            launch_date: None, // A directly launched app is still identifiable.
             bundle_path: "/Applications/Example.app".into(),
             bundle_id: Some("org.example.App".into()),
             executable_url: Some("/Applications/Example.app/Contents/MacOS/Example".into()),
@@ -650,7 +889,10 @@ mod tests {
         changed.process.started_usec += 1;
         assert_ne!(changed, original);
         let mut changed = original.clone();
-        changed.started = launch_stamp(1_700_000_001.0).unwrap();
+        changed.started = launch_stamp(1_700_000_001, 123).unwrap();
+        assert_ne!(changed, original);
+        let mut changed = original.clone();
+        changed.launch_date = native_launch_stamp(1_700_000_000.0);
         assert_ne!(changed, original);
         let mut changed = original.clone();
         changed.bundle_path = "/Applications/Other.app".into();

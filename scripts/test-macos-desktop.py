@@ -32,6 +32,21 @@ SOFTWARE_REQUIRED = ["software_rows_match_summary", "software_rows_within_panel"
                      "software_expiry_clears_icons", "software_persisted_offline_label",
                      "software_offline_not_running_or_unknown", "software_offline_placeholder",
                      "software_self_running_observed", "software_self_native_icon"]
+OBSERVER_COUNTERS = ("enumerated", "inspected", "other_user_excluded", "unreadable_process",
+                     "invalid_application_identity", "changed_before_publish", "missing_icons",
+                     "collection_limited", "publication_budget_expired", "missing_launch_date")
+IDENTITY_STAGES = ("terminated", "unreadable_process", "other_user", "missing_launch_date",
+                   "invalid_launch_date", "missing_bundle_url", "canonical_bundle",
+                   "invalid_bundle_identifier", "canonical_executable", "executable_mismatch",
+                   "native_changed", "missing_current_application", "changed_application_object",
+                   "changed_identity")
+
+
+def safe_counters(value, names):
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in names
+            if type(value.get(key)) is int and 0 <= value[key] <= 1024}
 
 
 def diagnostic_text(value):
@@ -81,6 +96,45 @@ def verify_helper_lifecycle(cli, env):
             child.kill()
             child.communicate(timeout=2)
     return {"observerHardWatchdog": True, "observerParentEofCleanup": True}
+
+
+def observe_diagnostics(cli, env, app, launcher_pid):
+    """Observe a slow native run without exposing the helper's private inventory."""
+    with tempfile.TemporaryFile() as output:
+        child = subprocess.Popen([str(cli), "_resident_snapshot"], env=env,
+                                 stdin=subprocess.PIPE, stdout=output, stderr=subprocess.DEVNULL)
+        try:
+            child.stdin.write(b"V")
+            child.stdin.flush()
+            try:
+                code = child.wait(timeout=3.5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=1)
+                return {"completed": False, "reason": "probe deadline"}
+            output.seek(0)
+            raw = output.read(512 * 1024 + 1)
+            if code != 0 or len(raw) > 512 * 1024:
+                return {"completed": False, "reason": "probe exit or output bound", "exitCode": code}
+            try:
+                value = json.loads(raw)
+                apps = value.get("applications", [])
+                return {"completed": True, "available": value.get("available") is True,
+                        "complete": value.get("complete") is True,
+                        "applicationCount": len(apps),
+                        "nativeIconCount": sum(isinstance(a.get("icon_b64"), str) for a in apps),
+                        "missingExecutableCount": sum(not isinstance(a.get("executable_path"), str) for a in apps),
+                        "bundledApplicationObserved": any(a.get("bundle_path") == str(app) for a in apps),
+                        "launcherProcessObserved": any(a.get("process_id") == launcher_pid for a in apps),
+                        "counts": safe_counters(value.get("diagnostics"), OBSERVER_COUNTERS),
+                        "identityStages": safe_counters(value.get("diagnostics", {}).get("identity_stages"), IDENTITY_STAGES)}
+            except (ValueError, TypeError, AttributeError):
+                return {"completed": False, "reason": "invalid probe output"}
+        finally:
+            child.stdin.close()
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=1)
 
 
 def run(app, evidence, system_quit=False):
@@ -136,10 +190,17 @@ def run(app, evidence, system_quit=False):
         # The launcher starts/proves its own service. The same real UI worker
         # issues Settings handoff and authenticates Quit; no routes are mocked.
         try:
-            result = subprocess.run([str(launcher), "--macos-native-acceptance"], env=env,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    timeout=40, check=False, text=True)
+            child = subprocess.Popen([str(launcher), "--macos-native-acceptance"], env=env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                stdout, stderr = child.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                helper_checks["slowRunObserverProbe"] = observe_diagnostics(cli, env, app, child.pid)
+                stdout, stderr = child.communicate(timeout=31)
+            result = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
         except subprocess.TimeoutExpired as error:
+            child.kill()
+            child.communicate(timeout=2)
             stderr = error.stderr or b""
             if isinstance(stderr, bytes):
                 stderr = stderr.decode("utf-8", errors="replace")

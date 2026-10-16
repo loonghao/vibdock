@@ -75,7 +75,8 @@ accepted. Atomic-write failures, corruption, unsupported schemas and external
 file changes preserve the existing file and disable editing with a diagnostic.
 
 The Mac helper caps inspection at 128 applications and publication at 64. It
-verifies current-user kernel process creation data and AppKit launch identity,
+verifies current-user kernel process creation seconds/microseconds and native
+application identity (including AppKit launchDate whenever available),
 including apps without a visible Dock icon. Fixed 32px metadata-free PNG icons
 are bounded to 16KiB and validated before browser/native rendering. No offline
 saved bundle path is read to recover an icon. The native panel expires status and

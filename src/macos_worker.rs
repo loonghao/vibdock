@@ -139,7 +139,16 @@ pub(crate) fn collect(executable: &Path, stop: &AtomicBool) -> (Value, bool) {
         bounded_json(output)
     })()
     .unwrap_or_else(|| failure("Native application observation was invalid"));
-    (value, true)
+    (without_diagnostics(value), true)
+}
+
+fn without_diagnostics(mut value: Value) -> Value {
+    // Private helper counters aid native acceptance only. Never enlarge the
+    // closed registry envelope or expose these counters through the app API.
+    if let Some(object) = value.as_object_mut() {
+        object.remove("diagnostics");
+    }
+    value
 }
 
 fn bounded_json(reader: impl Read) -> Option<Value> {
@@ -219,6 +228,16 @@ mod tests {
             bounded_json(&b"{\"available\":false}"[..]).unwrap()["available"],
             false
         );
+    }
+    #[test]
+    fn private_helper_diagnostics_do_not_expand_the_registry_contract() {
+        let value = without_diagnostics(
+            json!({"available":false,"diagnostics":{"private":"ignored"},"unexpected":true}),
+        );
+        assert!(value.get("diagnostics").is_none());
+        assert_eq!(value["available"], false);
+        // Other unexpected fields still reach the Registry's closed validator.
+        assert_eq!(value["unexpected"], true);
     }
     #[test]
     fn cancellation_does_not_spawn_or_touch_storage() {

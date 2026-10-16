@@ -93,16 +93,19 @@ fn bounded_label(value: &str) -> String {
         .collect()
 }
 fn launch_identity(value: &str) -> bool {
-    // Preserve every bit of NSDate's f64 timestamp; rounded seconds are not a
-    // safe launch identity. Missing/nonfinite dates make that app unselectable.
-    value.len() == 16
+    // The native observer revalidates the kernel process start seconds and
+    // microseconds around every observation. Preserve both integers exactly;
+    // PID reuse and subsecond restarts must never inherit an old selection.
+    value.len() == 32
         && value
             .bytes()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-        && u64::from_str_radix(value, 16).ok().is_some_and(|bits| {
-            let timestamp = f64::from_bits(bits);
-            timestamp.is_finite() && timestamp > 0.0
-        })
+        && u64::from_str_radix(&value[..16], 16)
+            .ok()
+            .is_some_and(|seconds| seconds > 0)
+        && u64::from_str_radix(&value[16..], 16)
+            .ok()
+            .is_some_and(|microseconds| microseconds < 1_000_000)
 }
 
 #[derive(Clone)]
@@ -133,7 +136,7 @@ impl Application {
         }
         let bundle_path = string(value, "bundle_path", 2048)?;
         let executable = string(value, "executable_path", 2048)?;
-        let started = string(value, "process_started", 64)?;
+        let started = string(value, "process_started", 32)?;
         let pid = value.get("process_id")?.as_u64()?;
         let display_name = string(value, "display_name", 160)?;
         if !bundle_location(&bundle_path)
@@ -866,10 +869,13 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
+    fn kernel_start(seconds: u64, microseconds: u64) -> String {
+        format!("{seconds:016x}{microseconds:016x}")
+    }
     fn snapshot() -> Value {
         json!({"available":true,"complete":true,"skipped":0,"error":null,"applications":[{
             "bundle_path":"/Applications/Fixture.app","executable_path":"/Applications/Fixture.app/Contents/MacOS/Fixture",
-            "bundle_id":"org.vibdock.fixture","process_id":123,"process_started":format!("{:016x}", 1_700_000_000.123_456_f64.to_bits()),
+            "bundle_id":"org.vibdock.fixture","process_id":123,"process_started":kernel_start(1_700_000_000, 123_456),
             "display_name":"Fixture","running":true,"icon_b64":null
         }]})
     }
@@ -1115,12 +1121,16 @@ mod tests {
         assert_eq!(registry.view(false)["choices"], json!([]));
     }
     #[test]
-    fn selection_is_bound_to_bundle_executable_pid_and_exact_launch_bits() {
+    fn selection_is_bound_to_bundle_executable_pid_and_exact_kernel_start() {
         for (field, replacement) in [
             ("process_id", json!(124)),
             (
                 "process_started",
-                json!(format!("{:016x}", 1_700_000_000.123_457_f64.to_bits())),
+                json!(kernel_start(1_700_000_000, 123_457)),
+            ),
+            (
+                "process_started",
+                json!(kernel_start(1_700_000_001, 123_456)),
             ),
             (
                 "executable_path",
@@ -1310,6 +1320,28 @@ mod tests {
         );
     }
     #[test]
+    fn kernel_launch_identity_requires_exact_lowercase_seconds_and_microseconds() {
+        assert!(launch_identity(&kernel_start(1, 0)));
+        assert!(launch_identity(&kernel_start(1_700_000_000, 999_999)));
+        assert!(launch_identity(&kernel_start(1_700_000_000, 123_456)));
+        for invalid in [
+            kernel_start(0, 0),
+            kernel_start(0, 999_999),
+            kernel_start(1, 1_000_000),
+            kernel_start(1, u64::MAX),
+            format!("{:016x}", 1_700_000_000.123_456_f64.to_bits()),
+            format!("0x{}", kernel_start(1_700_000_000, 123_456)),
+            format!("{} ", kernel_start(1_700_000_000, 123_456)),
+            kernel_start(1_700_000_000, 123_456).to_uppercase(),
+            "g".repeat(32),
+            "0".repeat(31),
+            "0".repeat(33),
+            "é".repeat(16),
+        ] {
+            assert!(!launch_identity(&invalid), "{invalid}");
+        }
+    }
+    #[test]
     fn all_invalid_identity_fields_force_partial_observation() {
         let fixture = Fixture::new();
         let mut registry = fixture.registry();
@@ -1334,10 +1366,20 @@ mod tests {
             ("process_id", json!(-1)),
             ("process_id", json!(u32::MAX)),
             ("process_started", json!("1700000000")),
-            ("process_started", json!("7ff8000000000000")),
-            ("process_started", json!("0000000000000000")),
-            ("process_started", json!("7ff0000000000000")),
-            ("process_started", json!("bff0000000000000")),
+            (
+                "process_started",
+                json!(format!("{:016x}", 1_700_000_000.123_456_f64.to_bits())),
+            ),
+            ("process_started", json!(kernel_start(0, 123_456))),
+            (
+                "process_started",
+                json!(kernel_start(1_700_000_000, 1_000_000)),
+            ),
+            (
+                "process_started",
+                json!(format!("0x{}", kernel_start(1_700_000_000, 123_456))),
+            ),
+            ("process_started", json!("g".repeat(32))),
             ("process_started", Value::Null),
             ("running", json!(false)),
             ("running", json!("true")),
@@ -1369,7 +1411,7 @@ mod tests {
         }
         let mut duplicate = snapshot();
         let mut second = duplicate["applications"][0].clone();
-        second["process_started"] = json!(format!("{:016x}", 1_700_000_001.0_f64.to_bits()));
+        second["process_started"] = json!(kernel_start(1_700_000_001, 0));
         duplicate["applications"]
             .as_array_mut()
             .unwrap()

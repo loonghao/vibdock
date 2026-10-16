@@ -236,6 +236,7 @@ impl SoftwareSnapshot {
     }
 }
 
+#[derive(Clone)]
 struct SoftwareAcceptance {
     offline: Option<(String, String)>,
     running: Option<String>,
@@ -260,6 +261,97 @@ impl SoftwareAcceptance {
         let running = std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_RUNNING_ID").ok();
         Ok((offline.is_some() || running.is_some()).then_some(Self { offline, running }))
     }
+}
+
+fn public_observation_error(value: &Value) -> Option<&'static str> {
+    match value.as_str() {
+        None if value.is_null() => None,
+        Some("Waiting for native application observation") => Some("waiting_for_observation"),
+        Some("Application observation worker could not start") => Some("worker_start_failed"),
+        Some("Application observation contained invalid or incomplete data") => Some("invalid_observation"),
+        Some("Native application observation is incomplete or unavailable") => Some("native_observation_unavailable"),
+        Some("Native application observation is unavailable on this platform") => Some("platform_observation_unavailable"),
+        Some("Some applications could not be observed completely") => Some("partial_observation"),
+        Some("Application storage is unavailable; existing data was not changed.") => Some("storage_unavailable"),
+        Some("apps-macos.json is unreadable, invalid or unsupported; original data is preserved and application edits are disabled.") => Some("storage_invalid"),
+        _ => Some("other_error_redacted"),
+    }
+}
+
+fn public_presence(value: &Value) -> &'static str {
+    match value.as_str() {
+        Some("running") => "running",
+        Some("not_running") => "not_running",
+        Some("unknown") => "unknown",
+        _ => "invalid",
+    }
+}
+
+// Acceptance-only diagnostics intentionally omit ports, IDs, labels, paths,
+// tokens, image bytes and arbitrary error strings, even on malformed payloads.
+fn software_observation_diagnostic(
+    value: Option<&Value>,
+    parsed: Option<&SoftwareSnapshot>,
+    expected: Option<&SoftwareAcceptance>,
+    error: Option<&(dyn std::error::Error + 'static)>,
+    request_duration: Duration,
+) -> Value {
+    let (proved, failure) = if value.is_some() {
+        (Some(true), None)
+    } else if let Some(error) = error {
+        if error.is::<serde_json::Error>() {
+            (Some(true), Some("summary_json_invalid"))
+        } else {
+            match error.to_string().as_str() {
+                "No service instance" => (Some(false), Some("no_service_instance")),
+                "Listener failed instance proof" => (Some(false), Some("instance_proof_rejected")),
+                "Software status is unavailable" => {
+                    (Some(true), Some("summary_status_unavailable"))
+                }
+                _ => (None, Some("proof_or_summary_exchange_failed")),
+            }
+        }
+    } else {
+        (None, Some("no_observation_result"))
+    };
+    let empty = Value::Null;
+    let value = value.unwrap_or(&empty);
+    let rows = value["entries"].as_array();
+    let contains =
+        |id: &str| rows.is_some_and(|rows| rows.iter().any(|row| row["id"].as_str() == Some(id)));
+    let offline = expected.and_then(|expected| expected.offline.as_ref());
+    let running = expected.and_then(|expected| expected.running.as_ref());
+    json!({
+        "service_proof_succeeded": proved,
+        "request_failure": failure,
+        "request_duration_ms": request_duration.as_millis().min(u64::MAX as u128) as u64,
+        "platform_macos": value["platform"] == "macos",
+        "application_presence_kind": value["observation_kind"] == "application_presence",
+        "available": value["available"].as_bool(),
+        "complete": value["complete"].as_bool(),
+        "skipped": value["skipped"].as_u64(),
+        "age_ms": value["age_ms"].as_u64(),
+        "observation_error": public_observation_error(&value["error"]),
+        "parser_accepted": parsed.is_some(),
+        "raw_row_count": rows.map(Vec::len),
+        "parsed_row_count": parsed.map(|snapshot| snapshot.entries.len()),
+        "expected_offline_id_present": offline.map(|(id, _)| contains(id)),
+        "expected_offline_label_matches": offline.map(|(id, label)| rows.is_some_and(|rows| rows.iter()
+            .any(|row| row["id"].as_str() == Some(id.as_str()) && row["label"].as_str() == Some(label.as_str())))),
+        "expected_live_id_present": running.map(|id| contains(id)),
+        "rows": rows.into_iter().flatten().take(MAX_SOFTWARE_ROWS).enumerate().map(|(index, row)| json!({
+            "state": public_presence(&row["state"]),
+            "complete": row["complete"].as_bool(),
+            "id_valid": summary_string(row, "id", 128).is_some(),
+            "label_valid": summary_string(row, "label", 80).is_some(),
+            "actions_disabled": row["actions_enabled"] == false,
+            "sessions_empty": row["sessions"].as_array().is_some_and(Vec::is_empty),
+            "icon_provided": row["icon_b64"].as_str().is_some_and(|icon| !icon.is_empty()),
+            "icon_mime_png": row["icon_mime"] == "image/png",
+            "parsed_state": parsed.and_then(|snapshot| snapshot.entries.get(index)).map(|entry| entry.presence.label()),
+            "decoded_icon_present": parsed.and_then(|snapshot| snapshot.entries.get(index)).is_some_and(|entry| entry.icon.is_some()),
+        })).collect::<Vec<_>>(),
+    })
 }
 
 fn service_text(observation: Option<(u16, Instant)>, now: Instant) -> String {
@@ -308,6 +400,7 @@ enum Reply {
     Observation {
         port: Option<u16>,
         software: Option<SoftwareSnapshot>,
+        diagnostic: Option<Value>,
         checked: Instant,
     },
     Settings(std::result::Result<String, String>),
@@ -323,7 +416,7 @@ struct Worker {
 }
 
 impl Worker {
-    fn start() -> crate::Result<Self> {
+    fn start(acceptance: bool, expected: Option<SoftwareAcceptance>) -> crate::Result<Self> {
         let (commands, incoming) = mpsc::sync_channel(1);
         let (outgoing, replies) = mpsc::sync_channel(4);
         let stop = Arc::new(AtomicBool::new(false));
@@ -367,15 +460,37 @@ impl Worker {
                         let requested = Instant::now();
                         let observation = service::resident_app_view();
                         let checked = Instant::now();
-                        let (port, software) = match observation {
+                        let (port, software, diagnostic) = match observation {
                             Ok((port, value)) => {
-                                (Some(port), SoftwareSnapshot::parse(&value, requested))
+                                let software = SoftwareSnapshot::parse(&value, requested);
+                                let diagnostic = acceptance.then(|| {
+                                    software_observation_diagnostic(
+                                        Some(&value),
+                                        software.as_ref(),
+                                        expected.as_ref(),
+                                        None,
+                                        checked.saturating_duration_since(requested),
+                                    )
+                                });
+                                (Some(port), software, diagnostic)
                             }
-                            Err(_) => (None, None),
+                            Err(error) => {
+                                let diagnostic = acceptance.then(|| {
+                                    software_observation_diagnostic(
+                                        None,
+                                        None,
+                                        expected.as_ref(),
+                                        Some(error.as_ref()),
+                                        checked.saturating_duration_since(requested),
+                                    )
+                                });
+                                (None, None, diagnostic)
+                            }
                         };
                         let _ = outgoing.try_send(Reply::Observation {
                             port,
                             software,
+                            diagnostic,
                             checked,
                         });
                         next_observation = Instant::now() + Duration::from_secs(1);
@@ -606,13 +721,14 @@ impl ResidentDelegate {
         acceptance: bool,
         reopen: Receiver<()>,
     ) -> crate::Result<Retained<Self>> {
+        let software_acceptance = SoftwareAcceptance::from_environment(acceptance)?;
         let this = Self::alloc(mtm).set_ivars(DelegateState {
             ui: OnceCell::new(),
-            worker: Worker::start()?,
+            worker: Worker::start(acceptance, software_acceptance.clone())?,
             pending: Cell::new(None),
             observation: Cell::new(None),
             software: RefCell::new(SoftwareSnapshot::default()),
-            software_acceptance: SoftwareAcceptance::from_environment(acceptance)?,
+            software_acceptance,
             acceptance,
             system_quit_acceptance: acceptance
                 && std::env::var("VIBDOCK_NATIVE_ACCEPTANCE_SYSTEM_QUIT").as_deref() == Ok("1"),
@@ -711,8 +827,35 @@ impl ResidentDelegate {
                 Reply::Observation {
                     port,
                     software,
+                    diagnostic,
                     checked,
                 } => {
+                    if let Some(mut diagnostic) = diagnostic {
+                        let mut report = self.ivars().report.borrow_mut();
+                        let attempts = report
+                            .get("software_observation_attempts")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        report.insert("software_observation_attempts".into(), json!(attempts));
+                        diagnostic["attempt"] = json!(attempts);
+                        diagnostic["acceptance_elapsed_ms"] = json!(self
+                            .ivars()
+                            .started
+                            .elapsed()
+                            .as_millis()
+                            .min(u64::MAX as u128)
+                            as u64);
+                        let history = report
+                            .entry("software_observation_diagnostics")
+                            .or_insert_with(|| json!([]))
+                            .as_array_mut()
+                            .expect("owned diagnostic array");
+                        if history.len() == 8 {
+                            history.remove(0);
+                        }
+                        history.push(diagnostic);
+                    }
                     self.ivars()
                         .observation
                         .set(port.map(|port| (port, checked)));
@@ -1373,6 +1516,37 @@ impl ResidentDelegate {
     fn final_report(&self) -> Value {
         let mut report = self.ivars().report.borrow().clone();
         if self.ivars().acceptance {
+            let displayed = self.ivars().software.borrow().display(Instant::now());
+            let running = self
+                .ivars()
+                .software_acceptance
+                .as_ref()
+                .and_then(|expected| expected.running.as_ref());
+            let running_index =
+                running.and_then(|id| displayed.iter().position(|entry| &entry.id == id));
+            report.insert("software_final_display".into(), json!({
+                "acceptance_ready": self.software_acceptance_ready(),
+                "row_count": displayed.len(),
+                "rows": displayed.iter().map(|entry| json!({
+                    "state": entry.presence.label(), "decoded_icon_present": entry.icon.is_some(),
+                })).collect::<Vec<_>>(),
+                "native_rows": self.ivars().ui.get().map(|ui| ui.software_rows.iter()
+                    .filter(|row| !row.label.isHidden()).map(|row| {
+                        let state = match row.state.stringValue().to_string().as_str() {
+                            "Running" => "running", "Not running" => "not_running",
+                            "Unknown" => "unknown", _ => "invalid",
+                        };
+                        json!({ "state": state, "placeholder_visible": !row.placeholder.isHidden(),
+                            "native_icon_valid": row.image.image().is_some_and(|image| image.isValid()),
+                        })
+                    }).collect::<Vec<_>>()),
+                "expected_live_row_present": running.map(|_| running_index.is_some()),
+                "expected_live_row_running": running.map(|_| running_index.is_some_and(|index| displayed[index].presence == Presence::Running)),
+                "expected_live_native_icon_valid": running.map(|_| running_index.is_some_and(|index| {
+                    self.ivars().ui.get().is_some_and(|ui| ui.software_rows[index].image.image()
+                        .is_some_and(|image| image.isValid()))
+                })),
+            }));
             report.insert(
                 "native_resources_released".into(),
                 json!(self.ivars().cleaned.get()),
@@ -1771,6 +1945,77 @@ mod tests {
                 "actions_enabled": false, "icon_mime": "image/png", "icon_b64": null,
             }],
         })
+    }
+
+    #[test]
+    fn acceptance_diagnostics_are_bounded_and_never_expose_private_strings() {
+        let mut value = software_summary();
+        value["error"] = json!("Cannot read /Users/SECRET_PRIVATE/App.app token=SECRET_PRIVATE");
+        value["entries"][0]["id"] = json!("SECRET_PRIVATE_ID");
+        value["entries"][0]["label"] = json!("SECRET_PRIVATE_LABEL");
+        value["entries"][0]["icon_b64"] = json!("SECRET_PRIVATE_ICON");
+        let expected = SoftwareAcceptance {
+            offline: Some(("SECRET_PRIVATE_ID".into(), "SECRET_PRIVATE_LABEL".into())),
+            running: Some("SECRET_PRIVATE_ID".into()),
+        };
+        let snapshot = SoftwareSnapshot::parse(&value, Instant::now());
+        let diagnostic = software_observation_diagnostic(
+            Some(&value),
+            snapshot.as_ref(),
+            Some(&expected),
+            None,
+            Duration::from_millis(12),
+        );
+        assert_eq!(diagnostic["service_proof_succeeded"], true);
+        assert_eq!(diagnostic["parser_accepted"], true);
+        assert_eq!(diagnostic["expected_offline_id_present"], true);
+        assert_eq!(diagnostic["expected_live_id_present"], true);
+        assert_eq!(diagnostic["observation_error"], "other_error_redacted");
+        assert!(!diagnostic.to_string().contains("SECRET_PRIVATE"));
+        let row = value["entries"][0].clone();
+        value["entries"] = json!(vec![row; 20]);
+        let diagnostic =
+            software_observation_diagnostic(Some(&value), None, None, None, Duration::ZERO);
+        assert_eq!(diagnostic["raw_row_count"], 20);
+        assert_eq!(
+            diagnostic["rows"].as_array().unwrap().len(),
+            MAX_SOFTWARE_ROWS
+        );
+        assert_eq!(diagnostic["parser_accepted"], false);
+    }
+
+    #[test]
+    fn failed_observation_diagnostics_do_not_invent_proof_or_print_errors() {
+        for (error, proof, failure) in [
+            ("No service instance", json!(false), "no_service_instance"),
+            (
+                "Listener failed instance proof",
+                json!(false),
+                "instance_proof_rejected",
+            ),
+            (
+                "Software status is unavailable",
+                json!(true),
+                "summary_status_unavailable",
+            ),
+            (
+                "SECRET_PRIVATE /Users/private token",
+                Value::Null,
+                "proof_or_summary_exchange_failed",
+            ),
+        ] {
+            let error: Box<dyn std::error::Error> = error.into();
+            let diagnostic = software_observation_diagnostic(
+                None,
+                None,
+                None,
+                Some(error.as_ref()),
+                Duration::ZERO,
+            );
+            assert_eq!(diagnostic["service_proof_succeeded"], proof);
+            assert_eq!(diagnostic["request_failure"], failure);
+            assert!(!diagnostic.to_string().contains("SECRET_PRIVATE"));
+        }
     }
 
     #[test]
