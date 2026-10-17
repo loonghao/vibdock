@@ -123,5 +123,6 @@ const entryId = 'a'.repeat(64);
   await run('saveShortcut()');
   assert.equal(run('shortcutRequest.body.scope'), 'foreground', 'windowed binding did not default to foreground');
   assert.equal(run(`$('pinnedShortcuts').children.length`), 1, 'saved shortcut was not rendered');
+  assert.equal(run(`$('pinnedShortcuts').children[0].children[1].disabled`), false, 'saved shortcut stayed disabled after the save completed');
   console.log('PASS: authoritative binding, device identity, atomic UI saves, app association, application recognition and per-app shortcut scope (DOM fixtures only)');
 })().catch(error => {console.error(error);process.exitCode=1;});

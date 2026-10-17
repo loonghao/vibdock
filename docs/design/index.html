@@ -432,11 +432,12 @@ function renderShortcuts(data){
    const state=appNode('p',entry.armed?'已注册；发送后不验证应用状态':(entry.error?'未注册：'+entry.error:'未注册'));body.append(state);
    const remove=appNode('button','删除');remove.disabled=shortcutBusy||!data.storage_writable;remove.onclick=()=>removeShortcut(entry);row.append(body,remove);list.append(row);}
 }
+function finishShortcutBusy(){shortcutBusy=false;shortcutRenderKey='';if(shortcutsData)renderShortcuts(shortcutsData);else renderShortcutApplications();}
 async function refreshShortcuts(){
   if(shortcutBusy||!serviceToken||document.hidden)return;shortcutBusy=true;const expectedToken=serviceToken;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
   try{const response=await api('/api/shortcuts',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)renderShortcuts(data);}
   catch{$('shortcutStatus').textContent='应用快捷键状态未知：服务读取失败。';$('shortcutStatus').dataset.kind='error';}
-  finally{clearTimeout(timeout);shortcutBusy=false;renderShortcutApplications();}
+  finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 async function saveShortcut(){
   if(shortcutBusy||!shortcutReady())return;
@@ -446,14 +447,14 @@ async function saveShortcut(){
   $('shortcutStatus').textContent='正在保存并注册触发键…';$('shortcutStatus').dataset.kind='idle';
   try{const response=await api('/api/shortcuts/add',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,application_reference:reference,trigger,dispatch,label,scope:$('shortcutGlobal').checked?'running':'foreground'})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutEditor').hidden=true;$('shortcutStatus').textContent='已保存。只有目标应用位于前台时才会发送该快捷键。';$('shortcutStatus').dataset.kind='ok';refreshApps();}
   catch(error){$('shortcutStatus').textContent='未保存：'+error.message;$('shortcutStatus').dataset.kind='error';}
-  finally{clearTimeout(timeout);shortcutBusy=false;renderShortcutApplications();}
+  finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 async function removeShortcut(entry){
   if(shortcutBusy||!serviceToken)return;if(!confirm('删除「'+entry.label+'」的应用快捷键？'))return;
   shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
   try{const response=await api('/api/shortcuts/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,id:entry.id})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutStatus').textContent='已删除。';$('shortcutStatus').dataset.kind='ok';}
   catch(error){$('shortcutStatus').textContent='删除未确认：'+error.message;$('shortcutStatus').dataset.kind='error';}
-  finally{clearTimeout(timeout);shortcutBusy=false;renderShortcutApplications();}
+  finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 $('shortcutCancel').onclick=()=>{$('shortcutEditor').hidden=true;};
 $('shortcutSave').onclick=saveShortcut;
