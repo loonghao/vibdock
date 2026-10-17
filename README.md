@@ -262,9 +262,10 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 
 These commands are implemented in current source. A dated two-session
 exact-session mute/unmute readback check is recorded in the
-[application recognition acceptance record](docs/testing/app-recognition-acceptance.md);
-meeting-level isolation and the published v0.1.0 download are still out of
-scope.
+[application recognition acceptance record](docs/testing/app-recognition-acceptance.md),
+and a repeatable opt-in two-application state check is available below;
+audible meeting-level isolation remains unverified, and the published v0.1.0
+download does not include them.
 
 Application playback sessions are separate from microphone mute: they let one
 program's audio be silenced while everything else keeps playing.
@@ -332,6 +333,28 @@ expected and is counted but not treated as a fault. A session that is
 addressable but whose state could not be read is a genuine **could not be read**
 warning.
 
+### Reproducible two-application isolation check
+
+`scripts/test-playback-isolation.ps1` is an opt-in Windows-only harness that
+repeats the two-application check against real playback sessions. It writes two
+short distinct WAV tones to a temporary directory, starts two `pwsh` players
+using `System.Media.SoundPlayer.PlayLooping()`, requires the single active
+render endpoint from `app-devices`, selects exactly the two sessions owned by
+the player PIDs, mutes A, and asserts A reads `muted=true` while B remains
+`muted=false` and `active=true`. It then unmutes A, verifies both sessions are
+still unmuted and active, and always stops the players and deletes the
+temporary files in `finally`.
+
+```powershell
+cargo build --locked
+pwsh -NoProfile -File scripts/test-playback-isolation.ps1
+```
+
+The harness never issues a device-level command and never falls back to another
+endpoint or session. It is state-level evidence only: no meeting is joined and
+audible output is not measured. Because it needs real Windows audio hardware it
+is not a hosted-CI step. See [the harness notes](docs/testing/playback-isolation.md).
+
 ## Product direction
 
 `vibdock capabilities` reports documentation-derived integration declarations.
@@ -341,7 +364,7 @@ as unknown or unverified rather than claiming a working application connection.
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
-- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. A two-session exact-session state check is recorded, while meeting-level isolation and hardware bindings for these playback actions remain open.
+- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. A two-session exact-session state check is recorded, while meeting-level isolation and hardware bindings for these playback actions remain open. The opt-in two-application harness checks session state, not audibility.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
@@ -360,6 +383,10 @@ cargo build --locked --release --target-dir target
 ```
 
 Audio access is confined to the Windows adapter. The command parser and embedded preview run on all supported build platforms.
+
+The opt-in `scripts/test-playback-isolation.ps1` harness is intentionally not a
+CI step: it needs a real Windows audio endpoint and two live player processes.
+See [the harness notes](docs/testing/playback-isolation.md).
 
 ## Releases
 
