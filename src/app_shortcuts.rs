@@ -13,6 +13,11 @@
 //! injected keys to the same global hotkey registrations as physical keys, so
 //! such a binding would make VibDock re-trigger itself.
 
+// The dispatch/registration surface is Windows-only. Other platforms keep the
+// module for the read-only view and platform-independent tests, so the unused
+// Windows-only helpers do not fail their lint build.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use crate::hotkey::Hotkey;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -21,6 +26,7 @@ const MAX_ENTRIES: usize = 8;
 const MAX_FILE: usize = 32 * 1024;
 /// Hotkey ids 0..999 stay reserved for the single microphone binding and
 /// existing tests. Per-application bindings use this base plus their index.
+#[cfg(windows)]
 pub(crate) const HOTKEY_ID_BASE: i32 = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +63,7 @@ struct Entry {
     scope: Scope,
 }
 impl Entry {
+    #[cfg(windows)]
     fn json(&self) -> Value {
         json!({"id":self.id,"label":self.label,"executable_path":self.executable,"trigger":self.trigger,"dispatch":self.dispatch,"scope":self.scope.as_str()})
     }
@@ -134,6 +141,7 @@ fn bounded_label(value: &str) -> String {
     }
     label
 }
+#[cfg(windows)]
 pub(crate) fn hotkey_id(index: usize) -> i32 {
     HOTKEY_ID_BASE + i32::try_from(index).unwrap_or(i32::MAX - HOTKEY_ID_BASE)
 }

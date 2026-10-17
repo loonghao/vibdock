@@ -31,8 +31,8 @@ const SHUTDOWN_SENTINEL: &str = "\u{0}vibdock-shutdown";
 /// The id the resident service registers its configured hotkey under.
 ///
 /// Fixed rather than derived: the service owns exactly one global binding, so
-/// there is no second registration to distinguish.
-#[cfg(windows)]
+/// there is no second registration to distinguish. Defined on every platform
+/// so the accept loop can compare a drained id without a conditional block.
 pub(crate) const BINDING_HOTKEY_ID: i32 = 1;
 
 /// The platform hotkey registration the service owns, if the platform has one.
@@ -253,6 +253,29 @@ fn fired_hotkeys() -> Vec<i32> {
 #[cfg(not(windows))]
 fn fired_hotkeys() -> Vec<i32> {
     vec![]
+}
+
+/// Resolves one fired application-binding id against the current scan.
+///
+/// Only Windows can dispatch, and only its resident-app registry carries the
+/// presence lookup used by the `running` scope. Other platforms never produce a
+/// fired id, so this is explicitly empty rather than a fake dispatch.
+#[cfg(windows)]
+fn application_shortcut_result(
+    shortcuts: &ShortcutRegistry,
+    apps: &crate::resident_apps::Registry,
+    id: i32,
+) -> Option<(std::result::Result<String, String>, Option<String>)> {
+    shortcuts.fired(id, |path| apps.application_running(path))
+}
+
+#[cfg(not(windows))]
+fn application_shortcut_result(
+    _shortcuts: &ShortcutRegistry,
+    _apps: &crate::resident_apps::Registry,
+    _id: i32,
+) -> Option<(std::result::Result<String, String>, Option<String>)> {
+    None
 }
 
 /// Performs the action the armed binding is configured for.
@@ -788,7 +811,7 @@ fn accept_loop(
                 // cannot relabel this action's verified result with another mic.
                 feedback.record_for(result, state.device_id.as_deref());
             } else if let Some((result, target)) =
-                shortcuts.fired(id, |path| apps.application_running(path))
+                application_shortcut_result(&shortcuts, &apps, id)
             {
                 if let Err(error) = &result {
                     eprintln!("ERROR: the application shortcut failed: {error}");
@@ -1808,34 +1831,53 @@ fn shortcuts_route(
     if !request.authorized {
         return unauthorized();
     }
-    match (request.method, request.path) {
-        (Method::Get, "/api/shortcuts") => (200, "application/json", shortcuts.view().to_string()),
-        (Method::Post, "/api/shortcuts/add") => {
-            let reference = serde_json::from_str::<serde_json::Value>(request.body)
-                .ok()
-                .and_then(|value| value["application_reference"].as_str().map(str::to_string));
-            let application = reference
-                .as_deref()
-                .and_then(|reference| apps.resolve_application(reference));
-            let (code, value) =
-                shortcuts.mutate("add", request.body, config.hotkey.as_deref(), application);
-            if code == 200 {
-                if let Some(reference) = reference.as_deref() {
-                    apps.consume_application(reference);
-                }
+    #[cfg(windows)]
+    {
+        match (request.method, request.path) {
+            (Method::Get, "/api/shortcuts") => {
+                (200, "application/json", shortcuts.view().to_string())
             }
-            (code, "application/json", value.to_string())
+            (Method::Post, "/api/shortcuts/add") => {
+                let reference = serde_json::from_str::<serde_json::Value>(request.body)
+                    .ok()
+                    .and_then(|value| value["application_reference"].as_str().map(str::to_string));
+                let application = reference
+                    .as_deref()
+                    .and_then(|reference| apps.resolve_application(reference));
+                let (code, value) =
+                    shortcuts.mutate("add", request.body, config.hotkey.as_deref(), application);
+                if code == 200 {
+                    if let Some(reference) = reference.as_deref() {
+                        apps.consume_application(reference);
+                    }
+                }
+                (code, "application/json", value.to_string())
+            }
+            (Method::Post, "/api/shortcuts/remove") => {
+                let (code, value) =
+                    shortcuts.mutate("remove", request.body, config.hotkey.as_deref(), None);
+                (code, "application/json", value.to_string())
+            }
+            _ => (
+                404,
+                "application/json",
+                serde_json::json!({"error":"Unknown shortcut route"}).to_string(),
+            ),
         }
-        (Method::Post, "/api/shortcuts/remove") => {
-            let (code, value) =
-                shortcuts.mutate("remove", request.body, config.hotkey.as_deref(), None);
-            (code, "application/json", value.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (apps, config);
+        match (request.method, request.path) {
+            (Method::Get, "/api/shortcuts") => {
+                (200, "application/json", shortcuts.view().to_string())
+            }
+            _ => (
+                501,
+                "application/json",
+                serde_json::json!({"error":"Application shortcut dispatch is unavailable on this platform"}).to_string(),
+            ),
         }
-        _ => (
-            404,
-            "application/json",
-            serde_json::json!({"error":"Unknown shortcut route"}).to_string(),
-        ),
     }
 }
 

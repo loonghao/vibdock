@@ -424,6 +424,7 @@ impl Registry {
     ///
     /// The path never reaches the browser; only this opaque, short-lived
     /// reference does. A stale scan cannot authorise a new binding.
+    #[cfg(any(windows, test))]
     pub(crate) fn resolve_application(&self, reference: &str) -> Option<(String, String, bool)> {
         if !self.fresh() || self.load_error.is_some() {
             return None;
@@ -443,6 +444,7 @@ impl Registry {
         ))
     }
     /// Consumes a resolved reference so one displayed row yields one binding.
+    #[cfg(any(windows, test))]
     pub(crate) fn consume_application(&mut self, reference: &str) {
         self.application_selections.remove(reference);
         self.current_applications
@@ -452,6 +454,7 @@ impl Registry {
     ///
     /// Used by the broadened "running" dispatch scope for background input
     /// tools. A stale scan cannot authorise a dispatch.
+    #[cfg(any(windows, test))]
     pub(crate) fn application_running(&self, path: &str) -> bool {
         self.fresh()
             && self

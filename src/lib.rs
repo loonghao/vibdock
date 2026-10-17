@@ -35,6 +35,9 @@ mod macos_worker;
 #[allow(dead_code)]
 #[path = "macos_worker.rs"]
 mod macos_worker_tests;
+// The Windows helper protocol is compiled everywhere so the shortcut registry
+// can share its path validator; only Windows constructs the full job surface.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod resident_action_protocol;
 #[cfg(not(target_os = "macos"))]
 mod resident_actions;
