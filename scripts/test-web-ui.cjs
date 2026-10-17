@@ -79,6 +79,7 @@ async function unusedPort() {
       await page.screenshot({path:path.join(output,`homepage-${viewport.width}.png`),fullPage:true});
       await page.locator('button[data-view=apps]').click();
       await page.waitForFunction(()=>!document.querySelector('#appReadStatus').textContent.includes('授权后读取'));
+      if(macOS)await page.locator('#appChoices button').first().waitFor({timeout:15000});
       const apps=await page.evaluate(async()=>{const response=await api('/api/apps');return response.json()});
       assert.equal(apps.actions_enabled,false,'read-only software view enabled an action');
       if(macOS){
