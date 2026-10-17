@@ -192,8 +192,11 @@ try {
     $second = Start-Entry 'vibdock-launcher.exe'
     if (-not $second.WaitForExit(15000) -or $second.ExitCode -ne 0) { throw 'Second launcher did not hand over to the singleton' }
     if ($first.HasExited -or [IO.File]::ReadAllText($recordPath) -cne $initialRecord) { throw 'Repeated launch replaced the resident service' }
-    # Primary click requests authenticated Web Settings, never a native panel.
-    [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]1, [IntPtr]0x0202) # WM_LBUTTONUP
+    # Rapid repeated Settings requests must coalesce without a modal busy box
+    # blocking the subsequent Exit command.
+    foreach ($requestIndex in 1..3) {
+        [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]1, [IntPtr]0x0202) # WM_LBUTTONUP
+    }
     Start-Sleep -Milliseconds 500
     if ([VibDockNative]::IsWindowVisible($window)) { throw 'Launch or primary tray click revealed the obsolete panel' }
     [void][VibDockNative]::PostMessage($window, 0x0111, [IntPtr]103, [IntPtr]::Zero) # actual Exit command

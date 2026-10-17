@@ -360,19 +360,39 @@ fn action_result(selection: &PlaybackSelection, message: &str) -> WorkerEvent {
 fn next_worker_command(
     commands: &mpsc::Receiver<WorkerCommand>,
     shutdown: &AtomicBool,
+    settings: &AtomicBool,
 ) -> std::result::Result<WorkerCommand, mpsc::RecvTimeoutError> {
-    let command = if shutdown.load(Ordering::Relaxed) {
-        Err(mpsc::RecvTimeoutError::Timeout)
+    let command = if shutdown.load(Ordering::Relaxed) || settings.load(Ordering::Relaxed) {
+        commands.try_recv().map_err(|error| match error {
+            mpsc::TryRecvError::Empty => mpsc::RecvTimeoutError::Timeout,
+            mpsc::TryRecvError::Disconnected => mpsc::RecvTimeoutError::Disconnected,
+        })
     } else {
         commands.recv_timeout(Duration::from_millis(50))
     };
     // Exit cannot be displaced by a queued Settings or startup request. Check
     // again after receiving because Exit may arrive while this worker waits.
-    if shutdown.swap(false, Ordering::Relaxed) {
+    if shutdown.load(Ordering::Relaxed) {
+        settings.store(false, Ordering::Relaxed);
         while commands.try_recv().is_ok() {}
         Ok(WorkerCommand::Shutdown)
+    } else if matches!(&command, Err(mpsc::RecvTimeoutError::Timeout))
+        && settings.swap(false, Ordering::Relaxed)
+    {
+        // Already accepted actions retain their queue order. Repeated Settings
+        // requests consume no queue slot and become one later browser opening.
+        Ok(WorkerCommand::Settings)
     } else {
         command
+    }
+}
+
+// Recheck at execute admission after a potentially blocking preparation.
+fn dispatch_prepared_playback<T>(shutdown: &AtomicBool, dispatch: impl FnOnce() -> T) -> Option<T> {
+    if shutdown.load(Ordering::Relaxed) {
+        None
+    } else {
+        Some(dispatch())
     }
 }
 
@@ -381,6 +401,7 @@ fn poll_worker(
     commands: mpsc::Receiver<WorkerCommand>,
     stop: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
+    settings: Arc<AtomicBool>,
 ) {
     let mut client: Option<service::ResidentControlClient> = None;
     let mut latest: Option<Observation> = None;
@@ -390,7 +411,7 @@ fn poll_worker(
     let mut startup_client: Option<service::ResidentControlClient> = None;
     let mut next_poll = Instant::now();
     while !stop.load(Ordering::Relaxed) {
-        match next_worker_command(&commands, &shutdown) {
+        match next_worker_command(&commands, &shutdown, &settings) {
             Ok(WorkerCommand::Playback(selection)) => {
                 if pending.is_some()
                     || client.is_none()
@@ -485,6 +506,7 @@ fn poll_worker(
                 if finished {
                     return;
                 }
+                shutdown.store(false, Ordering::Relaxed);
                 client = None;
                 latest = None;
                 next_poll = Instant::now();
@@ -495,6 +517,9 @@ fn poll_worker(
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        if shutdown.load(Ordering::Relaxed) {
+            continue;
+        }
         if let Some(mut operation) = pending.take() {
             let mut complete = None;
             if !operation.execute_attempted {
@@ -503,7 +528,14 @@ fn poll_worker(
                 } else {
                     // Exactly one attempt, even if the server's response is
                     // lost. Subsequent requests only read this known receipt.
-                    if operation.client.execute(&operation.prepared).is_err() {
+                    let Some(result) = dispatch_prepared_playback(&shutdown, || {
+                        operation.execute_attempted = true;
+                        operation.client.execute(&operation.prepared)
+                    }) else {
+                        pending = Some(operation);
+                        continue;
+                    };
+                    if result.is_err() {
                         latest = None;
                         let _ = send_worker_event(
                             &sender,
@@ -511,7 +543,6 @@ fn poll_worker(
                             WorkerEvent::Observation(Observation::unavailable(generation)),
                         );
                     }
-                    operation.execute_attempted = true;
                     operation.next_read = Instant::now() + Duration::from_millis(250);
                 }
             } else if operation.started.elapsed() >= Duration::from_secs(12) {
@@ -631,6 +662,7 @@ fn poll_worker(
 struct Poller {
     stop: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
+    settings: Arc<AtomicBool>,
     commands: mpsc::SyncSender<WorkerCommand>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -642,13 +674,24 @@ impl Poller {
         let worker_stop = Arc::clone(&stop);
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
+        let settings = Arc::new(AtomicBool::new(false));
+        let worker_settings = Arc::clone(&settings);
         let thread = std::thread::Builder::new()
             .name("desktop-status".into())
-            .spawn(move || poll_worker(sender, requests, worker_stop, worker_shutdown))?;
+            .spawn(move || {
+                poll_worker(
+                    sender,
+                    requests,
+                    worker_stop,
+                    worker_shutdown,
+                    worker_settings,
+                )
+            })?;
         Ok((
             Self {
                 stop,
                 shutdown,
+                settings,
                 commands,
                 thread: Some(thread),
             },
@@ -656,13 +699,22 @@ impl Poller {
         ))
     }
     fn request(&self, command: WorkerCommand) -> bool {
-        if matches!(command, WorkerCommand::Shutdown) {
-            self.shutdown.store(true, Ordering::Relaxed);
-            true
-        } else if self.shutdown.load(Ordering::Relaxed) {
-            false
-        } else {
-            self.commands.try_send(command).is_ok()
+        match command {
+            WorkerCommand::Shutdown => {
+                self.shutdown.store(true, Ordering::Relaxed);
+                self.settings.store(false, Ordering::Relaxed);
+                true
+            }
+            WorkerCommand::Settings => {
+                // Opening Settings is idempotent. Closing takes precedence and
+                // must not produce a busy modal or leave a page queued to open.
+                if !self.shutdown.load(Ordering::Relaxed) {
+                    self.settings.store(true, Ordering::Relaxed);
+                }
+                true
+            }
+            _ if self.shutdown.load(Ordering::Relaxed) => false,
+            command => self.commands.try_send(command).is_ok(),
         }
     }
 }
@@ -1820,6 +1872,60 @@ impl Drop for AppIcons {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn command_fixture() -> (Poller, mpsc::Receiver<WorkerCommand>) {
+        let (commands, requests) = mpsc::sync_channel(1);
+        (
+            Poller {
+                stop: Arc::new(AtomicBool::new(false)),
+                shutdown: Arc::new(AtomicBool::new(false)),
+                settings: Arc::new(AtomicBool::new(false)),
+                commands,
+                thread: None,
+            },
+            requests,
+        )
+    }
+
+    #[test]
+    fn exit_during_preparation_prevents_execute_and_retains_failure_semantics() {
+        let (poller, requests) = command_fixture();
+        let shutdown = Arc::clone(&poller.shutdown);
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_writes = Arc::clone(&writes);
+        let (preparing, preparation_started) = mpsc::sync_channel(1);
+        let (prepared, preparation_finished) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            preparing.send(()).unwrap();
+            preparation_finished
+                .recv_timeout(Duration::from_secs(2))
+                .expect("The fixture preparation must be released");
+            dispatch_prepared_playback(&shutdown, || {
+                worker_writes.fetch_add(1, Ordering::Relaxed);
+                Err::<(), _>("unconfirmed response")
+            })
+        });
+        preparation_started
+            .recv_timeout(Duration::from_secs(2))
+            .expect("The fixture must enter preparation before Exit");
+        command(103, &poller, None);
+        prepared.send(()).unwrap();
+        assert_eq!(worker.join().unwrap(), None);
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Ok(WorkerCommand::Shutdown)
+        ));
+        // If shutdown fails, a later explicit action may execute once. Its lost
+        // response remains an attempted write, never a cancelled/no-write result.
+        poller.shutdown.store(false, Ordering::Relaxed);
+        let result = dispatch_prepared_playback(&poller.shutdown, || {
+            writes.fetch_add(1, Ordering::Relaxed);
+            Err::<(), _>("unconfirmed response")
+        });
+        assert_eq!(result, Some(Err("unconfirmed response")));
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn exit_keeps_legacy_id_and_preempts_a_full_settings_queue() {
         assert_eq!(MENU_EXIT, 103);
@@ -1828,13 +1934,7 @@ mod tests {
         for (index, id) in ids.iter().enumerate() {
             assert!(!ids[index + 1..].contains(id));
         }
-        let (commands, requests) = mpsc::sync_channel(1);
-        let poller = Poller {
-            stop: Arc::new(AtomicBool::new(false)),
-            shutdown: Arc::new(AtomicBool::new(false)),
-            commands,
-            thread: None,
-        };
+        let (poller, requests) = command_fixture();
         // A bare numeric startup command has no frozen selection and cannot act.
         command(MENU_STARTUP, &poller, None);
         assert!(matches!(
@@ -1842,12 +1942,13 @@ mod tests {
             Err(mpsc::TryRecvError::Empty)
         ));
         command(MENU_OPEN, &poller, None);
-        assert!(!poller.request(WorkerCommand::Settings));
+        assert!(poller.commands.try_send(WorkerCommand::Settings).is_ok());
         command(103, &poller, None);
         assert!(poller.shutdown.load(Ordering::Relaxed));
-        assert!(!poller.request(WorkerCommand::Settings));
+        command(MENU_OPEN, &poller, None);
+        assert!(!poller.settings.load(Ordering::Relaxed));
         assert!(matches!(
-            next_worker_command(&requests, &poller.shutdown),
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
             Ok(WorkerCommand::Shutdown)
         ));
         assert!(matches!(
@@ -1855,11 +1956,89 @@ mod tests {
             Err(mpsc::TryRecvError::Empty)
         ));
         // A failed shutdown can be retried; no stale queued command survives it.
+        poller.shutdown.store(false, Ordering::Relaxed);
         assert!(poller.request(WorkerCommand::Shutdown));
         assert!(matches!(
-            next_worker_command(&requests, &poller.shutdown),
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
             Ok(WorkerCommand::Shutdown)
         ));
+    }
+
+    #[test]
+    fn repeated_settings_commands_merge_into_one_browser_request() {
+        let (poller, requests) = command_fixture();
+        for _ in 0..5 {
+            command(101, &poller, None);
+        }
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Ok(WorkerCommand::Settings)
+        ));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+    }
+
+    #[test]
+    fn coalesced_settings_preserve_accepted_actions_and_yield_to_exit() {
+        let startup = StartupSelection {
+            generation: 9,
+            enabled: true,
+            expected_enabled: false,
+        };
+        let playback = PlaybackSelection {
+            generation: 8,
+            entry_id: "fixture-entry".into(),
+            session_reference: "fixture-session".into(),
+            label: "Fixture only".into(),
+            process_id: 77,
+            requested_muted: true,
+        };
+        for playback_action in [false, true] {
+            for exit in [false, true] {
+                let (poller, requests) = command_fixture();
+                assert!(poller.request(if playback_action {
+                    WorkerCommand::Playback(playback.clone())
+                } else {
+                    WorkerCommand::Startup(startup)
+                }));
+                for _ in 0..3 {
+                    command(101, &poller, None);
+                }
+                if exit {
+                    command(103, &poller, None);
+                    assert!(matches!(
+                        next_worker_command(&requests, &poller.shutdown, &poller.settings),
+                        Ok(WorkerCommand::Shutdown)
+                    ));
+                    command(101, &poller, None);
+                    assert!(!poller.settings.load(Ordering::Relaxed));
+                    assert!(matches!(
+                        requests.try_recv(),
+                        Err(mpsc::TryRecvError::Empty)
+                    ));
+                } else {
+                    match (
+                        playback_action,
+                        next_worker_command(&requests, &poller.shutdown, &poller.settings),
+                    ) {
+                        (false, Ok(WorkerCommand::Startup(actual))) => assert_eq!(actual, startup),
+                        (true, Ok(WorkerCommand::Playback(actual))) => assert_eq!(actual, playback),
+                        _ => panic!("An accepted action must precede coalesced Settings"),
+                    }
+                    assert!(matches!(
+                        next_worker_command(&requests, &poller.shutdown, &poller.settings),
+                        Ok(WorkerCommand::Settings)
+                    ));
+                    assert!(!poller.settings.load(Ordering::Relaxed));
+                }
+            }
+        }
     }
 
     fn startup_fixture(enabled: bool, generation: u64) -> StartupObservation {

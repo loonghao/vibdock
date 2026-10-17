@@ -47,14 +47,15 @@ This workflow requires a build containing both `vibdock.exe` and `vibdock-launch
 3. Check the separate **background binding** row. “Registered” means Windows accepted the shortcut; it does not mean an audio action already ran. A conflict leaves the previous configuration and registration in place.
 4. In Ulanzi Studio, map the desired button to that exact keyboard combination using its shortcut action. Physical-device identification is not inferred from a mapped keyboard event.
 
+5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
+6. Close the browser to leave the service running. Reopen **Settings…** from the tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
+
 Current source preserves configuration, software pins and action bindings across
 normal exit and restart. The Windows tray's **开机自启** menu item separately opts
 into current-user login startup. It reads back registration through the service;
 unknown or conflicting entries remain explicit. Login startup keeps Settings
 closed, while a normal double-click opens them. Windows startup policies can
 still prevent or delay execution, so registration is not login acceptance.
-5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
-6. Close the browser to leave the service running. Reopen **Settings…** from the tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
 
 Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. Representative real-audio isolation acceptance remains pending. The existing explicit-session playback CLI is documented below.
 
