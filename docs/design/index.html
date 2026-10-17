@@ -432,7 +432,9 @@ function renderShortcuts(data){
    const state=appNode('p',entry.armed?'已注册；发送后不验证应用状态':(entry.error?'未注册：'+entry.error:'未注册'));body.append(state);
    const remove=appNode('button','删除');remove.disabled=shortcutBusy||!data.storage_writable;remove.onclick=()=>removeShortcut(entry);row.append(body,remove);list.append(row);}
 }
-function finishShortcutBusy(){shortcutBusy=false;shortcutRenderKey='';if(shortcutsData)renderShortcuts(shortcutsData);else renderShortcutApplications();}
+// A failed save or remove leaves an error in the status line; re-rendering the
+// saved list must not replace it with an optimistic saved-count message.
+function finishShortcutBusy(){shortcutBusy=false;if($('shortcutStatus').dataset.kind!=='error')shortcutRenderKey='';if(shortcutsData)renderShortcuts(shortcutsData);else renderShortcutApplications();}
 async function refreshShortcuts(){
   if(shortcutBusy||!serviceToken||document.hidden)return;shortcutBusy=true;const expectedToken=serviceToken;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
   try{const response=await api('/api/shortcuts',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)renderShortcuts(data);}
