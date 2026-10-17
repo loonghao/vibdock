@@ -51,7 +51,7 @@ This workflow requires a build containing both `vibdock.exe` and `vibdock-launch
 
 Only one microphone/shortcut pair is currently active. Up to eight separate
 per-application shortcut bindings can also be saved (see below). Do not run
-legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. Representative real-audio isolation acceptance remains pending. The existing explicit-session playback CLI is documented below.
+legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. A dated two-session exact-session mute/unmute readback check is recorded in the [application recognition acceptance record](docs/testing/app-recognition-acceptance.md); meeting-level real-audio isolation remains pending. The existing explicit-session playback CLI is documented below.
 
 Settings uses the service's saved configuration and real microphone list; service-mode saves do not write browser-local drafts. On the software page, associate each pinned Windows application with an exact microphone or clear that association. Its microphone controls address that saved endpoint and fail if it is unavailable. This is metadata plus endpoint control: it does not change the application's Windows input route, establish which microphone the application uses, or start/end a voice session. Endpoint mute affects every application using it.
 
@@ -260,8 +260,11 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 
 ## Application playback controls (unreleased Windows source)
 
-These commands are implemented in current source. Representative live mutation
-acceptance remains pending; the published v0.1.0 download does not include them.
+These commands are implemented in current source. A dated two-session
+exact-session mute/unmute readback check is recorded in the
+[application recognition acceptance record](docs/testing/app-recognition-acceptance.md);
+meeting-level isolation and the published v0.1.0 download are still out of
+scope.
 
 Application playback sessions are separate from microphone mute: they let one
 program's audio be silenced while everything else keeps playing.
@@ -338,7 +341,7 @@ as unknown or unverified rather than claiming a working application connection.
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
-- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. Hardware bindings for these playback actions and accepted two-application isolation tests remain open.
+- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. A two-session exact-session state check is recorded, while meeting-level isolation and hardware bindings for these playback actions remain open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
