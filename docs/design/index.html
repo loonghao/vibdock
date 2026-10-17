@@ -38,8 +38,13 @@
 <div id="pinnedApps" class="rows" aria-label="已固定的软件"></div>
 <h2 id="appsChoicesTitle" style="margin-top:24px">当前可读取的软件会话</h2><p id="appsChoicesHelp" class="muted">只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。</p>
 <div id="appChoices" class="rows" aria-label="可固定的播放会话"></div>
+<h2 style="margin-top:28px">应用快捷键</h2><p class="muted">识别正在运行且有窗口的应用（即使它没有播放声音），为它保存一个触发键和一条发送给该应用的快捷键。只有该应用位于前台时才会发送；发送成功不代表应用已经执行。</p>
+<div id="shortcutDetected" class="rows" aria-label="可绑定快捷键的运行应用"></div>
+<div id="pinnedShortcuts" class="rows" aria-label="已保存的应用快捷键"></div>
+<div class="route-editor" id="shortcutEditor" hidden><h2>新增应用快捷键</h2><div class="route-fields"><div><label for="shortcutApp">应用</label><select id="shortcutApp"></select></div><div><label for="shortcutTrigger">VibDock 触发键</label><input id="shortcutTrigger" placeholder="Ctrl + Alt + Shift + F10" autocomplete="off"></div><div><label for="shortcutDispatch">发送给应用的快捷键</label><input id="shortcutDispatch" placeholder="Ctrl + Shift + Space" autocomplete="off"></div><div><label for="shortcutLabel">名称（可选）</label><input id="shortcutLabel" maxlength="80" autocomplete="off"></div></div><div class="actions"><button class="primary" id="shortcutSave">保存快捷键</button><button id="shortcutCancel">取消</button></div><p class="route-note">两条快捷键都必须包含至少一个修饰键。触发键由 VibDock 注册；默认只在该应用位于前台时发送。后台输入法等没有前台窗口的工具需要勾选“发送到当前前台应用”，此时只确认应用正在运行，快捷键会注入到当前前台应用。发送成功不代表应用已经执行。</p><label class="check"><input id="shortcutGlobal" type="checkbox">发送到当前前台应用（后台输入法/托盘工具）</label></div>
+<p id="shortcutStatus" role="status" aria-live="polite" class="muted">读取服务后显示已保存的应用快捷键。</p>
 <h2 style="margin-top:28px">语音集成能力规划</h2><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p>
-<div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>计划支持：唤起入口、应用输出静音。内部语音控制接口待验证。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>微信输入法</strong><p>通过用户录入的快捷键触发。发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>WorkBuddy</strong><p>快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div></div>
+<div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>已识别运行窗口；可用自定义触发键派发应用内快捷键。发送成功不验证语音状态，应用控制接口仍待验证。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div><div class="row"><div><strong>微信输入法</strong><p>已识别 wetype 运行窗口；快捷键由用户从客户端录入，发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div><div class="row"><div><strong>WorkBuddy</strong><p>已识别运行窗口；快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div></div>
 <div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
 <section class="view" id="feedback" hidden><h1>知道按下去了，也知道生效没有。</h1><p class="muted">默认短提示不抢焦点；持续收音标识由真实状态驱动。</p>
 <div class="rows"><div class="row"><div><strong>触发已收到</strong><p>按键被识别，动作尚未执行。</p></div><button id="previewReceived">预览</button></div><div class="row"><div><strong>动作执行中</strong><p>已发出请求，等待真实状态回读。</p></div><button id="previewPending">预览</button></div><div class="row"><div><strong>已验证成功</strong><p>后台读回真实状态并确认生效。</p></div><button id="previewVerified">预览</button></div><div class="row"><div><strong>已发送但未验证</strong><p>快捷键已发出，不代表对方状态已改变。</p></div><button id="previewDispatched">预览</button></div><div class="row"><div><strong>屏幕角落提示</strong><p>显示动作、控制对象和结果，颜色之外保留文字。</p></div><button id="previewToast">预览提示</button></div><div class="row"><div><strong>呼吸边框</strong><p>可选；跟随系统减少动画设置。这里仅预览网页边框。</p></div><label class="check"><input id="border" type="checkbox">启用预览</label></div><div class="row"><div><strong>失败状态</strong><p>设备断开或动作失败时，不显示成功。</p></div><button id="previewError">预览失败</button></div></div></section>
@@ -348,9 +353,9 @@ function softwareAvatar(entry,mac){const [state,symbol,label]=softwareStatus(ent
 function appState(session,mac){return mac?'应用正在运行 · 播放和语音状态不可用':(session.session_state==='active'?'播放会话活动':'播放会话空闲')+' · '+(session.muted?'已静音':'未静音')+' · PID '+session.process_id;}
 function renderAppEntries(data){
  lastAppsData=data;appRevision=data.revision;const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
- const key=JSON.stringify([data.platform,data.observation_kind,data.revision,data.available,data.complete,data.error,data.entries,data.choices]);if(key===appsRenderKey)return;appsRenderKey=key;
+ const key=JSON.stringify([data.platform,data.observation_kind,data.revision,data.available,data.complete,data.error,data.entries,data.choices,data.applications]);if(key===appsRenderKey)return;appsRenderKey=key;
   $('appsTitle').textContent=mac?'固定软件，查看真实运行状态。':'应用与麦克风，放在一起管理。';
- $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':data.platform==='windows'?'固定条目保存在本机服务中。此页管理条目和查看播放状态；右键 Windows 软件托盘图标可静音或取消静音指定播放会话。播放活动不代表收音或通话。':'固定条目保存在本机服务中。此平台暂不支持真实播放控制；不会启动应用。';
+ $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':data.platform==='windows'?'固定条目保存在本机服务中。此页管理条目和查看播放状态；也会识别有窗口的运行应用，用于固定和绑定应用快捷键。播放活动不代表收音或通话。':'固定条目保存在本机服务中。此平台暂不支持真实播放控制；不会启动应用。';
  $('appsChoicesTitle').textContent=mac?'当前可读取的本机应用':'当前可读取的软件会话';
  $('appsChoicesHelp').textContent=mac?'仅列出身份已重新核验的当前用户应用。固定的是应用位置，重启后仍会重新观察；不会启动或终止软件。':'只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。';
  $('appReadStatus').textContent=data.error||(mac?(!data.available?'应用运行状态未知':data.complete?'已读取本机应用。运行不代表正在播放或工作。':'已读取部分应用；缺失项目运行状态未知。'):(!data.available?'播放状态未知或此平台暂不支持':data.complete?'已读取当前播放会话。语音状态不在此推断。':'已读取部分会话；缺失项目状态未知。'));
@@ -367,8 +372,9 @@ function renderAppEntries(data){
  if(!data.choices.length)choices.append(appNode('p',mac?(data.available?'没有可固定的当前应用；打开目标软件后刷新。':'尚无可读取的原生应用。'):(data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。')));
  for(const item of data.choices){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p',appState(item,mac)));
  const pin=appNode('button','固定软件');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64,item.icon_mime),body,pin);choices.append(row);}
+ renderShortcutApplications();
 }
-function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],entries:lastAppsData.entries.map(e=>({...e,state:'unknown',icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
+function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],applications:[],entries:lastAppsData.entries.map(e=>({...e,state:'unknown',icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
 function receiveAppEntries(data,started){
  clearTimeout(appExpiryTimer);appExpiryTimer=null;
  const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
@@ -380,12 +386,81 @@ function receiveAppEntries(data,started){
 }
 document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');if(!document.hidden)refreshApps();});
 async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
- try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)receiveAppEntries(data,started);}
+ try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken){receiveAppEntries(data,started);refreshShortcuts();}}
  catch{markAppsUnknown('软件状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
 async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
   try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});if(serviceToken!==expectedToken)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return true;}
   catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
-function startAppPoll(){refreshApps();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
+function startAppPoll(){refreshApps();refreshShortcuts();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
+
+// Per-application shortcut bindings. The browser sends an opaque application
+// reference from the latest scan; the service resolves and persists the path.
+let shortcutsData=null,shortcutBusy=false,shortcutRenderKey='';
+function integrationLabel(id){return {tencent_meeting:'腾讯会议',wechat_input:'微信输入法',codex:'Codex / ChatGPT',workbuddy:'WorkBuddy'}[id]||'';}
+function shortcutReady(){return mode==='service'&&!!serviceToken&&lastAppsData?.platform==='windows'&&lastAppsData.storage_writable;}
+function renderShortcutApplications(){
+  const list=$('shortcutDetected');list.replaceChildren();
+  const apps=lastAppsData?.applications||[];
+  if(!apps.length){list.append(appNode('p',lastAppsData?.available?'没有识别到可绑定的运行应用。打开目标软件后刷新。':'等待应用识别。'));return;}
+  for(const app of apps){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',app.name));const known=integrationLabel(app.integration),bg=!!app.background;body.append(appNode('p',bg?'后台运行 · 无可见窗口；可固定和关联麦克风，但不能按前台应用派发':(known?'已识别 · '+known+' · 语音状态未知':'已识别运行窗口 · 语音状态未知')));
+   const pin=appNode('button','固定软件');pin.disabled=appsBusy||!lastAppsData?.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:app.selection_id});
+   const bind=appNode('button','绑定快捷键');bind.disabled=shortcutBusy||!shortcutReady();if(bg)bind.title='后台应用：保存后只在它运行时把快捷键发送到当前前台应用。';bind.onclick=()=>openShortcutEditor(app);row.append(appIcon(app.icon_b64),body,pin,bind);list.append(row);}
+}
+function shortcutEditorApps(selected){
+  const select=$('shortcutApp'),apps=lastAppsData?.applications||[],previous=selected??select.value;
+  const key=JSON.stringify(apps.map(a=>[a.selection_id,a.name]));
+  if(select.dataset.options!==key){select.replaceChildren(...apps.map(a=>new Option(a.name,a.selection_id)));select.dataset.options=key;}
+  if(apps.some(a=>a.selection_id===previous))select.value=previous;else if(apps[0])select.value=apps[0].selection_id;
+}
+function openShortcutEditor(app){
+  if(!shortcutReady()||!shortcutsData)return;
+  shortcutEditorApps(app.selection_id);$('shortcutLabel').value=app.name;
+  $('shortcutTrigger').value='';$('shortcutDispatch').value='';
+  $('shortcutGlobal').checked=!!app.background;$('shortcutGlobal').disabled=!!app.background;
+  $('shortcutEditor').hidden=false;$('shortcutEditor').scrollIntoView({behavior:'instant',block:'nearest'});$('shortcutTrigger').focus();
+  $('shortcutStatus').textContent=app.background?'后台应用：只有它运行时才会把快捷键发送到当前前台应用；发送不代表语音已开启。':'触发键由 VibDock 注册；默认只在该应用位于前台时发送，发送不代表语音已开启。';$('shortcutStatus').dataset.kind='idle';
+}
+function renderShortcuts(data){
+  shortcutsData=data;const key=JSON.stringify([data.revision,data.entries,data.error,data.dispatch_available]);if(key===shortcutRenderKey)return;shortcutRenderKey=key;
+  if(!$('shortcutEditor').hidden)shortcutEditorApps();
+  const list=$('pinnedShortcuts');list.replaceChildren();
+  if(data.error){$('shortcutStatus').textContent=data.error;$('shortcutStatus').dataset.kind='error';}
+  else if(!data.dispatch_available){$('shortcutStatus').textContent='此平台暂不支持应用快捷键派发。';$('shortcutStatus').dataset.kind='idle';}
+  else{$('shortcutStatus').textContent=data.entries.length?'已保存 '+data.entries.length+' 条应用快捷键。发送结果不会被当作应用状态。':'尚未保存应用快捷键。';$('shortcutStatus').dataset.kind='idle';}
+  if(!data.entries.length){list.append(appNode('p','尚未保存应用快捷键。'));return;}
+  for(const entry of data.entries){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',entry.label),appNode('p','触发 '+entry.trigger+' → 发送 '+entry.dispatch));body.append(appNode('p',entry.scope==='running'?'作用域：应用运行时发送到当前前台应用':'作用域：仅当该应用位于前台'));
+   const state=appNode('p',entry.armed?'已注册；发送后不验证应用状态':(entry.error?'未注册：'+entry.error:'未注册'));body.append(state);
+   const remove=appNode('button','删除');remove.disabled=shortcutBusy||!data.storage_writable;remove.onclick=()=>removeShortcut(entry);row.append(body,remove);list.append(row);}
+}
+// A failed save or remove leaves an error in the status line; re-rendering the
+// saved list must not replace it with an optimistic saved-count message.
+function finishShortcutBusy(){shortcutBusy=false;if($('shortcutStatus').dataset.kind!=='error')shortcutRenderKey='';if(shortcutsData)renderShortcuts(shortcutsData);else renderShortcutApplications();}
+async function refreshShortcuts(){
+  if(shortcutBusy||!serviceToken||document.hidden)return;shortcutBusy=true;const expectedToken=serviceToken;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
+  try{const response=await api('/api/shortcuts',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)renderShortcuts(data);}
+  catch{$('shortcutStatus').textContent='应用快捷键状态未知：服务读取失败。';$('shortcutStatus').dataset.kind='error';}
+  finally{clearTimeout(timeout);finishShortcutBusy();}
+}
+async function saveShortcut(){
+  if(shortcutBusy||!shortcutReady())return;
+  const reference=$('shortcutApp').value,trigger=$('shortcutTrigger').value.trim(),dispatch=$('shortcutDispatch').value.trim(),label=$('shortcutLabel').value.trim();
+  if(!reference||!trigger||!dispatch){$('shortcutStatus').textContent='选择应用并填写两条快捷键。';$('shortcutStatus').dataset.kind='error';return;}
+  shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
+  $('shortcutStatus').textContent='正在保存并注册触发键…';$('shortcutStatus').dataset.kind='idle';
+  try{const response=await api('/api/shortcuts/add',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,application_reference:reference,trigger,dispatch,label,scope:$('shortcutGlobal').checked?'running':'foreground'})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutEditor').hidden=true;$('shortcutStatus').textContent='已保存。只有目标应用位于前台时才会发送该快捷键。';$('shortcutStatus').dataset.kind='ok';refreshApps();}
+  catch(error){$('shortcutStatus').textContent='未保存：'+error.message;$('shortcutStatus').dataset.kind='error';}
+  finally{clearTimeout(timeout);finishShortcutBusy();}
+}
+async function removeShortcut(entry){
+  if(shortcutBusy||!serviceToken)return;if(!confirm('删除「'+entry.label+'」的应用快捷键？'))return;
+  shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
+  try{const response=await api('/api/shortcuts/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,id:entry.id})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutStatus').textContent='已删除。';$('shortcutStatus').dataset.kind='ok';}
+  catch(error){$('shortcutStatus').textContent='删除未确认：'+error.message;$('shortcutStatus').dataset.kind='error';}
+  finally{clearTimeout(timeout);finishShortcutBusy();}
+}
+$('shortcutCancel').onclick=()=>{$('shortcutEditor').hidden=true;};
+$('shortcutSave').onclick=saveShortcut;
+
 async function redeemBootstrap(code){
   const response=await fetch('/api/bootstrap',{method:'POST',cache:'no-store',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});

@@ -125,6 +125,11 @@ pub enum StatusKind {
     Live,
     /// A verified readback reported the microphone muted.
     Muted,
+    /// A shortcut was injected into the foreground application.
+    ///
+    /// This is not a verified state: the application may ignore the chord or
+    /// interpret it differently, so it never reports success.
+    Dispatched,
     /// The action was attempted and reported a real failure.
     Failed,
     /// The state could not be established.
@@ -138,6 +143,7 @@ impl StatusKind {
             StatusKind::Idle => "-",
             StatusKind::Live => "[LIVE]",
             StatusKind::Muted => "[MUTED]",
+            StatusKind::Dispatched => "[SENT]",
             StatusKind::Failed => "[!]",
             StatusKind::Unknown => "[?]",
         }
@@ -220,6 +226,10 @@ fn classify(last_action: &LastActionView) -> (StatusKind, String) {
     match last_action.state.as_deref() {
         Some("LIVE") => (StatusKind::Live, "Microphone live".to_string()),
         Some("MUTED") => (StatusKind::Muted, "Microphone muted".to_string()),
+        Some("DISPATCHED") => (
+            StatusKind::Dispatched,
+            "Shortcut dispatched; application state unverified".to_string(),
+        ),
         // A completed action whose state we cannot name is unknown, never
         // silently treated as a success the user would trust.
         _ => (StatusKind::Unknown, "Status unknown".to_string()),
@@ -281,6 +291,21 @@ mod tests {
         assert_eq!(muted.kind, StatusKind::Muted);
         assert!(muted.kind.is_verified());
         assert_eq!(muted.text, "Microphone muted");
+    }
+
+    #[test]
+    fn a_dispatched_shortcut_is_never_reported_as_verified() {
+        let frame = frame_from(
+            &LastActionView {
+                sequence: 4,
+                state: Some("DISPATCHED".to_string()),
+                error: None,
+            },
+            &config(),
+        );
+        assert_eq!(frame.kind, StatusKind::Dispatched);
+        assert!(!frame.kind.is_verified());
+        assert!(frame.text.contains("unverified"));
     }
 
     #[test]
@@ -409,6 +434,7 @@ mod tests {
             StatusKind::Idle,
             StatusKind::Live,
             StatusKind::Muted,
+            StatusKind::Dispatched,
             StatusKind::Failed,
             StatusKind::Unknown,
         ] {

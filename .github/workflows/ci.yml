@@ -78,6 +78,14 @@ jobs:
       - name: Verify voice scenario service contracts
         if: runner.os == 'Windows'
         run: node scripts/test-voice-e2e.cjs target/release/vibdock.exe --output work/voice-e2e/ci
+      - name: Verify Windows software settings in a real browser
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm install --prefix work/browser --no-package-lock --ignore-scripts playwright@1.60.0
+          $env:PLAYWRIGHT_MODULE = "$PWD/work/browser/node_modules/playwright"
+          $env:CHROMIUM_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          node scripts/test-web-ui-windows.cjs target/release/vibdock.exe work/web-ui-windows
       - name: Verify native software strip contracts
         if: runner.os == 'Windows'
         run: cargo test --locked --lib tray::tests::native_strip_render_probe -- --ignored --exact --nocapture --test-threads=1
@@ -136,4 +144,6 @@ jobs:
             work/voice-e2e/ci/*.log
             work/macos-desktop/*.png
             work/macos-desktop/report*.json
+            work/web-ui-windows/*.png
+            work/web-ui-windows/report.json
           if-no-files-found: ignore

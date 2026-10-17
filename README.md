@@ -9,7 +9,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. Current Windows source also recognises running window applications independently of their audio sessions and can save up to eight per-application shortcut bindings that dispatch a user-supplied chord only when the bound executable owns the foreground window. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline predates the desktop and microphone-association changes. New candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
@@ -49,11 +49,61 @@ This workflow requires a build containing both `vibdock.exe` and `vibdock-launch
 5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
 6. Close the browser to leave the service running. Reopen **Settings…** from the tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
 
-Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. Representative real-audio isolation acceptance remains pending. The existing explicit-session playback CLI is documented below.
+Only one microphone/shortcut pair is currently active. Up to eight separate
+per-application shortcut bindings can also be saved (see below). Do not run
+legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. A dated two-session exact-session mute/unmute readback check is recorded in the [application recognition acceptance record](docs/testing/app-recognition-acceptance.md); meeting-level real-audio isolation remains pending. The existing explicit-session playback CLI is documented below.
 
 Settings uses the service's saved configuration and real microphone list; service-mode saves do not write browser-local drafts. On the software page, associate each pinned Windows application with an exact microphone or clear that association. Its microphone controls address that saved endpoint and fail if it is unavailable. This is metadata plus endpoint control: it does not change the application's Windows input route, establish which microphone the application uses, or start/end a voice session. Endpoint mute affects every application using it.
 
 The status page uses bounded, serial polling. When the service cannot answer, it shows unknown rather than preserving a successful state. “Last action” is a readback after a shortcut action, not continuous tracking of changes made by other applications. A service restart clears action history and requires a fresh browser session.
+
+## Per-application shortcuts (Windows source)
+
+Settings > **应用与麦克风** also recognises running applications that own a
+visible top-level window, even when they have no playback session. This is how
+an input method, a coding agent, or a meeting client can be selected before it
+produces audio. Recognised names include Tencent Meeting (`wemeetapp.exe`),
+WeChat Input (`wetype*.exe`), Codex/ChatGPT (`codex.exe`/`chatgpt.exe`) and
+WorkBuddy. That match is a filename label only: it does not establish that the
+client is installed correctly, connected, signed in, or able to accept a
+shortcut.
+
+For a recognised application, save:
+
+- a **VibDock trigger** registered globally, such as `Ctrl + Alt + Shift + F10`;
+- a **dispatch shortcut**, such as the voice shortcut configured inside the
+  target application.
+
+When the trigger fires, VibDock reads the current foreground window and, by
+default, sends the dispatch chord only if that window belongs to the saved
+executable. If a different application is in front, nothing is sent. For a
+background input method or tray tool that never owns a foreground window, an
+explicit **running** scope checks that the saved executable is running and then
+sends the chord to whatever application is foreground. **The dispatch result is
+not a verified application state**: the application may ignore the chord,
+interpret it differently, or be unable to receive elevated input. A successful
+dispatch is reported as `DISPATCHED`, never as "voice started" or "microphone
+open".
+
+Read the target's actual shortcut from its own settings. VibDock ships no
+built-in WeChat, Codex, or Tencent Meeting shortcut. Up to eight bindings are
+saved in `shortcuts.json`; a trigger must be unique, and a dispatch chord may
+not equal any VibDock trigger (Windows would feed the injected chord back into
+the global registration). Bindings live in
+`%LOCALAPPDATA%\VibDock\shortcuts.json`; executable paths in that file are
+personal data.
+
+Recognition is deliberately bounded: only visible, non-cloaked, non-tool
+windows are considered, shell/host processes are skipped, and a capped or
+partially unreadable window scan reports state as unknown rather than "not
+running". A closed set of known integration executables (`wetype*`, `wemeet*`,
+`codex`, `workbuddy`) is also recognised when it runs without a window, so
+WeChat Input can be pinned even when it has no visible window. Other background
+services and tray-only helpers are not listed.
+The dated [application recognition acceptance record](docs/testing/app-recognition-acceptance.md)
+lists the live detections, shortcut dispatch checks and the remaining UI limits.
+Live foreground/focus and injected-input acceptance on a real desktop remains
+pending; see [the software contract](docs/resident-software.md).
 
 ## Explore the design preview
 
@@ -210,8 +260,11 @@ Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. 
 
 ## Application playback controls (unreleased Windows source)
 
-These commands are implemented in current source. Representative live mutation
-acceptance remains pending; the published v0.1.0 download does not include them.
+These commands are implemented in current source. A dated two-session
+exact-session mute/unmute readback check is recorded in the
+[application recognition acceptance record](docs/testing/app-recognition-acceptance.md);
+meeting-level isolation and the published v0.1.0 download are still out of
+scope.
 
 Application playback sessions are separate from microphone mute: they let one
 program's audio be silenced while everything else keeps playing.
@@ -288,7 +341,7 @@ as unknown or unverified rather than claiming a working application connection.
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
-- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. Hardware bindings for these playback actions and accepted two-application isolation tests remain open.
+- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. A two-session exact-session state check is recorded, while meeting-level isolation and hardware bindings for these playback actions remain open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 

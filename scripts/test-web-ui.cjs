@@ -88,6 +88,16 @@ async function unusedPort() {
       assert(!JSON.stringify(apps).includes('executable_path'),'software view leaked executable locations');
       assert(!JSON.stringify(apps).includes('bundle_path'),'software view leaked application bundle locations');
       assert((await page.locator('#appReadStatus').innerText()).length>0);
+      assert((await page.locator('#apps h2').allInnerTexts()).some(text=>text.includes('应用快捷键')),'application shortcut section is missing');
+      const shortcutView=await page.evaluate(async()=>{const response=await api('/api/shortcuts');return {status:response.status,body:await response.json()}});
+      assert.equal(shortcutView.status,200,'shortcut view was not readable');
+      assert.equal(shortcutView.body.dispatch_available,false,'non-Windows fixture claimed dispatch support');
+      assert(Array.isArray(shortcutView.body.entries),'shortcut entries are not an array');
+      assert.equal(shortcutView.body.entries.length,0,'fixture invented a saved shortcut');
+      assert(!JSON.stringify(shortcutView.body).includes('executable_path'),'shortcut view leaked executable locations');
+      await page.waitForFunction(()=>document.querySelector('#shortcutStatus').textContent.includes('此平台暂不支持应用快捷键派发'));
+      assert((await page.locator('#shortcutDetected').innerText()).length>0,'shortcut detection state is empty');
+      assert((await page.locator('#pinnedShortcuts').innerText()).includes('尚未保存应用快捷键'),'empty shortcut list was not explained');
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'software view overflows mobile width');
       await page.screenshot({path:path.join(output,`apps-${viewport.width}.png`),fullPage:true});
       results.push({viewport,logo:box,externalRequests:0,javascriptErrors:0,mode:await page.locator('#banner').innerText()});
