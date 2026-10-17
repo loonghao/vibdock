@@ -8,6 +8,7 @@
 #[cfg(windows)]
 use crate::feedback::{frame_from, LastActionView};
 use crate::{
+    app_shortcuts::Registry as ShortcutRegistry,
     feedback::FeedbackConfig,
     service::{self, Config, Instance},
     Result,
@@ -240,23 +241,18 @@ enum WriteOutcome {
     ActivationFailed(String),
 }
 
-/// True when the bound hotkey was pressed since the last check.
+/// Drains every hotkey message for this thread.
 ///
-/// Non-Windows platforms have no binding to poll, so this is always false
-/// there — matching the fact that no hotkey can be armed on them either.
+/// Non-Windows platforms have no global hotkey adapter, so no message can be
+/// pending. Keeping the shape identical lets the accept loop stay platform-free.
 #[cfg(windows)]
-fn fired_since_last_poll(binding: &Option<Binding>) -> usize {
-    if binding.is_some() {
-        crate::windows::poll_hotkey(BINDING_HOTKEY_ID)
-    } else {
-        0
-    }
+fn fired_hotkeys() -> Vec<i32> {
+    crate::windows::poll_hotkeys()
 }
 
-/// Placeholder for platforms with no global hotkey to poll.
 #[cfg(not(windows))]
-fn fired_since_last_poll(_binding: &Option<Binding>) -> usize {
-    0
+fn fired_hotkeys() -> Vec<i32> {
+    vec![]
 }
 
 /// Performs the action the armed binding is configured for.
@@ -769,6 +765,7 @@ fn accept_loop(
 ) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut apps = crate::resident_apps::Registry::start(token.is_some());
+    let mut shortcuts = ShortcutRegistry::start(token.is_some());
     let mut feedback = ActionFeedback::default();
     // The indicator is opt-in, resolved from the documented environment
     // variable. When it is off, no overlay thread starts and no window is ever
@@ -778,17 +775,27 @@ fn accept_loop(
     let mut overlay_cursor = OverlayCursor::default();
     loop {
         apps.poll();
-        // Deliver any hotkey press that arrived since the last request. A
-        // Win32 binding only reaches us through this thread's message queue,
-        // so without this drain a registered binding could never fire.
-        for _ in 0..fired_since_last_poll(binding) {
-            let result = run_bound_action(state);
-            if let Err(error) = &result {
-                eprintln!("ERROR: the bound action failed: {error}");
+        // Deliver any hotkey press that arrived since the last request. One
+        // drain serves the microphone binding and every application binding:
+        // draining per id would consume and discard the others.
+        for id in fired_hotkeys() {
+            if id == BINDING_HOTKEY_ID {
+                let result = run_bound_action(state);
+                if let Err(error) = &result {
+                    eprintln!("ERROR: the bound action failed: {error}");
+                }
+                // The device is captured with the action, so a later rebinding
+                // cannot relabel this action's verified result with another mic.
+                feedback.record_for(result, state.device_id.as_deref());
+            } else if let Some((result, target)) =
+                shortcuts.fired(id, |path| apps.application_running(path))
+            {
+                if let Err(error) = &result {
+                    eprintln!("ERROR: the application shortcut failed: {error}");
+                }
+                // Dispatch is unverified by nature; the recorded state says so.
+                feedback.record_for(result, target.as_deref());
             }
-            // The device is captured with the action, so a later rebinding
-            // cannot relabel this action's verified result with another mic.
-            feedback.record_for(result, state.device_id.as_deref());
         }
         // Repaint the indicator from the completed action. This enqueues only
         // when the sequence or target changed, and the overlay coalesces
@@ -821,6 +828,7 @@ fn accept_loop(
         let browser_scope = path == "/api/config"
             || path.starts_with("/api/actions/")
             || path.starts_with("/api/apps/actions/")
+            || path.starts_with("/api/shortcuts")
             || matches!(
                 path.as_str(),
                 "/api/apps"
@@ -858,6 +866,15 @@ fn accept_loop(
                 instance_challenge_route(&routed_request, token.as_deref())
             } else if path.starts_with("/api/apps") {
                 apps_route(&routed_request, token.is_some(), &mut apps, principal)
+            } else if path.starts_with("/api/shortcuts") {
+                shortcuts_route(
+                    &routed_request,
+                    token.is_some(),
+                    &mut apps,
+                    &mut shortcuts,
+                    state,
+                    principal,
+                )
             } else if bootstrap {
                 bootstrap_route(
                     &routed_request,
@@ -869,41 +886,59 @@ fn accept_loop(
                 route(&routed_request, state, token.is_some(), &activation)
             };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
-            match commit_live_patch(state, body, binding, &mut activation) {
-                WriteOutcome::Committed(committed) => {
-                    // Only now is the change real: the file is on disk, so
-                    // update memory and answer with the committed state.
-                    *state = committed.clone();
-                    // The save succeeded, so try to make the binding live. The
-                    // response reports the activation result rather than a
-                    // blanket success: a binding that is stored but could not
-                    // be registered is not the thing the user asked for.
+            // A microphone trigger equal to a saved dispatch chord would make
+            // VibDock capture the very key it injects for an application.
+            let dispatch_conflict = service::validate_patch(body)
+                .ok()
+                .and_then(|patch| patch.hotkey)
+                .flatten()
+                .is_some_and(|hotkey| shortcuts.blocks_trigger(&hotkey));
+            if dispatch_conflict {
+                code = 409;
+                mime = "application/json";
+                payload = serde_json::json!({
+                    "error": "hotkey_activation_failed",
+                    "message": "That shortcut is used as an application dispatch target; choose another.",
+                })
+                .to_string();
+            } else {
+                match commit_live_patch(state, body, binding, &mut activation) {
+                    WriteOutcome::Committed(committed) => {
+                        // Only now is the change real: the file is on disk, so
+                        // update memory and answer with the committed state.
+                        *state = committed.clone();
+                        // The save succeeded, so try to make the binding live. The
+                        // response reports the activation result rather than a
+                        // blanket success: a binding that is stored but could not
+                        // be registered is not the thing the user asked for.
 
-                    mime = "application/json";
-                    payload = binding_status(state, &activation);
-                }
-                WriteOutcome::Rejected(message) => {
-                    code = 400;
-                    mime = "text/plain; charset=utf-8";
-                    payload = message.into();
-                }
-                WriteOutcome::ActivationFailed(error) => {
-                    code = 409;
-                    mime = "application/json";
-                    payload = serde_json::json!({
+                        mime = "application/json";
+                        payload = binding_status(state, &activation);
+                    }
+                    WriteOutcome::Rejected(message) => {
+                        code = 400;
+                        mime = "text/plain; charset=utf-8";
+                        payload = message.into();
+                    }
+                    WriteOutcome::ActivationFailed(error) => {
+                        code = 409;
+                        mime = "application/json";
+                        payload = serde_json::json!({
                         "error": "hotkey_activation_failed",
                         "message": error,
                         "binding": serde_json::from_str::<serde_json::Value>(&binding_status(state, &activation)).unwrap(),
                     }).to_string();
-                }
-                WriteOutcome::PersistFailed(error) => {
-                    // Reporting success here would promise a save that never
-                    // happened; the client would restart into the old values.
-                    eprintln!("ERROR: failed to persist configuration: {error}");
-                    code = 500;
-                    mime = "text/plain; charset=utf-8";
-                    payload =
-                        "Failed to persist configuration; the stored values are unchanged.".into();
+                    }
+                    WriteOutcome::PersistFailed(error) => {
+                        // Reporting success here would promise a save that never
+                        // happened; the client would restart into the old values.
+                        eprintln!("ERROR: failed to persist configuration: {error}");
+                        code = 500;
+                        mime = "text/plain; charset=utf-8";
+                        payload =
+                            "Failed to persist configuration; the stored values are unchanged."
+                                .into();
+                    }
                 }
             }
         }
@@ -1753,6 +1788,57 @@ mod tests {
     }
 }
 
+/// Per-application shortcut reads and edits.
+///
+/// The browser never supplies an executable path: it sends the opaque reference
+/// from a scan it just received, and this route resolves that reference on the
+/// service side. The microphone trigger is passed in so a new app trigger can
+/// never silently steal the existing binding.
+fn shortcuts_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    apps: &mut crate::resident_apps::Registry,
+    shortcuts: &mut ShortcutRegistry,
+    config: &Config,
+    _principal: Option<&str>,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    match (request.method, request.path) {
+        (Method::Get, "/api/shortcuts") => (200, "application/json", shortcuts.view().to_string()),
+        (Method::Post, "/api/shortcuts/add") => {
+            let reference = serde_json::from_str::<serde_json::Value>(request.body)
+                .ok()
+                .and_then(|value| value["application_reference"].as_str().map(str::to_string));
+            let application = reference
+                .as_deref()
+                .and_then(|reference| apps.resolve_application(reference));
+            let (code, value) =
+                shortcuts.mutate("add", request.body, config.hotkey.as_deref(), application);
+            if code == 200 {
+                if let Some(reference) = reference.as_deref() {
+                    apps.consume_application(reference);
+                }
+            }
+            (code, "application/json", value.to_string())
+        }
+        (Method::Post, "/api/shortcuts/remove") => {
+            let (code, value) =
+                shortcuts.mutate("remove", request.body, config.hotkey.as_deref(), None);
+            (code, "application/json", value.to_string())
+        }
+        _ => (
+            404,
+            "application/json",
+            serde_json::json!({"error":"Unknown shortcut route"}).to_string(),
+        ),
+    }
+}
+
 fn apps_route(
     request: &Request<'_>,
     token_configured: bool,
@@ -1928,5 +2014,101 @@ mod resident_api_tests {
                 404
             );
         }
+    }
+    #[test]
+    fn application_shortcut_routes_require_authentication_and_origin() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
+        let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let config = Config::default();
+        for (path, method) in [
+            ("/api/shortcuts", Method::Get),
+            ("/api/shortcuts/add", Method::Post),
+            ("/api/shortcuts/remove", Method::Post),
+        ] {
+            let mut request = Request {
+                method,
+                path,
+                host: Some(&host),
+                origin: None,
+                authorized: false,
+                body: "{}",
+                body_rejected: false,
+            };
+            assert_eq!(
+                shortcuts_route(
+                    &request,
+                    true,
+                    &mut apps,
+                    &mut shortcuts,
+                    &config,
+                    Some("fixture-principal")
+                )
+                .0,
+                401
+            );
+            request.authorized = true;
+            request.origin = Some("https://attacker.invalid");
+            assert_eq!(
+                shortcuts_route(
+                    &request,
+                    true,
+                    &mut apps,
+                    &mut shortcuts,
+                    &config,
+                    Some("fixture-principal")
+                )
+                .0,
+                403
+            );
+        }
+        let request = Request {
+            method: Method::Get,
+            path: "/api/shortcuts",
+            host: Some(&host),
+            origin: None,
+            authorized: true,
+            body: "",
+            body_rejected: false,
+        };
+        assert_eq!(
+            shortcuts_route(
+                &request,
+                true,
+                &mut apps,
+                &mut shortcuts,
+                &config,
+                Some("fixture-principal")
+            )
+            .0,
+            200
+        );
+    }
+    #[test]
+    fn application_shortcut_mutations_are_rejected_in_read_only_preview() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
+        let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let request = Request {
+            method: Method::Post,
+            path: "/api/shortcuts/add",
+            host: Some(&host),
+            origin: None,
+            authorized: true,
+            body: "{}",
+            body_rejected: false,
+        };
+        assert_eq!(
+            shortcuts_route(
+                &request,
+                false,
+                &mut apps,
+                &mut shortcuts,
+                &Config::default(),
+                Some("fixture-principal")
+            )
+            .0,
+            405
+        );
     }
 }

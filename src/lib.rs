@@ -11,6 +11,7 @@ mod app_audio;
 mod app_session_stub;
 #[cfg(windows)]
 mod app_session_windows;
+mod app_shortcuts;
 mod browser_auth;
 mod capabilities;
 pub mod feedback;
@@ -34,7 +35,6 @@ mod macos_worker;
 #[allow(dead_code)]
 #[path = "macos_worker.rs"]
 mod macos_worker_tests;
-#[cfg(any(windows, test))]
 mod resident_action_protocol;
 #[cfg(not(target_os = "macos"))]
 mod resident_actions;

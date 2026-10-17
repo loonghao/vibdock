@@ -3,12 +3,18 @@ use crate::{
     Action, Result,
 };
 use windows::{
-    core::PCWSTR,
+    core::{PCWSTR, PWSTR},
     Win32::{
         Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
-        Foundation::{ERROR_HOTKEY_ALREADY_REGISTERED, ERROR_HOTKEY_NOT_REGISTERED},
+        Foundation::{CloseHandle, ERROR_HOTKEY_ALREADY_REGISTERED, ERROR_HOTKEY_NOT_REGISTERED},
         Media::Audio::{Endpoints::IAudioEndpointVolume, *},
-        System::Com::*,
+        System::{
+            Com::*,
+            Threading::{
+                OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        },
         UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
@@ -158,27 +164,17 @@ impl Drop for RegisteredHotkey {
     }
 }
 
-/// Delivers any pending `WM_HOTKEY` messages and reports whether one arrived.
+/// Delivers every pending `WM_HOTKEY` and returns the ids that fired.
 ///
-/// A Win32 hotkey reaches its owner as a window message on the thread that
-/// registered it. A service that registers a binding but never pumps messages
-/// holds a hotkey that can never fire — and status would still report it as
-/// live, which is worse than reporting it as failed. This drains the queue
-/// without blocking so the HTTP accept loop keeps serving.
-///
-/// Only messages matching `id` are treated as the binding; everything else is
-/// dispatched normally, so the thread does not accumulate a stuck queue.
-pub(crate) fn poll_hotkey(id: i32) -> usize {
+/// One drain serves both the microphone binding and all application bindings.
+/// Draining per id would consume and discard the other bindings' messages.
+pub(crate) fn poll_hotkeys() -> Vec<i32> {
     let mut message = MSG::default();
-    let mut fired = 0;
+    let mut fired = Vec::new();
     unsafe {
-        // PM_REMOVE takes each message out of the queue rather than peeking,
-        // so one press is consumed exactly once and never re-delivered.
         while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-            if message.message == WM_HOTKEY && message.wParam.0 == id as usize {
-                // MOD_NOREPEAT suppresses held-key repeats. Preserve each
-                // queued press, including distinct presses between polls.
-                fired += 1;
+            if message.message == WM_HOTKEY {
+                fired.push(message.wParam.0 as i32);
                 continue;
             }
             let _ = TranslateMessage(&message);
@@ -186,6 +182,164 @@ pub(crate) fn poll_hotkey(id: i32) -> usize {
         }
     }
     fired
+}
+
+/// Delivers any pending `WM_HOTKEY` messages and reports whether one arrived.
+///
+/// Kept as a focused helper for callers that own exactly one binding; the
+/// accept loop uses [`poll_hotkeys`] so no other binding's press is lost.
+#[cfg(test)]
+pub(crate) fn poll_hotkey(id: i32) -> usize {
+    poll_hotkeys()
+        .into_iter()
+        .filter(|fired| *fired == id)
+        .count()
+}
+
+/// Sends one parsed shortcut to `path` only when that executable owns the
+/// current foreground window.
+///
+/// The target is verified immediately before injection, but Windows offers no
+/// atomic "verify-and-inject" primitive: another window can take focus between
+/// the check and `SendInput`. Success therefore means "dispatched", never
+/// "the application changed state". A different foreground application is a
+/// refusal, so a meeting or editor never receives an agent's voice shortcut.
+pub fn dispatch_to_foreground(path: &str, hotkey: &Hotkey) -> std::result::Result<(), String> {
+    if !crate::resident_action_protocol::local_executable_path(path) {
+        return Err("The saved application location is not a local executable.".into());
+    }
+    let code = HotkeyCode::from_hotkey(hotkey).ok_or_else(|| {
+        "The dispatch key is unavailable on the active keyboard layout.".to_string()
+    })?;
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return Err("No foreground window is available; nothing was dispatched.".into());
+        }
+        let mut process_id = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        if process_id == 0 {
+            return Err("The foreground window owner could not be identified.".into());
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id)
+            .map_err(|_| "The foreground application cannot be inspected.".to_string())?;
+        let mut buffer = [0u16; 4096];
+        let mut length = buffer.len() as u32;
+        let queried = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut length,
+        );
+        let _ = CloseHandle(process);
+        queried.map_err(|_| "The foreground application path could not be read.".to_string())?;
+        let actual = String::from_utf16(&buffer[..length as usize])
+            .map_err(|_| "The foreground application path is not valid text.".to_string())?;
+        if !actual.eq_ignore_ascii_case(path) {
+            return Err(
+                "The bound application is not the foreground window; nothing was dispatched."
+                    .into(),
+            );
+        }
+        // Re-check after reading the path: the path read is a filesystem call,
+        // and focus may have moved since the first lookup.
+        if GetForegroundWindow() != hwnd {
+            return Err(
+                "The foreground window changed before dispatch; nothing was dispatched.".into(),
+            );
+        }
+        inject_dispatch(hotkey, code)?;
+    }
+    Ok(())
+}
+
+/// Sends a parsed shortcut to whichever application currently owns the
+/// foreground window.
+///
+/// This exists for global input tools such as an IME whose own trigger is
+/// handled by a background process and whose window is never foreground. It is
+/// inherently broader than [`dispatch_to_foreground`]: the caller must have
+/// chosen that scope explicitly. Success still means only "dispatched".
+pub fn dispatch_to_foreground_app(hotkey: &Hotkey) -> std::result::Result<(), String> {
+    let code = HotkeyCode::from_hotkey(hotkey).ok_or_else(|| {
+        "The dispatch key is unavailable on the active keyboard layout.".to_string()
+    })?;
+    unsafe {
+        if GetForegroundWindow().0.is_null() {
+            return Err("No foreground window is available; nothing was dispatched.".into());
+        }
+        inject_dispatch(hotkey, code)?;
+    }
+    Ok(())
+}
+
+/// Builds and injects the key events for one parsed chord.
+///
+/// A symbol such as `+` may require Shift on the active layout. The chord the
+/// user recorded names the character, so include the layout's required
+/// modifier. Letters are deliberately excluded: `Ctrl + A` means the A key, not
+/// `Ctrl + Shift + A`.
+unsafe fn inject_dispatch(hotkey: &Hotkey, code: HotkeyCode) -> std::result::Result<(), String> {
+    let mut inputs = Vec::with_capacity(hotkey.modifiers().len() * 2 + 4);
+    let mut modifiers: Vec<u16> = hotkey
+        .modifiers()
+        .iter()
+        .map(|modifier| modifier_virtual_key(*modifier))
+        .collect();
+    if let Key::Character(character) = hotkey.key() {
+        if !character.is_ascii_alphabetic() {
+            if let Some(mapping) = character_key(character) {
+                for (bit, virtual_key) in [(1, VK_SHIFT.0), (2, VK_CONTROL.0), (4, VK_MENU.0)] {
+                    if mapping >> 8 & bit != 0 && !modifiers.contains(&virtual_key) {
+                        modifiers.push(virtual_key);
+                    }
+                }
+            }
+        }
+    }
+    for modifier in &modifiers {
+        inputs.push(key_input(*modifier, false));
+    }
+    inputs.push(key_input(code.virtual_key as u16, false));
+    inputs.push(key_input(code.virtual_key as u16, true));
+    for modifier in modifiers.iter().rev() {
+        inputs.push(key_input(*modifier, true));
+    }
+    let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    if sent as usize != inputs.len() {
+        return Err(format!(
+            "Windows accepted {sent} of {} input events; the shortcut may not have been sent.",
+            inputs.len()
+        ));
+    }
+    Ok(())
+}
+
+fn modifier_virtual_key(modifier: Modifier) -> u16 {
+    match modifier {
+        Modifier::Control => VK_CONTROL.0,
+        Modifier::Alt => VK_MENU.0,
+        Modifier::Shift => VK_SHIFT.0,
+    }
+}
+
+fn key_input(virtual_key: u16, up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(virtual_key),
+                wScan: 0,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS::default()
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 struct Com;
@@ -651,5 +805,21 @@ mod tests {
             // that the guard is still owned after it returns an error.
             drop(registered);
         });
+    }
+
+    #[test]
+    fn dispatch_refuses_a_non_local_saved_location_before_touching_input() {
+        let chord = hotkey("Ctrl + Shift + Space");
+        for path in [
+            "",
+            "not-a-path",
+            r"\\server\share\app.exe",
+            r"C:/forward/slash.exe",
+        ] {
+            assert!(
+                dispatch_to_foreground(path, &chord).is_err(),
+                "{path} must be rejected"
+            );
+        }
     }
 }

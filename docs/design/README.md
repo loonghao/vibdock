@@ -64,7 +64,13 @@ In **service mode** (`audio_control: true`) the backend exposes an authenticated
 
 The global shortcut targets one selected microphone. The service reports whether Windows registered that shortcut; browser capture alone is not registration or physical-device evidence. Pinned Windows software entries can also retain an exact microphone association and expose explicit status/mute/unmute controls for that endpoint. The association is metadata, not an application input-route change. Application `start_voice`, `end_voice` and `input_routing` remain `not_implemented` and cannot be invoked.
 
-The backend stores exactly one global binding — a device plus a hotkey — and service mode presents one editor with real microphone choices. Per-key hardware drafts belong to design-preview mode. Software microphone associations are separate from the global shortcut; saving one does not register another shortcut or change the existing binding.
+The backend stores one global microphone binding — a device plus a hotkey — and
+up to eight per-application shortcut bindings. Service mode presents one
+microphone editor with real microphone choices, plus an application-shortcut
+section fed by the current window-application scan. Per-key hardware drafts
+belong to design-preview mode. Software microphone associations are separate
+from the global shortcut; saving one does not register another shortcut or
+change the existing binding.
 
 ## Interaction behavior
 
@@ -94,6 +100,7 @@ The feedback view previews each result state separately: trigger received, actio
 - Single instance: a second launch reuses the running service only after the listener on that port answers a fresh nonce at `POST /instance/challenge` with an HMAC-SHA256 proof derived from the recorded token. The discovery request does not transmit the bearer. Browser handoff and shutdown prove ownership again on the same pinned IPv4 connection used for the privileged request, sharing one two-second deadline; they never reconnect or fall back to IPv6 after proof. A successful challenge permits at most one additional exchange. Atomic state writes use exclusive fresh temporary files, created with mode 0600 on Unix; Windows protection still relies on inherited directory ACLs. TCP reachability or HTTP 200 alone is not accepted, so an unrelated process that inherits the port is not mistaken for our service. A stale marker is recovered only after proving no owner answers; if an unrelated process holds the port, startup fails loudly and leaves the marker in place.
 - `service-status` reports whether a service is listening. `service-stop` performs a real authenticated shutdown: it posts to the running service's `/api/shutdown` with the recorded token and waits for the port to be released, so an unrelated process on that port is never stopped by name. `tray` (Windows) runs a hidden owner and notification-area icons with Settings, Service status and Exit VibDock, sharing the same service core as the CLI.
 - Windows `POST /api/apps/bind` accepts only `revision`, saved-entry `id` and `device_id` (string or explicit null). A current exact-device read validates a non-null microphone before its optional ID is atomically persisted in `apps.json`. Old entries without this field are unbound. The association and microphone endpoint controls do not set application input routes or start/end voice sessions. See the [software contract](../resident-software.md).
+- `GET /api/shortcuts` lists saved per-application bindings and their live registration state. `POST /api/shortcuts/add` accepts only `revision`, a fresh opaque `application_reference`, `trigger`, `dispatch`, an optional `label` and an optional `scope` (`foreground` default, or `running` for a background integration); `POST /api/shortcuts/remove` accepts a revision and id. Paths are resolved server-side. A saved trigger is registered globally; its dispatch chord is injected only when the saved executable owns the foreground window, or, for an explicit `running` scope, when the executable is running and the chord is sent to the current foreground application. The result is reported as dispatched, never as a verified application state. See the [software contract](../resident-software.md).
 - `VIBDOCK_PORT` overrides the bound loopback port so acceptance runs can use a private port instead of disturbing a service on the default one.
 
 The `serve` preview remains read-only and unauthenticated: it serves the page and reports `design-preview` mode.

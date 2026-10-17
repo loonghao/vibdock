@@ -9,6 +9,7 @@ use std::{
 
 const MAX_ENTRIES: usize = 8;
 const MAX_SESSIONS: usize = 24;
+const MAX_APPLICATIONS: usize = 32;
 const FRESH: Duration = Duration::from_secs(6);
 const SELECTION_TTL: Duration = Duration::from_secs(15);
 
@@ -16,13 +17,27 @@ const SELECTION_TTL: Duration = Duration::from_secs(15);
 struct Entry {
     id: String,
     label: String,
-    endpoint: String,
+    endpoint: Option<String>,
     executable: String,
     device_id: Option<String>,
+    source: Source,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    Playback,
+    Application,
+}
+impl Source {
+    fn as_str(self) -> &'static str {
+        match self {
+            Source::Playback => "playback",
+            Source::Application => "application",
+        }
+    }
 }
 impl Entry {
     fn json(&self) -> Value {
-        json!({"id":self.id,"label":self.label,"endpoint_id":self.endpoint,"executable_path":self.executable,"device_id":self.device_id})
+        json!({"id":self.id,"label":self.label,"endpoint_id":self.endpoint,"executable_path":self.executable,"device_id":self.device_id,"source":self.source.as_str()})
     }
     fn parse(value: &Value) -> Option<Self> {
         let id = string(value, "id", 64)?;
@@ -33,6 +48,22 @@ impl Entry {
         if !local_executable(&executable) {
             return None;
         }
+        let source = match value.get("source") {
+            None => Source::Playback,
+            Some(Value::String(source)) if source == "playback" => Source::Playback,
+            Some(Value::String(source)) if source == "application" => Source::Application,
+            Some(_) => return None,
+        };
+        let endpoint = match (source, value.get("endpoint_id")) {
+            (Source::Application, None | Some(Value::Null)) => None,
+            (Source::Application, Some(_)) => return None,
+            (Source::Playback, Some(Value::String(endpoint)))
+                if !endpoint.is_empty() && endpoint.len() <= 512 =>
+            {
+                Some(endpoint.clone())
+            }
+            _ => return None,
+        };
         let device_id = match value.get("device_id") {
             None | Some(Value::Null) => None,
             Some(_) => Some(string(value, "device_id", 512).filter(|id| !id.trim().is_empty())?),
@@ -40,9 +71,10 @@ impl Entry {
         Some(Self {
             id,
             label: string(value, "label", 80)?,
-            endpoint: string(value, "endpoint_id", 512)?,
+            endpoint,
             executable,
             device_id,
+            source,
         })
     }
 }
@@ -78,6 +110,12 @@ fn bounded_label(value: &str) -> String {
 
 fn same_location(a: &str, b: &str) -> bool {
     a == b
+}
+
+/// Windows executable paths are case-insensitive. Presence matching uses that
+/// platform rule, while playback matching keeps its existing exact comparison.
+fn same_application(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
 }
 
 #[derive(Clone)]
@@ -120,6 +158,72 @@ struct Selection {
     issued: Instant,
 }
 
+/// One observed window application, independent of any playback session.
+///
+/// This is presence only: a running process is not evidence of audio, voice or
+/// work. It exists so a user can pin an application such as an input method or
+/// a coding agent that has no audio session at all.
+#[derive(Clone)]
+struct Application {
+    value: Value,
+    key: String,
+}
+impl Application {
+    fn parse(value: Value) -> Option<Self> {
+        let executable = string(&value, "executable_path", 1024)?;
+        if !local_executable(&executable) {
+            return None;
+        }
+        let pid = value.get("process_id")?.as_u64()?;
+        if pid == 0 || pid > u32::MAX as u64 {
+            return None;
+        }
+        let started = string(&value, "process_started", 32)?;
+        if !started.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        string(&value, "display_name", 160)?;
+        let key = json!([pid, started, executable]).to_string();
+        let mut value = value;
+        if value["icon_b64"].as_str().and_then(decode_icon).is_none() {
+            value["icon_b64"] = Value::Null;
+        }
+        Some(Self { value, key })
+    }
+    fn executable(&self) -> &str {
+        self.value["executable_path"].as_str().unwrap_or_default()
+    }
+    fn display_name(&self) -> &str {
+        self.value["display_name"].as_str().unwrap_or_default()
+    }
+    fn integration(&self) -> Option<&'static str> {
+        known_integration(self.executable())
+    }
+    fn background(&self) -> bool {
+        self.value["background"] == true
+    }
+}
+struct ApplicationSelection {
+    application: Application,
+    issued: Instant,
+}
+
+/// Maps an executable name to a documented integration id.
+///
+/// This is recognition metadata, not a claim that the client is installed,
+/// connected, or controllable. The name match is deliberately exact and
+/// case-insensitive; similar names are never merged.
+fn known_integration(executable: &str) -> Option<&'static str> {
+    let basename = executable.rsplit('\\').next()?.to_ascii_lowercase();
+    match basename.as_str() {
+        "wemeetapp.exe" | "wemeet.exe" => Some("tencent_meeting"),
+        "wetype.exe" | "wetype_renderer.exe" | "wetype_server.exe" => Some("wechat_input"),
+        "codex.exe" | "chatgpt.exe" => Some("codex"),
+        "workbuddy.exe" => Some("workbuddy"),
+        _ => None,
+    }
+}
+
 pub(crate) struct Registry {
     path: PathBuf,
     entries: Vec<Entry>,
@@ -128,9 +232,12 @@ pub(crate) struct Registry {
     load_error: Option<String>,
     snapshot: Value,
     sessions: Vec<Session>,
+    applications: Vec<Application>,
     checked: Option<Instant>,
     selections: BTreeMap<String, Selection>,
+    application_selections: BTreeMap<String, ApplicationSelection>,
     current_choices: Vec<(String, Session)>,
+    current_applications: Vec<(String, Application)>,
     worker: Option<Worker>,
     actions: crate::resident_actions::Actions,
 }
@@ -170,9 +277,12 @@ impl Registry {
             load_error: error,
             snapshot: unavailable("Waiting for native playback observation"),
             sessions: vec![],
+            applications: vec![],
             checked: None,
             selections: BTreeMap::new(),
+            application_selections: BTreeMap::new(),
             current_choices: vec![],
+            current_applications: vec![],
             worker: None,
             actions: crate::resident_actions::Actions::default(),
         }
@@ -234,8 +344,19 @@ impl Registry {
             .take(MAX_SESSIONS)
             .filter_map(|v| Session::parse(v.clone()))
             .collect();
-        if self.snapshot["sessions"].as_array().map_or(0, Vec::len) != self.sessions.len() {
+        self.applications = self.snapshot["applications"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(MAX_APPLICATIONS)
+            .filter_map(|v| Application::parse(v.clone()))
+            .collect();
+        if self.snapshot["sessions"].as_array().map_or(0, Vec::len) != self.sessions.len()
+            || self.snapshot["applications"].as_array().map_or(0, Vec::len)
+                != self.applications.len()
+        {
             self.snapshot["complete"] = json!(false);
+            self.snapshot["applications_complete"] = json!(false);
             if let Some(endpoints) = self.snapshot["endpoints"].as_array_mut() {
                 for endpoint in endpoints {
                     endpoint["complete"] = json!(false);
@@ -243,6 +364,8 @@ impl Registry {
             }
         }
         self.selections
+            .retain(|_, v| now.saturating_duration_since(v.issued) < SELECTION_TTL);
+        self.application_selections
             .retain(|_, v| now.saturating_duration_since(v.issued) < SELECTION_TTL);
         self.current_choices.clear();
         for session in &self.sessions {
@@ -261,6 +384,23 @@ impl Registry {
                 self.current_choices.push((id, session.clone()));
             }
         }
+        self.current_applications.clear();
+        for application in &self.applications {
+            let existing = self
+                .application_selections
+                .iter()
+                .find(|(_, selection)| selection.application.key == application.key)
+                .map(|(id, _)| id.clone());
+            if let Some(id) = existing.or_else(|| crate::service::generate_token().ok()) {
+                self.application_selections
+                    .entry(id.clone())
+                    .or_insert_with(|| ApplicationSelection {
+                        application: application.clone(),
+                        issued: now,
+                    });
+                self.current_applications.push((id, application.clone()));
+            }
+        }
         // One bounded map, never one background task per request or selection.
         if self.selections.len() > MAX_SESSIONS * 8 {
             self.selections.retain(|id, _| {
@@ -269,33 +409,66 @@ impl Registry {
                     .any(|(current, _)| id == current)
             });
         }
+        if self.application_selections.len() > MAX_APPLICATIONS * 4 {
+            self.application_selections.retain(|id, _| {
+                self.current_applications
+                    .iter()
+                    .any(|(current, _)| id == current)
+            });
+        }
     }
     fn fresh(&self) -> bool {
         self.checked.is_some_and(|t| t.elapsed() < FRESH) && self.snapshot["available"] == true
     }
+    /// Resolves a displayed application selection to its saved location.
+    ///
+    /// The path never reaches the browser; only this opaque, short-lived
+    /// reference does. A stale scan cannot authorise a new binding.
+    pub(crate) fn resolve_application(&self, reference: &str) -> Option<(String, String, bool)> {
+        if !self.fresh() || self.load_error.is_some() {
+            return None;
+        }
+        let selection = self
+            .application_selections
+            .get(reference)
+            .filter(|selection| selection.issued.elapsed() < SELECTION_TTL)?;
+        let application = self
+            .applications
+            .iter()
+            .find(|application| application.key == selection.application.key)?;
+        Some((
+            application.executable().to_string(),
+            application.display_name().to_string(),
+            application.background(),
+        ))
+    }
+    /// Consumes a resolved reference so one displayed row yields one binding.
+    pub(crate) fn consume_application(&mut self, reference: &str) {
+        self.application_selections.remove(reference);
+        self.current_applications
+            .retain(|(choice, _)| choice != reference);
+    }
+    /// True when a fresh scan contains the exact saved location.
+    ///
+    /// Used by the broadened "running" dispatch scope for background input
+    /// tools. A stale scan cannot authorise a dispatch.
+    pub(crate) fn application_running(&self, path: &str) -> bool {
+        self.fresh()
+            && self
+                .applications
+                .iter()
+                .any(|application| same_application(application.executable(), path))
+    }
     pub(crate) fn view(&self, summary: bool) -> Value {
         let fresh = self.fresh();
-        let entries=self.entries.iter().map(|e| {
-            let sessions:Vec<Value>=if fresh { self.sessions.iter().filter(|s|s.value["endpoint_id"]==e.endpoint && s.value["executable_path"].as_str().is_some_and(|p|same_location(p,&e.executable))).map(|session| {
-                let mut v=session.public();
-                if let Some((id,_))=self.current_choices.iter().find(|(id,s)|s.key==session.key && self.selections.get(id).is_some_and(|selection|selection.issued.elapsed()<SELECTION_TTL)) {
-                    v["session_reference"]=json!(id);
-                    v["actions_enabled"]=json!(self.worker.as_ref().is_some_and(|worker|worker.alive.load(std::sync::atomic::Ordering::Acquire)) && self.load_error.is_none() && !self.actions.pending() && self.unique_session(session));
-                }
-                // Creation stamps remain internal action identity, never a browser authority.
-                v.as_object_mut().unwrap().remove("process_started");
-                v
-            }).collect() } else {vec![]};
-            let complete=fresh && self.snapshot["endpoints"].as_array().is_some_and(|endpoints|endpoints.iter().any(|v|v["id"]==e.endpoint && v["complete"]==true));
-            let state=if !sessions.is_empty(){"connected"}else if complete{"not_connected"}else{"unknown"};
-            let icon=sessions.iter().find_map(|s|s.get("icon_b64").and_then(Value::as_str)).map(str::to_owned);
-            let playback=if !complete && !sessions.is_empty(){"Partial observation; aggregate playback state unknown"}else if sessions.is_empty(){"Playback state unknown"}else if sessions.iter().any(|s|s["active"]==true){"Playback session active"}else{"Playback session idle"};
-            let muted=if !complete || sessions.is_empty(){""}else if sessions.iter().all(|s|s["muted"]==true){"all muted"}else if sessions.iter().all(|s|s["muted"]==false){"not muted"}else{"mixed mute states"};
-            let enabled=sessions.iter().any(|s|s["actions_enabled"]==true);
-            let mut row=json!({"playback_label":format!("{playback}; {muted}"),"id":e.id,"label":e.label,"device_id":e.device_id,"capabilities":{"start_voice":"not_implemented","end_voice":"not_implemented","input_routing":"not_implemented"},"state":state,"complete":complete,"sessions":sessions,"actions_enabled":enabled,"identity_kind":"saved_executable_location","icon_b64":icon});
-            if summary {for session in row["sessions"].as_array_mut().unwrap() {session.as_object_mut().unwrap().remove("icon_b64");}}
-            row
-        }).collect::<Vec<_>>();
+        let entries = self
+            .entries
+            .iter()
+            .map(|entry| match entry.source {
+                Source::Playback => self.playback_entry_view(entry, fresh, summary),
+                Source::Application => self.application_entry_view(entry, fresh),
+            })
+            .collect::<Vec<_>>();
         let choices = if fresh && !summary {
             self.current_choices
                 .iter()
@@ -308,8 +481,27 @@ impl Registry {
         } else {
             vec![]
         };
+        // Presence choices are separate from playback choices: pinning one
+        // records an executable location, not an audio session.
+        let applications = if fresh && !summary {
+            self.current_applications
+                .iter()
+                .map(|(id, application)| {
+                    json!({
+                        "selection_id":id,
+                        "name":application.display_name(),
+                        "icon_b64":application.value["icon_b64"],
+                        "integration":application.integration(),
+                        "background":application.background()
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
         let actions_enabled = entries.iter().any(|e| e["actions_enabled"] == true);
-        let mut result = json!({"schema_version":1,"platform":if cfg!(windows){"windows"}else{"unsupported"},"revision":self.revision,"generation":self.generation,"age_ms":self.checked.map(|t|t.elapsed().as_millis().min(u64::MAX as u128) as u64),"skipped":self.snapshot["skipped"],"available":fresh,"complete":fresh&&self.snapshot["complete"]==true,"error":self.load_error.as_deref().or_else(||self.snapshot["error"].as_str()),"storage_writable":self.load_error.is_none(),"entries":entries,"choices":choices,"actions_enabled":actions_enabled});
+        let applications_complete = fresh && self.snapshot["applications_complete"] == true;
+        let mut result = json!({"schema_version":1,"platform":if cfg!(windows){"windows"}else{"unsupported"},"revision":self.revision,"generation":self.generation,"age_ms":self.checked.map(|t|t.elapsed().as_millis().min(u64::MAX as u128) as u64),"skipped":self.snapshot["skipped"],"available":fresh,"complete":fresh&&self.snapshot["complete"]==true,"applications_complete":applications_complete,"error":self.load_error.as_deref().or_else(||self.snapshot["error"].as_str()),"storage_writable":self.load_error.is_none(),"entries":entries,"applications":applications,"choices":choices,"actions_enabled":actions_enabled});
         // Preserve every exact session reference under the native transport budget.
         // Duplicate saved locations can expand rows; dropping optional images is
         // safer than silently dropping sessions or letting a large response stall.
@@ -320,6 +512,119 @@ impl Registry {
             result["icons_omitted"] = json!(true);
         }
         result
+    }
+
+    /// One saved playback location: connected/not_connected/unknown describes
+    /// playback sessions only, exactly as before application presence existed.
+    fn playback_entry_view(&self, entry: &Entry, fresh: bool, summary: bool) -> Value {
+        let endpoint = entry.endpoint.as_deref();
+        let sessions: Vec<Value> = if fresh {
+            self.sessions
+                .iter()
+                .filter(|s| {
+                    s.value["endpoint_id"].as_str() == endpoint
+                        && s.value["executable_path"]
+                            .as_str()
+                            .is_some_and(|p| same_location(p, &entry.executable))
+                })
+                .map(|session| {
+                    let mut v = session.public();
+                    if let Some((id, _)) = self.current_choices.iter().find(|(id, s)| {
+                        s.key == session.key
+                            && self
+                                .selections
+                                .get(id)
+                                .is_some_and(|selection| selection.issued.elapsed() < SELECTION_TTL)
+                    }) {
+                        v["session_reference"] = json!(id);
+                        v["actions_enabled"] = json!(
+                            self.worker.as_ref().is_some_and(|worker| worker
+                                .alive
+                                .load(std::sync::atomic::Ordering::Acquire))
+                                && self.load_error.is_none()
+                                && !self.actions.pending()
+                                && self.unique_session(session)
+                        );
+                    }
+                    // Creation stamps remain internal action identity, never a browser authority.
+                    v.as_object_mut().unwrap().remove("process_started");
+                    v
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+        let complete = fresh
+            && self.snapshot["endpoints"]
+                .as_array()
+                .is_some_and(|endpoints| {
+                    endpoints
+                        .iter()
+                        .any(|v| v["id"].as_str() == endpoint && v["complete"] == true)
+                });
+        let state = if !sessions.is_empty() {
+            "connected"
+        } else if complete {
+            "not_connected"
+        } else {
+            "unknown"
+        };
+        let icon = sessions
+            .iter()
+            .find_map(|s| s.get("icon_b64").and_then(Value::as_str))
+            .map(str::to_owned);
+        let playback = if !complete && !sessions.is_empty() {
+            "Partial observation; aggregate playback state unknown"
+        } else if sessions.is_empty() {
+            "Playback state unknown"
+        } else if sessions.iter().any(|s| s["active"] == true) {
+            "Playback session active"
+        } else {
+            "Playback session idle"
+        };
+        let muted = if !complete || sessions.is_empty() {
+            ""
+        } else if sessions.iter().all(|s| s["muted"] == true) {
+            "all muted"
+        } else if sessions.iter().all(|s| s["muted"] == false) {
+            "not muted"
+        } else {
+            "mixed mute states"
+        };
+        let enabled = sessions.iter().any(|s| s["actions_enabled"] == true);
+        let mut row = json!({"playback_label":format!("{playback}; {muted}"),"id":entry.id,"label":entry.label,"device_id":entry.device_id,"source":"playback","capabilities":{"start_voice":"not_implemented","end_voice":"not_implemented","input_routing":"not_implemented"},"state":state,"complete":complete,"sessions":sessions,"actions_enabled":enabled,"identity_kind":"saved_executable_location","icon_b64":icon});
+        if summary {
+            for session in row["sessions"].as_array_mut().unwrap() {
+                session.as_object_mut().unwrap().remove("icon_b64");
+            }
+        }
+        row
+    }
+
+    /// One saved application location. Presence is reported independently of
+    /// playback; a running process proves neither audio nor voice activity.
+    fn application_entry_view(&self, entry: &Entry, fresh: bool) -> Value {
+        let matches: Vec<&Application> = if fresh {
+            self.applications
+                .iter()
+                .filter(|application| same_application(application.executable(), &entry.executable))
+                .collect()
+        } else {
+            vec![]
+        };
+        let complete = fresh && self.snapshot["applications_complete"] == true;
+        let state = if !matches.is_empty() {
+            "running"
+        } else if complete {
+            "not_running"
+        } else {
+            "unknown"
+        };
+        let icon = matches
+            .iter()
+            .find_map(|application| application.value["icon_b64"].as_str())
+            .map(str::to_owned);
+        json!({"playback_label":"Application presence only; playback, voice and work state unknown","id":entry.id,"label":entry.label,"device_id":entry.device_id,"source":"application","capabilities":{"start_voice":"not_implemented","end_voice":"not_implemented","input_routing":"not_implemented"},"state":state,"complete":complete,"sessions":[],"actions_enabled":false,"identity_kind":"application_location","icon_b64":icon,"integration":matches.first().and_then(|application| application.integration()),"background":matches.first().is_some_and(|application| application.background())})
     }
     pub(crate) fn action_route(
         &mut self,
@@ -365,9 +670,12 @@ impl Registry {
             return None;
         }
         let entry = self.entries.iter().find(|e| e.id == entry_id)?;
+        if entry.source != Source::Playback {
+            return None;
+        }
         let mut matched = self.sessions.iter().filter(|s| {
             s.key == key
-                && s.value["endpoint_id"] == entry.endpoint
+                && s.value["endpoint_id"].as_str() == entry.endpoint.as_deref()
                 && s.value["executable_path"] == entry.executable
         });
         let session = matched.next()?;
@@ -540,51 +848,90 @@ impl Registry {
                 let Some(id) = v["selection_id"].as_str() else {
                     return fail(400, "A fresh selection_id is required");
                 };
-                let Some(selection) = self
-                    .selections
-                    .get(id)
-                    .filter(|s| s.issued.elapsed() < SELECTION_TTL)
-                else {
-                    return fail(409, "Selection expired or already used");
-                };
-                let Some(current) = self
-                    .sessions
-                    .iter()
-                    .find(|s| s.key == selection.session.key)
-                else {
-                    return fail(409, "Selected session changed; select again");
-                };
-                let Some(exe) = current.value["executable_path"].as_str() else {
-                    return fail(409, "Selected process cannot be resolved");
-                };
-                let endpoint = current.value["endpoint_id"].as_str().unwrap();
-                if entries
-                    .iter()
-                    .any(|e| e.endpoint == endpoint && same_location(&e.executable, exe))
-                {
-                    return fail(
-                        409,
-                        "This software location is already pinned on that output",
-                    );
-                }
                 let label = match v.get("label") {
-                    None => bounded_label(current.value["display_name"].as_str().unwrap()),
+                    None => None,
                     Some(_) => match string(&v, "label", 80) {
-                        Some(s) => s,
+                        Some(s) => Some(s),
                         None => return fail(400, "Label must be plain text under 80 bytes"),
                     },
                 };
-                let Ok(entry_id) = crate::service::generate_token() else {
-                    return fail(503, "Secure entry identifiers are unavailable");
-                };
-                entries.push(Entry {
-                    id: entry_id,
-                    label,
-                    endpoint: endpoint.into(),
-                    executable: exe.into(),
-                    device_id: None,
-                });
-                used = Some(id.to_string());
+                if let Some(selection) = self
+                    .selections
+                    .get(id)
+                    .filter(|s| s.issued.elapsed() < SELECTION_TTL)
+                {
+                    let Some(current) = self
+                        .sessions
+                        .iter()
+                        .find(|s| s.key == selection.session.key)
+                    else {
+                        return fail(409, "Selected session changed; select again");
+                    };
+                    let Some(exe) = current.value["executable_path"].as_str() else {
+                        return fail(409, "Selected process cannot be resolved");
+                    };
+                    let endpoint = current.value["endpoint_id"].as_str().unwrap();
+                    if entries.iter().any(|e| {
+                        e.source == Source::Playback
+                            && e.endpoint.as_deref() == Some(endpoint)
+                            && same_location(&e.executable, exe)
+                    }) {
+                        return fail(
+                            409,
+                            "This software location is already pinned on that output",
+                        );
+                    }
+                    let label = label.unwrap_or_else(|| {
+                        bounded_label(current.value["display_name"].as_str().unwrap())
+                    });
+                    let Ok(entry_id) = crate::service::generate_token() else {
+                        return fail(503, "Secure entry identifiers are unavailable");
+                    };
+                    entries.push(Entry {
+                        id: entry_id,
+                        label,
+                        endpoint: Some(endpoint.into()),
+                        executable: exe.into(),
+                        device_id: None,
+                        source: Source::Playback,
+                    });
+                    used = Some(id.to_string());
+                } else if let Some(selection) = self
+                    .application_selections
+                    .get(id)
+                    .filter(|s| s.issued.elapsed() < SELECTION_TTL)
+                {
+                    // Presence-only entry: no audio endpoint is invented for
+                    // an application observed only through its window.
+                    let Some(current) = self
+                        .applications
+                        .iter()
+                        .find(|a| a.key == selection.application.key)
+                    else {
+                        return fail(409, "Selected application changed; select again");
+                    };
+                    let exe = current.executable();
+                    if entries.iter().any(|e| {
+                        e.source == Source::Application && same_application(&e.executable, exe)
+                    }) {
+                        return fail(409, "This application is already pinned");
+                    }
+                    let label = label.unwrap_or_else(|| bounded_label(current.display_name()));
+                    let Ok(entry_id) = crate::service::generate_token() else {
+                        return fail(503, "Secure entry identifiers are unavailable");
+                    };
+                    entries.push(Entry {
+                        id: entry_id,
+                        label,
+                        endpoint: None,
+                        executable: exe.into(),
+                        device_id: None,
+                        source: Source::Application,
+                    });
+                    used = Some(id.to_string());
+                } else {
+                    return fail(409, "Selection expired or already used");
+                }
             }
             "remove" => {
                 let Some(id) = v["id"].as_str() else {
@@ -639,13 +986,16 @@ impl Registry {
         self.revision = revision;
         if let Some(id) = used {
             self.selections.remove(&id);
+            self.application_selections.remove(&id);
             self.current_choices.retain(|(choice, _)| choice != &id);
+            self.current_applications
+                .retain(|(choice, _)| choice != &id);
         }
         (200, self.view(false))
     }
 }
 fn unavailable(message: &str) -> Value {
-    json!({"available":false,"complete":false,"endpoints":[],"sessions":[],"skipped":0,"error":message})
+    json!({"available":false,"complete":false,"endpoints":[],"sessions":[],"applications":[],"applications_complete":false,"skipped":0,"error":message})
 }
 
 struct Worker {
@@ -847,7 +1197,10 @@ mod tests {
         path.join("apps.json")
     }
     fn snapshot(pid: u32, instance: &str) -> Value {
-        json!({"available":true,"complete":true,"endpoints":[{"id":"speaker-fixture","complete":true}],"sessions":[{"endpoint_id":"speaker-fixture","session_instance_id":instance,"process_id":pid,"process_started":"123","executable_path":"C:\\Fixture\\Example.exe","display_name":"Example.exe","active":true,"muted":false,"session_state":"active","icon_b64":null}],"skipped":0,"error":null})
+        json!({"available":true,"complete":true,"endpoints":[{"id":"speaker-fixture","complete":true}],"sessions":[{"endpoint_id":"speaker-fixture","session_instance_id":instance,"process_id":pid,"process_started":"123","executable_path":"C:\\Fixture\\Example.exe","display_name":"Example.exe","active":true,"muted":false,"session_state":"active","icon_b64":null}],"applications":[],"applications_complete":true,"skipped":0,"error":null})
+    }
+    fn presence_snapshot(path: &str, complete: bool) -> Value {
+        json!({"available":true,"complete":true,"endpoints":[],"sessions":[],"applications":[{"process_id":321,"process_started":"456","executable_path":path,"display_name":"Codex","background":false,"icon_b64":null}],"applications_complete":complete,"skipped":0,"error":null})
     }
     fn select(registry: &mut Registry) -> String {
         registry.observe(snapshot(123, "session-a"), Instant::now());
@@ -1472,5 +1825,161 @@ mod tests {
         for icon in ["", "https://example.test/a.ico", "AAAA", "====", "<svg/>"] {
             assert!(decode_icon(icon).is_none());
         }
+    }
+    #[test]
+    fn application_presence_can_be_pinned_without_any_playback_session() {
+        let path = temp();
+        let mut registry = Registry::load(path.clone());
+        registry.observe(
+            presence_snapshot(r"C:\Fixture\Codex.exe", true),
+            Instant::now(),
+        );
+        let view = registry.view(false);
+        assert_eq!(view["entries"].as_array().unwrap().len(), 0);
+        assert_eq!(view["applications"][0]["name"], "Codex");
+        assert_eq!(view["applications"][0]["integration"], "codex");
+        assert!(!view.to_string().contains("Fixture"));
+        let reference = view["applications"][0]["selection_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (status, view) = registry.mutate(
+            "pin",
+            &json!({"revision":0,"selection_id":reference}).to_string(),
+        );
+        assert_eq!(status, 200, "{view}");
+        assert_eq!(view["entries"][0]["source"], "application");
+        assert_eq!(view["entries"][0]["state"], "running");
+        assert_eq!(view["entries"][0]["actions_enabled"], false);
+        assert_eq!(view["entries"][0]["sessions"].as_array().unwrap().len(), 0);
+        assert_eq!(view["entries"][0]["integration"], "codex");
+        assert!(!view.to_string().contains("Fixture"));
+        // A fresh persisted entry does not inherit the previous scan's state.
+        let reopened = Registry::load(path.clone());
+        assert_eq!(reopened.view(false)["entries"][0]["state"], "unknown");
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn application_presence_absence_requires_a_complete_scan() {
+        let path = temp();
+        let mut registry = Registry::load(path.clone());
+        registry.observe(
+            presence_snapshot(r"C:\Fixture\Codex.exe", true),
+            Instant::now(),
+        );
+        let reference = registry.current_applications[0].0.clone();
+        assert_eq!(
+            registry
+                .mutate(
+                    "pin",
+                    &json!({"revision":0,"selection_id":reference}).to_string()
+                )
+                .0,
+            200
+        );
+        let mut missing = presence_snapshot(r"C:\Fixture\Other.exe", true);
+        missing["applications"] = json!([]);
+        registry.observe(missing.clone(), Instant::now());
+        assert_eq!(registry.view(false)["entries"][0]["state"], "not_running");
+        registry.observe(missing, Instant::now());
+        let mut partial = presence_snapshot(r"C:\Fixture\Other.exe", false);
+        partial["applications"] = json!([]);
+        registry.observe(partial, Instant::now());
+        assert_eq!(registry.view(false)["entries"][0]["state"], "unknown");
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn application_selection_expires_and_is_not_replayable() {
+        let path = temp();
+        let mut registry = Registry::load(path.clone());
+        registry.observe(
+            presence_snapshot(r"C:\Fixture\Codex.exe", true),
+            Instant::now(),
+        );
+        let reference = registry.current_applications[0].0.clone();
+        assert!(registry.resolve_application(&reference).is_some());
+        registry.consume_application(&reference);
+        assert!(registry.resolve_application(&reference).is_none());
+        registry.observe(
+            presence_snapshot(r"C:\Fixture\Codex.exe", true),
+            Instant::now(),
+        );
+        let reference = registry.current_applications[0].0.clone();
+        registry
+            .application_selections
+            .get_mut(&reference)
+            .unwrap()
+            .issued = Instant::now() - Duration::from_secs(16);
+        assert!(registry.resolve_application(&reference).is_none());
+        assert_eq!(
+            registry
+                .mutate(
+                    "pin",
+                    &json!({"revision":0,"selection_id":reference}).to_string()
+                )
+                .0,
+            409
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn known_integrations_match_exact_executable_names_only() {
+        for (path, expected) in [
+            (
+                r"C:\Program Files\Tencent\WeMeet\wemeetapp.exe",
+                Some("tencent_meeting"),
+            ),
+            (
+                r"C:\Program Files\Tencent\WeType\wetype.exe",
+                Some("wechat_input"),
+            ),
+            (r"C:\Apps\Codex\codex.exe", Some("codex")),
+            (r"C:\Apps\Codex\CodexHelper.exe", None),
+            (r"C:\Apps\Slack\slack.exe", None),
+        ] {
+            assert_eq!(known_integration(path), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn background_presence_authorizes_only_the_running_scope_check() {
+        let mut registry = Registry::load(temp());
+        let mut snapshot = presence_snapshot(r"C:\Fixture\WeType.exe", true);
+        snapshot["applications"][0]["background"] = json!(true);
+        registry.observe(snapshot, Instant::now());
+        let reference = registry.current_applications[0].0.clone();
+        let (path, label, background) = registry.resolve_application(&reference).unwrap();
+        assert_eq!(path, r"C:\Fixture\WeType.exe");
+        assert_eq!(label, "Codex");
+        assert!(background);
+        assert!(registry.application_running(r"C:\Fixture\WeType.exe"));
+        assert!(!registry.application_running(r"C:\Fixture\Other.exe"));
+        registry.checked = None;
+        assert!(!registry.application_running(r"C:\Fixture\WeType.exe"));
+        std::fs::remove_dir_all(registry.path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn application_view_never_leaks_paths_or_enables_actions() {
+        let mut registry = Registry::load(temp());
+        registry.observe(
+            presence_snapshot(r"C:\PrivateUser\Secret.exe", true),
+            Instant::now(),
+        );
+        let view = registry.view(false);
+        assert!(!view.to_string().contains("PrivateUser"));
+        assert!(!view.to_string().contains("Secret.exe"));
+        assert_eq!(view["entries"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            view["applications"][0]["selection_id"]
+                .as_str()
+                .unwrap()
+                .len(),
+            64
+        );
+        std::fs::remove_dir_all(registry.path.parent().unwrap()).unwrap();
     }
 }

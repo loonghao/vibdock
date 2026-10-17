@@ -10,8 +10,10 @@ use std::{collections::BTreeSet, ffi::c_void, ptr};
 use crate::resident_action_protocol::{self as action, ActionTarget, ExactSessionAction};
 use serde_json::{json, Value};
 use windows::{
-    core::{Interface, PCWSTR, PWSTR},
+    core::{Interface, BOOL, PCWSTR, PWSTR},
     Win32::{
+        Foundation::{HWND, LPARAM},
+        Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED},
         Media::Audio::{
             eRender, AudioSessionStateActive as AUDIO_SESSION_STATE_ACTIVE,
             AudioSessionStateInactive as AUDIO_SESSION_STATE_INACTIVE, IAudioSessionControl,
@@ -22,11 +24,25 @@ use windows::{
             CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
             COINIT_APARTMENTTHREADED,
         },
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        },
+        UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
+            GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+        },
     },
 };
 
 const MAX_ENDPOINTS: usize = 8;
 const MAX_SESSIONS: usize = 24;
+/// Upper bound on recognised window applications per scan. Reading each
+/// executable's icon is the expensive part, so this stays deliberately small.
+const MAX_APPLICATIONS: usize = 32;
+const MAX_BACKGROUND_APPLICATIONS: usize = 8;
+/// Cap on top-level windows inspected before deciding the scan is incomplete.
+const MAX_WINDOWS: usize = 512;
 const MAX_ID: usize = 1024;
 const MAX_PATH: usize = 4096;
 const MAX_ICON: usize = 8192;
@@ -150,7 +166,7 @@ fn bounded_text(value: &str, limit: usize) -> bool {
 
 fn unavailable(error: &str) -> Value {
     json!({"available":false,"complete":false,"endpoints":[],"sessions":[],
-        "skipped":0,"error":error})
+        "applications":[],"applications_complete":false,"skipped":0,"error":error})
 }
 
 /// Only call in the owned, short-lived helper process, never an HTTP/UI thread.
@@ -377,17 +393,354 @@ unsafe fn observe_snapshot() -> Value {
             }
         }
     }
+    // Application presence is observed independently of playback. An
+    // application with no audio session (an input method, a coding agent, a
+    // meeting client before joining) still has a visible top-level window and
+    // must be recognisable for a per-application binding.
+    let (mut applications, applications_complete) = observe_applications();
+    // Input methods and tray agents often have no visible top-level window.
+    // Recognise a closed set of known integration processes by exact executable
+    // name so they can still be pinned and associated with a microphone. This
+    // is best-effort presence, never proof of voice activity or control.
+    applications.extend(observe_background_applications(&applications));
     let result = json!({
         "available":true, "complete":complete, "endpoints":endpoint_values,
         "sessions":session_values, "skipped":skipped,
+        "applications":applications, "applications_complete":applications_complete,
         "error":if complete { None } else { Some("Playback observation is partial; absence is unconfirmed.") }
     });
     // Independent final guard, including JSON escaping and all metadata.
-    if serde_json::to_vec(&result).is_ok_and(|bytes| bytes.len() < MAX_OUTPUT) {
-        result
-    } else {
-        unavailable("Playback observation exceeded its response budget.")
+    // Icons are optional display data; exact playback session identity is not.
+    // Drop application icons before giving up the whole observation.
+    if serde_json::to_vec(&result).is_ok_and(|bytes| bytes.len() >= MAX_OUTPUT) {
+        let mut trimmed = result;
+        if let Some(applications) = trimmed["applications"].as_array_mut() {
+            for application in applications {
+                application["icon_b64"] = Value::Null;
+            }
+        }
+        trimmed["icons_omitted"] = json!(true);
+        if serde_json::to_vec(&trimmed).is_ok_and(|bytes| bytes.len() < MAX_OUTPUT) {
+            return trimmed;
+        }
+        return unavailable("Playback observation exceeded its response budget.");
     }
+    result
+}
+
+/// One visible top-level window, reduced to the process that owns it.
+struct ApplicationWindow {
+    process_id: u32,
+    title: String,
+}
+
+struct WindowScan {
+    windows: Vec<ApplicationWindow>,
+    truncated: bool,
+}
+
+/// Collects visible, non-cloaked, non-tool top-level windows.
+///
+/// The callback must stay a plain `extern "system"` function: it runs inside
+/// `EnumWindows`, so it may not panic, allocate unbounded state, or call back
+/// into Rust code that could unwind across the FFI boundary. It always returns
+/// true: stopping enumeration would make the whole scan look like a failure
+/// instead of a bounded partial result.
+unsafe extern "system" fn collect_application_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let scan = &mut *(lparam.0 as *mut WindowScan);
+    if scan.windows.len() >= MAX_WINDOWS {
+        scan.truncated = true;
+        return true.into();
+    }
+    if !IsWindowVisible(hwnd).as_bool() {
+        return true.into();
+    }
+    // A cloaked window belongs to a suspended or virtual-desktop-inactive
+    // application. It is not something the user can currently act on.
+    let mut cloaked = 0u32;
+    if DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_CLOAKED,
+        (&mut cloaked as *mut u32).cast(),
+        std::mem::size_of::<u32>() as u32,
+    )
+    .is_ok()
+        && cloaked != 0
+    {
+        return true.into();
+    }
+    if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 {
+        return true.into();
+    }
+    if GetWindowTextLengthW(hwnd) <= 0 {
+        return true.into();
+    }
+    let mut title = [0u16; 260];
+    let length = GetWindowTextW(hwnd, &mut title);
+    if length <= 0 {
+        return true.into();
+    }
+    let Ok(title) = String::from_utf16(&title[..length as usize]) else {
+        return true.into();
+    };
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    if process_id == 0 || process_id == std::process::id() {
+        return true.into();
+    }
+    scan.windows.push(ApplicationWindow { process_id, title });
+    true.into()
+}
+
+/// Enumerates running window applications and reduces them to one bounded,
+/// verifiable row per process.
+///
+/// Returns `(applications, complete)`. `complete` is false whenever a candidate
+/// window could not be attributed to an executable: a caller must not turn a
+/// partial list into "that application is not running".
+unsafe fn observe_applications() -> (Vec<Value>, bool) {
+    let mut scan = WindowScan {
+        windows: Vec::new(),
+        truncated: false,
+    };
+    if EnumWindows(
+        Some(collect_application_window),
+        LPARAM((&mut scan as *mut WindowScan) as isize),
+    )
+    .is_err()
+    {
+        return (Vec::new(), false);
+    }
+    // Keep one entry per process, preferring the longest window title as the
+    // most informative name. EnumWindows is Z-order, which is not relevant to
+    // an application identity.
+    let mut by_process: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+    for window in scan.windows {
+        let title = window
+            .title
+            .trim()
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(160)
+            .collect::<String>();
+        if title.is_empty() {
+            continue;
+        }
+        by_process
+            .entry(window.process_id)
+            .and_modify(|existing| {
+                if title.len() > existing.len() {
+                    existing.clone_from(&title);
+                }
+            })
+            .or_insert(title);
+    }
+    let mut complete = !scan.truncated;
+    let mut applications = Vec::new();
+    for (process_id, title) in by_process {
+        // The bound keeps a crowded desktop from spending the helper's whole
+        // three-second budget on icon extraction. A truncated list is partial,
+        // never evidence that the rest are absent.
+        if applications.len() >= MAX_APPLICATIONS {
+            complete = false;
+            break;
+        }
+        match observe_application(process_id, &title) {
+            ApplicationOutcome::Row(row) => applications.push(row),
+            // A deliberately skipped shell/host process is not an unreadable
+            // application; it must not make the whole scan partial.
+            ApplicationOutcome::Skipped => {}
+            ApplicationOutcome::Unreadable => complete = false,
+        }
+    }
+    applications.sort_by(|left, right| {
+        left["display_name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .cmp(
+                &right["display_name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+            )
+    });
+    (applications, complete)
+}
+
+/// A closed set of known integration processes that may have no window.
+///
+/// Matching is exact and case-insensitive. The friendly name is used only for
+/// display; the executable path still comes from a verified process handle.
+fn background_integration(basename: &str) -> Option<&'static str> {
+    match basename.to_ascii_lowercase().as_str() {
+        "wetype.exe" | "wetype_renderer.exe" | "wetype_server.exe" => Some("微信输入法"),
+        "wemeetapp.exe" | "wemeet.exe" => Some("腾讯会议"),
+        "codex.exe" | "chatgpt.exe" => Some("Codex / ChatGPT"),
+        "workbuddy.exe" => Some("WorkBuddy"),
+        _ => None,
+    }
+}
+
+/// A stable integration id for deduplicating a windowed client and its
+/// background helpers. The id is metadata only, never an action authority.
+fn integration_id(basename: &str) -> Option<&'static str> {
+    match basename.to_ascii_lowercase().as_str() {
+        "wetype.exe" | "wetype_renderer.exe" | "wetype_server.exe" => Some("wechat_input"),
+        "wemeetapp.exe" | "wemeet.exe" => Some("tencent_meeting"),
+        "codex.exe" | "chatgpt.exe" => Some("codex"),
+        "workbuddy.exe" => Some("workbuddy"),
+        _ => None,
+    }
+}
+
+/// Adds running known-integration processes that the window scan did not
+/// already cover. This is deliberately best-effort: a protected service process
+/// that cannot be opened is skipped, and the application completeness flag is
+/// not weakened by it. The returned rows never claim a window, audio or voice
+/// state.
+unsafe fn observe_background_applications(applications: &[Value]) -> Vec<Value> {
+    let mut seen_pids = BTreeSet::new();
+    let mut seen_paths = BTreeSet::new();
+    let mut seen_integrations = BTreeSet::new();
+    for application in applications {
+        if let Some(pid) = application["process_id"].as_u64() {
+            seen_pids.insert(pid as u32);
+        }
+        if let Some(path) = application["executable_path"].as_str() {
+            seen_paths.insert(path.to_ascii_lowercase());
+            if let Some(basename) = path.rsplit('\\').next() {
+                if let Some(integration) = integration_id(basename) {
+                    seen_integrations.insert(integration);
+                }
+            }
+        }
+    }
+    let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return Vec::new(),
+    };
+    let _owned = Handle(snapshot.0);
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    if Process32FirstW(snapshot, &mut entry).is_err() {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    // Bound the walk even on a machine with an unusually large process table.
+    for _ in 0..2048 {
+        if found.len() >= MAX_BACKGROUND_APPLICATIONS {
+            break;
+        }
+        let process_id = entry.th32ProcessID;
+        let raw_name = String::from_utf16_lossy(&entry.szExeFile);
+        let name = raw_name.split('\0').next().unwrap_or_default();
+        if process_id != 0 && process_id != std::process::id() {
+            if let Some(display_name) = background_integration(name) {
+                if !seen_pids.contains(&process_id) {
+                    if let ApplicationOutcome::Row(mut row) =
+                        observe_application(process_id, display_name)
+                    {
+                        let path = row["executable_path"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_ascii_lowercase();
+                        let Some(integration) = row["executable_path"]
+                            .as_str()
+                            .and_then(|path| path.rsplit('\\').next())
+                            .and_then(integration_id)
+                        else {
+                            continue;
+                        };
+                        if !path.is_empty()
+                            && seen_integrations.insert(integration)
+                            && seen_paths.insert(path)
+                            && row["display_name"].as_str() == Some(display_name)
+                        {
+                            row["background"] = json!(true);
+                            found.push(row);
+                        }
+                    }
+                }
+            }
+        }
+        if Process32NextW(snapshot, &mut entry).is_err() {
+            break;
+        }
+    }
+    found
+}
+
+enum ApplicationOutcome {
+    Row(Value),
+    Skipped,
+    Unreadable,
+}
+
+/// Resolves and verifies one window-owning process.
+///
+/// The same read-only handle is used for the identity checks and the image
+/// extraction, so a recycled PID cannot be relabelled between them. System
+/// shells and hosting processes are skipped because their executable is not
+/// the user-facing application identity.
+unsafe fn observe_application(process_id: u32, title: &str) -> ApplicationOutcome {
+    // QUERY_LIMITED_INFORMATION | SYNCHRONIZE; no elevation or process writes.
+    let raw = OpenProcess(0x1000 | 0x0010_0000, 0, process_id);
+    if raw.is_null() {
+        return ApplicationOutcome::Unreadable;
+    }
+    let process = Handle(raw);
+    let Some(started) = process_started(&process, process_id) else {
+        return ApplicationOutcome::Unreadable;
+    };
+    let Some(image) = LocalImage::from_process(&process) else {
+        return ApplicationOutcome::Unreadable;
+    };
+    let Some(basename) = image.path.rsplit('\\').next() else {
+        return ApplicationOutcome::Unreadable;
+    };
+    if !bounded_text(basename, 256) {
+        return ApplicationOutcome::Unreadable;
+    }
+    if is_shell_process(basename) {
+        return ApplicationOutcome::Skipped;
+    }
+    let mut icon = image.icon();
+    if process_started(&process, process_id) != Some(started)
+        || process_name(&process, 0).as_deref() != Some(image.path.as_str())
+        || process_name(&process, 1).as_deref() != Some(image.native.as_str())
+        || final_path(&image.process_file, 2).as_deref() != Some(image.native.as_str())
+    {
+        return ApplicationOutcome::Unreadable;
+    }
+    if !image.unchanged() {
+        icon = None;
+    }
+    ApplicationOutcome::Row(json!({
+        "process_id":process_id,"process_started":started.to_string(),
+        "executable_path":image.path,"display_name":if title.is_empty(){basename}else{title},
+        "background":false,"icon_b64":icon.map(|bytes| base64(&bytes))
+    }))
+}
+
+/// Shell, input-host and cross-application host processes whose window is not
+/// a user-facing application identity. Returning true skips them entirely
+/// rather than presenting a misleading executable name.
+fn is_shell_process(basename: &str) -> bool {
+    let name = basename.to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "explorer.exe"
+            | "applicationframehost.exe"
+            | "textinputhost.exe"
+            | "searchhost.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
+            | "vibdock.exe"
+            | "vibdock-launcher.exe"
+    )
 }
 
 unsafe fn co_string(raw: PWSTR) -> Option<String> {
