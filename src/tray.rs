@@ -2010,11 +2010,22 @@ mod tests {
         ) -> LRESULT {
             DefWindowProcW(window, message, wparam, lparam)
         }
-        unsafe extern "system" fn own_window_count(
-            _: HWND,
+        unsafe extern "system" fn floating_window_count(
+            window: HWND,
             context: LPARAM,
         ) -> windows::core::BOOL {
-            *(context.0 as *mut usize) += 1;
+            let mut class = [0u16; 256];
+            let len = GetClassNameW(window, &mut class) as usize;
+            let class = String::from_utf16_lossy(&class[..len]);
+            let visible = IsWindowVisible(window).as_bool();
+            eprintln!(
+                "VIBDOCK_NATIVE_PROBE_WINDOW {}",
+                json!({"class":class,"visible":visible})
+            );
+            // Shell APIs may create hidden helper windows on this thread.
+            if visible || class == "VibDockSoftwareStrip" {
+                *(context.0 as *mut usize) += 1;
+            }
             true.into()
         }
         struct ProbeWindow(HWND);
@@ -2116,20 +2127,20 @@ mod tests {
             }
             assert_eq!(GetForegroundWindow(), foreground);
             assert!(!IsWindowVisible(owner.0).as_bool());
-            let mut window_count = 0usize;
+            let mut floating_windows = 0usize;
             EnumThreadWindows(
                 GetCurrentThreadId(),
-                Some(own_window_count),
-                LPARAM((&mut window_count as *mut usize) as isize),
+                Some(floating_window_count),
+                LPARAM((&mut floating_windows as *mut usize) as isize),
             )
             .ok()?;
             assert_eq!(
-                window_count, 1,
-                "Only the hidden notification callback owner may exist"
+                floating_windows, 0,
+                "Notification icons must not create visible windows or a floating strip"
             );
             eprintln!(
                 "VIBDOCK_NATIVE_NOTIFICATION_PROBE {}",
-                json!({"pid":std::process::id(),"owner_hwnd":owner.0.0 as usize,"fixture_only":true,"notification_icons":5,"floating_windows":0,"native_modify_confirmed":true,"restore_confirmed":true,"mic_states_distinct":true,"playback_states_distinct":true})
+                json!({"pid":std::process::id(),"owner_hwnd":owner.0.0 as usize,"fixture_only":true,"notification_icons":5,"floating_windows":floating_windows,"native_modify_confirmed":true,"restore_confirmed":true,"mic_states_distinct":true,"playback_states_distinct":true})
             );
             drop(apps);
             assert!(!Shell_NotifyIconW(NIM_MODIFY, &main_data).as_bool());
