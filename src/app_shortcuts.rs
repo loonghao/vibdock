@@ -63,7 +63,7 @@ struct Entry {
     scope: Scope,
 }
 impl Entry {
-    #[cfg(windows)]
+    #[cfg(any(windows, test))]
     fn json(&self) -> Value {
         json!({"id":self.id,"label":self.label,"executable_path":self.executable,"trigger":self.trigger,"dispatch":self.dispatch,"scope":self.scope.as_str()})
     }
@@ -399,7 +399,7 @@ impl Registry {
         mic_trigger: Option<&str>,
         application: Option<(String, String, bool)>,
     ) -> (u16, Value) {
-        if !cfg!(windows) {
+        if cfg!(all(not(windows), not(test))) {
             return (
                 501,
                 json!({"error":"Application shortcut dispatch is unavailable on this platform"}),
@@ -614,7 +614,23 @@ impl Registry {
             self.errors = vec![None; self.entries.len()];
             (200, self.view())
         }
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), test))]
+        {
+            let Some(revision) = self.revision.checked_add(1) else {
+                return (409, json!({"error":"Revision limit reached"}));
+            };
+            let stored = json!({"schema_version":1,"revision":revision,"entries":entries.iter().map(Entry::json).collect::<Vec<_>>()});
+            if crate::service::atomic_write(&self.path, stored.to_string().as_bytes()).is_err() {
+                return (
+                    500,
+                    json!({"error":"Could not save shortcuts; previous state is unchanged"}),
+                );
+            }
+            self.entries = entries;
+            self.revision = revision;
+            (200, self.view())
+        }
+        #[cfg(all(not(windows), not(test)))]
         {
             let _ = entries;
             (
