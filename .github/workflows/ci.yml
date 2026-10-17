@@ -131,7 +131,7 @@ jobs:
             work/windows-desktop/report.json
             work/windows-desktop/failure.json
             work/web-ui/*.png
-            work/web-ui/report.json
+            work/web-ui/*.json
             work/voice-e2e/ci/*.json
             work/voice-e2e/ci/*.log
             work/macos-desktop/*.png
