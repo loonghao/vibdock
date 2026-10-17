@@ -34,6 +34,7 @@ const configFile = path.join(store, 'config.json');
 const fixtures = [
   ['wechat_input', '微信输入法'], ['codex_voice', 'Codex voice'],
   ['codex_dot', 'Codex Dot'], ['codex_mini', 'Codex Mini'],
+  ['tencent_meeting', 'Tencent Meeting'], ['wecom_meeting', 'WeCom meeting'],
 ].map(([target, label], index) => ({
   target, id:String(index + 1).repeat(64), label:`${label} — offline saved-software fixture`,
   endpoint_id:'voice-e2e-fixture-output', executable_path:`C:\\VibDockVoiceFixture\\${target}.exe`,
@@ -146,12 +147,26 @@ async function unchangedAfter(route, status, options) {
   await start();
   await request('/api/apps', 401, {token:null});
   await request('/api/apps/bind', 401, {method:'POST', token:null, body:{}});
+  for(const route of ['/api/bindings','/api/bindings/capabilities','/api/audio/tests/'+ '0'.repeat(64)])await request(route,401,{token:null});
+  await request('/api/audio/tests',401,{method:'POST',token:null,body:{device_id:'not-captured'}});
+  await request('/api/apps/routes',401,{method:'POST',token:null,body:{}});
+  await request('/api/startup',401,{token:null});
+  await request('/api/startup',401,{method:'POST',token:null,body:{enabled:true}});
   await request('/api/bootstrap/new', 401, {method:'POST', token:null});
   await request('/api/bootstrap', 401, {method:'POST', token:null, body:{code:'0'.repeat(64)}});
   await bootstrap();
   await request('/api/apps', 403, {requestOrigin:'https://attacker.invalid'});
   await unchangedAfter('/api/apps/bind', 403, {method:'POST', body:{}, requestOrigin:'https://attacker.invalid'});
   checks.push('one-use bootstrap, browser session scope, unauthenticated and foreign-origin rejection');
+
+  const startup = await request('/api/startup',200);
+  assert.equal(typeof startup.supported,'boolean');
+  assert(startup.enabled===null||typeof startup.enabled==='boolean');
+  assert.equal(startup.effective_state,'unknown','registration must not certify an actual Windows login');
+  await request('/api/startup',403,{method:'POST',body:{enabled:true},requestOrigin:'https://attacker.invalid'});
+  for(const body of [{},{enabled:'true'},{enabled:false,command:'unused'}])await request('/api/startup',400,{method:'POST',body});
+  assert.deepEqual(await request('/api/startup',200),startup,'rejected startup requests changed its registration state');
+  checks.push('startup read contract, auth/origin/type/closed-field boundaries; no startup registration changed');
 
   let view = await request('/api/apps', 200);
   assert.equal(view.platform, 'windows');
@@ -166,7 +181,27 @@ async function unchangedAfter(route, status, options) {
     for (const capability of ['start_voice', 'end_voice', 'input_routing']) assert.equal(entry.capabilities[capability], 'not_implemented');
   }
   assert(!JSON.stringify(view).includes('executable_path'));
-  checks.push('four explicitly labelled saved-software fixtures; no invented live application or voice evidence');
+  checks.push('six explicitly labelled saved-software fixtures; no invented live application, meeting or voice evidence');
+
+  const capabilities=await request('/api/bindings/capabilities',200);
+  assert.equal(capabilities.native_bindings,true);
+  assert(capabilities.key_catalog.includes('MediaPlayPause'));
+  await request('/api/bindings',403,{method:'POST',body:{revision:0,bindings:[]},requestOrigin:'https://attacker.invalid'});
+  let actionBindings=await request('/api/bindings',200);
+  const scenarioBindings=fixtures.map((fixture,index)=>({id:fixture.target,label:fixture.label,enabled:false,trigger:`Ctrl + Alt + F${index+1}`,actions:[{type:'microphone',device_id:fixture.device_id,operation:'mute'},{type:'playback',entry_id:fixture.id,operation:'mute'},{type:'keys',chord:'Ctrl + Shift + V',delay_ms:100}]}));
+  actionBindings=await request('/api/bindings',200,{method:'POST',body:{revision:actionBindings.revision,bindings:scenarioBindings}});
+  assert.deepEqual(actionBindings.bindings,scenarioBindings);
+  assert(actionBindings.activation.every(binding=>binding.state==='disabled'));
+  const actionStore=fs.readFileSync(path.join(store,'bindings.json'));
+  await request('/api/bindings',409,{method:'POST',body:{revision:actionBindings.revision-1,bindings:[]}});
+  await request('/api/bindings',400,{method:'POST',body:{revision:actionBindings.revision,bindings:[{...scenarioBindings[0],actions:[{type:'shell',command:'unused'}]}]}});
+  assert(fs.readFileSync(path.join(store,'bindings.json')).equals(actionStore));
+  await request('/api/bindings/cancel',200,{method:'POST',body:{}});
+  await request('/api/audio/tests',400,{method:'POST',body:{device_id:''}});
+  await request('/api/audio/tests',400,{method:'POST',body:{device_id:'never-opened',unmute:true}});
+  await request('/api/audio/tests/'+ '0'.repeat(64),404);
+  await request('/api/apps/routes',400,{method:'POST',body:{revision:view.revision,selection_id:'0'.repeat(64),flow:'capture',device_id:'never-routed',roles:[3]}});
+  checks.push('six disabled scenario action sequences persist; stale/foreign/arbitrary-action requests rejected; tests and routes validate before native work; no keyboard/audio action executed');
 
   for (const fixture of fixtures) {
     view = await request('/api/apps', 200);
@@ -198,11 +233,14 @@ async function unchangedAfter(route, status, options) {
   const oldSession = session;
   await stop(); await start();
   await request('/api/apps', 401, {token:oldSession});
+  await request('/api/bindings',401,{token:oldSession});
   await bootstrap();
   assert(fs.readFileSync(appsFile).equals(saved), 'Restart replaced persisted software entries');
   view = await request('/api/apps', 200);
   assert.deepEqual(bindings(view), expectedBindings);
-  checks.push('all four saved microphone associations survive real service restart; previous browser session expires');
+  assert.deepEqual((await request('/api/bindings',200)).bindings,scenarioBindings);
+  assert(fs.readFileSync(path.join(store,'bindings.json')).equals(actionStore));
+  checks.push('all six saved microphone associations and disabled action sequences survive real service restart; previous browser session expires');
 
   const first = fixtures[0], others = expectedBindings.filter(entry => entry.id !== first.id);
   view = await request('/api/apps/bind', 200, {method:'POST', body:{revision:view.revision, id:first.id, device_id:null}});
@@ -216,7 +254,7 @@ async function unchangedAfter(route, status, options) {
   await stop(); await start(); await bootstrap();
   assert.deepEqual(bindings(await request('/api/apps', 200)), others);
   assert(fs.readFileSync(configFile).equals(globalConfig));
-  checks.push('explicit clear then remove affects only WeChat saved fixture; other three and global configuration survive another restart');
+  checks.push('explicit clear then remove affects only WeChat saved fixture; other five and global configuration survive another restart');
   await stop();
 })().catch(error => { failure = error; process.exitCode = 1; }).finally(async () => {
   try { if (fs.existsSync(path.join(store, 'service.json'))) secrets.push(JSON.parse(fs.readFileSync(path.join(store, 'service.json'), 'utf8')).token); } catch {}
@@ -253,5 +291,5 @@ async function unchangedAfter(route, status, options) {
   };
   fs.writeFileSync(path.join(output, 'report.json'), redact(JSON.stringify(report, null, 2)));
   if (failure) console.error(redact(failure.stack || failure));
-  console.log(`${failure ? 'FAIL' : 'PASS'}: four labelled software fixtures, real service auth/persistence/rejection contracts; audio mutations 0; installed-client acceptance not checked. Evidence: ${output}`);
+  console.log(`${failure ? 'FAIL' : 'PASS'}: six labelled software fixtures, real service auth/persistence/rejection contracts; audio mutations 0; installed-client acceptance not checked. Evidence: ${output}`);
 });

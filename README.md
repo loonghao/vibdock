@@ -46,8 +46,16 @@ This workflow requires a build containing both `vibdock.exe` and `vibdock-launch
 2. Select the intended microphone from the service's device list. In the binding editor, record a combination such as **Ctrl+Alt+Shift+F9** and save it.
 3. Check the separate **background binding** row. “Registered” means Windows accepted the shortcut; it does not mean an audio action already ran. A conflict leaves the previous configuration and registration in place.
 4. In Ulanzi Studio, map the desired button to that exact keyboard combination using its shortcut action. Physical-device identification is not inferred from a mapped keyboard event.
+
 5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
 6. Close the browser to leave the service running. Reopen **Settings…** from the tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
+
+Current source preserves configuration, software pins and action bindings across
+normal exit and restart. The Windows tray's **开机自启** menu item separately opts
+into current-user login startup. It reads back registration through the service;
+unknown or conflicting entries remain explicit. Login startup keeps Settings
+closed, while a normal double-click opens them. Windows startup policies can
+still prevent or delay execution, so registration is not login acceptance.
 
 Only one microphone/shortcut pair is currently active. Do not run legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. Representative real-audio isolation acceptance remains pending. The existing explicit-session playback CLI is documented below.
 
@@ -150,12 +158,13 @@ setting; Explorer taskbar recreation re-adds the icon. Original artwork is also
 embedded in the executable and settings homepage; it requires no external request.
 The separate optional mouse-transparent feedback overlay is unchanged.
 
-Pinned software also appears in a compact logo strip above the primary taskbar's
-work area. Badges show playback muted (`×`), active (`▶`), idle (`II`), disconnected
-(`–`) or unknown (`?`). Hover text and accessible button names explain the state;
-click opens Settings and right-click uses the same exact-session menu. Partial
-or expired observations stay unknown. This strip does not report voice activity,
-does not modify Explorer, and still requires live pointer/DPI/focus acceptance.
+Pinned software appears as native Windows notification-area icons with playback
+status badges. The primary VibDock icon separately reports the configured
+microphone. Shape and color distinguish states, while hover text names the
+target and explains the result. Click opens Settings; right-click retains the
+same exact-session menu. Partial or expired observations stay unknown. There
+is no taskbar-adjacent floating strip; icon placement and overflow follow Windows
+preferences. These indicators do not report voice or meeting activity.
 
 Settings > **应用与麦克风** lists current readable Windows playback sessions. Pin an
 observed software entry to keep its location/output selection across restart in
@@ -288,13 +297,32 @@ as unknown or unverified rather than claiming a working application connection.
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
 - Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
-- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. Hardware bindings for these playback actions and accepted two-application isolation tests remain open.
+- Silence an agent's output during a meeting without changing meeting audio. Windows source provides native exact-session actions and typed global playback bindings. Real two-application isolation acceptance remains open.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
 
 The control API authenticates callers and validates browser origins. The `serve` preview is read-only, loopback-only, and rejects unexpected Host headers. `service-start` exposes authenticated `/api` configuration and action endpoints, including real microphone status, mute, unmute, and toggle through the Windows audio adapter. A sent shortcut must not be reported as a verified application state change.
 
 See [the interaction specification](docs/design/README.md) and [the clickable design source](docs/design/index.html).
+
+The action workbench supports multiple Windows shortcuts, explicit microphone
+mute actions, saved-software playback actions and finite key sequences with
+delays and cancellation. Registration conflicts or persistence failures restore
+the previous set, including the original shortcut. Key delivery remains
+`dispatched_unverified` until the target application's state is independently
+confirmed.
+
+Application cards use fresh native window/process identities. On a supported
+Windows build, the service probes guarded preferred input/output policy before
+offering route changes; per-role readback is separate from an application's
+actual stream. The microphone panel shows mute and peak level separately and
+offers an explicit bounded capture test that discards audio frames.
+
+Agents use the bundled [VibDock control skill](skills/vibdock-control/SKILL.md)
+and fixed `vibdock control` commands. The UI and CLI share authenticated typed
+contracts. Meeting detection/prompting, target-specific voice transitions and
+human-operated permission-card shortcuts still require separate integration
+work and real-client acceptance.
 
 ## Development
 

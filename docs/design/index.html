@@ -5,9 +5,11 @@
 .app-row{flex-wrap:wrap}.app-row>div{flex:1;min-width:120px;overflow-wrap:anywhere}.app-row img,.app-row button{flex:none}
 .route-editor{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:24px 0}.route-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}.route-fields>div,.editor{min-width:0}.route-fields label{margin-top:0}.route-editor h2{margin-bottom:8px}.route-editor p{margin:8px 0;color:var(--muted)}.route-editor .actions{margin-top:16px}.route-note{font-size:12px}.capabilities{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.capabilities span{font-size:12px;color:var(--muted);padding:6px 10px;background:var(--bg);border-radius:5px}button:disabled{opacity:.45;cursor:not-allowed}button:disabled:hover{border-color:var(--line)}.rows>p{padding:20px;color:var(--muted)}kbd{overflow-wrap:anywhere}body[data-mode=service] .workspace{grid-template-columns:minmax(240px,.8fr) minmax(300px,1.2fr)}body[data-mode=service] .device-stage,body[data-mode=service] .device-area>.panel-title,body[data-mode=service] .device-area>.hint,body[data-mode=service] #selectedKey,body[data-mode=service] #revert,body[data-mode=service] .foot{display:none}body[data-mode=service] .svcbind{margin-top:0;padding-top:0;border:0}body[data-mode=service] .svcbind h2{font-size:17px}body[data-mode=service] .svcbind .row{display:block;padding:16px 0}body[data-mode=service] .svcbind kbd{display:block;color:var(--text);margin-top:8px;font-size:14px}body[data-mode=service] .editor h2{margin-top:0!important}#sbStatus[data-state=live]{color:var(--live)}#sbStatus[data-state=error]{color:var(--bad)}#appBindingStatus[data-kind=error]{color:var(--bad)}@media(max-width:1000px){body[data-mode=service] .workspace{grid-template-columns:1fr}}@media(max-width:600px){.route-fields{grid-template-columns:1fr;gap:16px}.route-editor{padding:18px}.route-editor .actions button{flex:1}.app-row{gap:12px}main{padding:20px 16px}.capture{flex-wrap:wrap}.capture input{flex:1;min-width:150px}.brand-subtitle{display:none}}
 .software-avatar{position:relative;display:inline-grid;place-items:center;width:44px;height:44px;flex:none!important;background:var(--bg);border-radius:10px}.software-avatar img{width:28px;height:28px;object-fit:contain}.software-badge{position:absolute;right:-4px;bottom:-3px;display:grid;place-items:center;width:18px;height:18px;border:2px solid var(--panel);border-radius:50%;background:#626966;color:white;font-size:10px;font-weight:700}.software-avatar[data-state=muted] .software-badge{background:var(--bad);color:#241512}.software-avatar[data-state=playing] .software-badge,.software-avatar[data-state=running] .software-badge{background:var(--live);color:#12241d}.software-avatar[data-state=idle] .software-badge{background:var(--amber);color:#211b12}
+.signal-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;margin:24px 0}.signal-line{display:flex;align-items:center;gap:16px;margin:16px 0}.signal-line meter{width:100%;height:18px;accent-color:var(--live)}.signal-line[data-unknown=true]{opacity:.5}.signal-panel select{max-width:540px}.app-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;border:0;overflow:visible}.app-grid>.row{border:1px solid var(--line);border-radius:10px;align-content:start;align-items:start;display:flex;padding:20px}.app-grid>.row>div{flex-basis:calc(100% - 60px)}.app-grid>.row button{flex:1}.binding-desk{display:grid;grid-template-columns:250px minmax(0,1fr);gap:24px;margin:24px 0}.binding-library{display:grid;align-content:start;gap:8px}.binding-library button{text-align:left}.binding-library button[aria-current=true]{border-color:var(--amber);background:#343027}.binding-detail{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;min-width:0}.binding-detail label:first-child{margin-top:0}.action-sequence{display:grid;gap:12px;margin:18px 0;counter-reset:action}.sequence-step{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;padding:16px;background:var(--bg);border-radius:9px;align-items:start}.sequence-number{padding-top:12px;color:var(--muted);font-variant-numeric:tabular-nums}.sequence-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.sequence-fields select,.sequence-fields input{min-width:0}.sequence-fields label{margin:0 0 5px}.sequence-wide{grid-column:1/-1}.shortcut-picker{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.shortcut-picker .check{margin:0}.shortcut-picker select{flex:1;min-width:140px}.binding-detail .capture input{flex:1;min-width:140px}.binding-summary{font-size:12px;color:var(--muted)}@media(max-width:800px){.binding-desk{grid-template-columns:1fr}.binding-library{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}@media(max-width:480px){.sequence-fields{grid-template-columns:1fr}.sequence-wide{grid-column:auto}.sequence-step{grid-template-columns:25px minmax(0,1fr)}.sequence-step>button{grid-column:2}.signal-panel,.binding-detail{padding:18px}}
+.app-grid{grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr))}.app-grid>*{min-width:0;max-width:100%}.app-grid>.row>div{min-width:0;max-width:100%;overflow-wrap:anywhere}.app-card{display:grid;grid-template-columns:44px minmax(0,1fr);gap:12px;align-items:start;padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:10px}.app-card>div{min-width:0;overflow-wrap:anywhere}.app-card>button{grid-column:1/-1}.app-card p{color:var(--muted);font-size:12px;margin:6px 0}.binding-item{display:grid;gap:6px}.binding-item[aria-pressed=true]{border-color:var(--amber)}.sequence-controls{display:flex;flex-direction:column;gap:6px}.signal-line meter{flex:1;min-width:0;width:auto}.signal-line>span{max-width:50%;overflow-wrap:anywhere}@media(max-width:480px){.sequence-controls{grid-column:2;flex-direction:row;flex-wrap:wrap}}
 </style>
 <header><div class="brand"><img class="brand-logo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI+Cjx0aXRsZT5WaWJEb2NrIHN5bWJvbCDigJQgdmVjdG9yIHJlY29uc3RydWN0aW9uIG9mIHNlbGVjdGVkIGNvbmNlcHQ8L3RpdGxlPgo8ZGVmcz48bWFzayBpZD0idm9pY2UiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjAiIHk9IjAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0id2hpdGUiLz48ZyBmaWxsPSJub25lIiBzdHJva2U9ImJsYWNrIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yNTYgMTI3VjM5MiIgc3Ryb2tlLXdpZHRoPSI0MCIvPjxwYXRoIGQ9Ik0xNSAyOTFIMTU0UTE3OCAyOTEgMTc4IDI2N1YyMjkiIHN0cm9rZS13aWR0aD0iMzIiLz48cGF0aCBkPSJNMzM0IDMzOFYyNjhRMzM0IDI0NSAzNTggMjQ1SDQ5NyIgc3Ryb2tlLXdpZHRoPSIzMiIvPjwvZz48L21hc2s+PC9kZWZzPgo8cGF0aCBmaWxsPSIjRDRGNkU4IiBtYXNrPSJ1cmwoI3ZvaWNlKSIgZD0iTTI4MSA0OCA0NjQgMjMxUTQ4OSAyNTYgNDY0IDI4MUwyODEgNDY0UTI1NiA0ODkgMjMxIDQ2NEw0OCAyODFRMjMgMjU2IDQ4IDIzMUwyMzEgNDhRMjU2IDIzIDI4MSA0OFoiLz4KPC9zdmc+Cg==" alt="VibDock 标志" width="38" height="38"><div>Vib<span>Dock</span></div><small class="brand-subtitle">本地交互工作台</small></div><span class="conn" id="conn" data-state="unknown">检查服务</span></header>
-<div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">快捷键</button><button data-view="audio" aria-selected="false">音频设备</button><button data-view="apps" aria-selected="false">应用与麦克风</button><button data-view="feedback" aria-selected="false">状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>后台绑定与<br>浏览器草稿分开保存</small></nav><main>
+<div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">快捷键</button><button data-view="automation" aria-selected="false">动作绑定</button><button data-view="audio" aria-selected="false">音频设备</button><button data-view="apps" aria-selected="false">应用与麦克风</button><button data-view="feedback" aria-selected="false">状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>后台绑定与<br>浏览器草稿分开保存</small></nav><main>
 <div class="banner" id="banner">尚未连接后台服务。当前为交互设计稿：设备、应用与会话均为演示数据，动作只预览反馈，不会真正执行。</div>
 <div class="auth" id="authRow" hidden><label for="token">本机服务令牌</label><div class="capture"><input id="token" type="password" placeholder="粘贴服务状态文件中的令牌" autocomplete="off" spellcheck="false"><button id="authorize">授权</button></div><small><b>高级排查入口。</b>正常使用请从托盘的 Settings… 打开本页，一次性引导码会自动换取会话令牌，无需复制粘贴。令牌只保留在本页内存中，不写入浏览器存储。</small><p class="field-error" id="authError" role="alert"></p></div>
 <section class="view" id="bindings"><div class="intro"><div><h1>配置麦克风快捷键</h1><small>指定麦克风，录入快捷键，让常用动作留在手边。</small></div><button id="setup">录入快捷键</button></div><div class="steps" id="steps"><span data-step="1" data-active="true">01 录入快捷键</span><span data-step="2">02 选择麦克风</span><span data-step="3">03 保存到本机</span></div>
@@ -27,6 +29,7 @@
 <div id="conflictView" hidden><h2>这个按键已经有绑定了</h2><p class="muted" id="conflictText"></p><div class="actions"><button class="primary" id="conflictReplace">替换原有绑定</button><button id="conflictCancel">改用其他按键</button></div></div>
 </div></div><div class="foot"><span>输入静音与输出静音独立配置</span><span id="persistNote">后台绑定见上方；设备按键草稿仅保存在此浏览器</span></div></section>
 <section class="view" id="audio" hidden><h1>选对设备，再开始说话。</h1><p class="muted" id="audioIntro">设备级静音与应用级输出分开显示。以下均为设计示例。</p>
+<div class="signal-panel" id="micDiagnostic" hidden><h2>确认这支麦克风的输入</h2><p class="muted">选定设备后显式测试 1.5 秒。只显示电平和采样统计，不保存或上传声音，不自动取消静音。</p><label for="probeDevice">测试麦克风</label><select id="probeDevice"><option value="">请选择麦克风</option></select><p id="micNativeState" role="status">设备状态未知</p><div class="signal-line" id="signalLine" data-unknown="true"><meter id="micLevel" min="0" max="1" value="0" aria-label="麦克风峰值电平" aria-valuetext="电平未知"></meter><span id="micLevelLabel">未知</span></div><div class="actions"><button id="startMicTest" class="primary" disabled>测试输入 · 1.5 秒</button><button id="cancelMicTest" disabled>取消测试</button><a href="ms-settings:privacy-microphone">Windows 麦克风权限</a></div><p id="micTestResult" role="status" aria-live="polite">说一句话，查看此端点是否检测到信号。电平不证明目标软件已收到声音。</p></div>
 <div id="liveDevices" class="rows" hidden aria-label="本机麦克风"></div><button id="refreshDevices" hidden>刷新麦克风</button><div id="audioPreview">
 <div class="rows"><div class="row"><div><strong>Ulanzi 麦克风</strong><p>输入设备 · 演示设备，未连接 · 不自动替换为其他麦克风</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div><div class="row"><div><strong>Codex 播放声音</strong><p>应用音频会话 · 演示 · 需要后台枚举真实会话</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div><div class="row"><div><strong>WorkBuddy 播放声音</strong><p>应用音频会话 · 演示 · 输入设备切换能力需单独验证</p></div><span class="tag"><span class="dot" data-state="off"></span> 未连接</span></div></div>
 <div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div>
@@ -35,12 +38,14 @@
 <p id="appsIntro" class="muted">固定条目保存在本机服务中。播放活动不代表正在收音或通话；本轮只读，不提供静音或启动应用操作。</p>
 <p id="appReadStatus" role="status" aria-live="polite">从托盘 Settings 打开并授权后读取。</p>
 <div class="route-editor" id="appBinding" hidden><h2>为应用关联麦克风</h2><p>为常用软件记住一个输入设备，随时检查或控制该麦克风。</p><div class="route-fields"><div><label for="appBindingEntry">已固定的应用</label><select id="appBindingEntry"><option value="">先固定一个应用</option></select></div><div><label for="appBindingDevice">指定麦克风</label><select id="appBindingDevice"><option value="">选择麦克风</option></select></div></div><div class="actions"><button class="primary" id="appBindingSave">保存麦克风关联</button><button id="appBindingClear">解除关联</button></div><p class="route-note">此关联不会更改应用内的输入设备。请在应用设置或 <a href="ms-settings:apps-volume">Windows 音量混合器</a> 中选择同一麦克风；设备静音会影响所有使用它的应用。</p><div class="capabilities"><span>语音开始 · 待接入</span><span>语音停止 · 待接入</span><span>应用输入切换 · 待接入</span></div><div class="actions"><button id="appBindingTest">检查已关联麦克风</button><button id="appMicMute">静音已关联麦克风</button><button id="appMicUnmute">取消麦克风静音</button></div><p id="appBindingStatus" role="status" aria-live="polite">先选择应用和麦克风，再保存。</p></div>
+<div class="signal-panel" id="preferredRoute" hidden><h2>这个应用的输入与输出</h2><p id="routeCapability" role="status">等待应用与系统能力。</p><p class="muted">设置 Windows 为此应用保存的首选设备；应用可能需要重新打开音频流。此操作不授予隐私权限，也不证明正在通话。</p><div class="route-fields"><div><label for="routeFlow">声音方向</label><select id="routeFlow"><option value="capture">麦克风输入</option><option value="render">扬声器输出</option></select></div><div><label for="routeDevice">首选设备</label><select id="routeDevice"><option value="">明确选择设备</option></select></div></div><p class="muted">应用到：普通声音、多媒体、通信三个 Windows 角色。</p><button id="savePreferredRoute" class="primary" disabled>保存并验证首选设备</button><p id="routeResult" role="status" aria-live="polite">选择上方已固定应用，再指定输入或输出。</p></div>
 <div id="pinnedApps" class="rows" aria-label="已固定的软件"></div>
 <h2 id="appsChoicesTitle" style="margin-top:24px">当前可读取的软件会话</h2><p id="appsChoicesHelp" class="muted">只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。</p>
 <div id="appChoices" class="rows" aria-label="可固定的播放会话"></div>
 <h2 style="margin-top:28px">语音集成能力规划</h2><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p>
 <div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>计划支持：唤起入口、应用输出静音。内部语音控制接口待验证。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>微信输入法</strong><p>通过用户录入的快捷键触发。发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div><div class="row"><div><strong>WorkBuddy</strong><p>快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="mock"></span> 规划中</span></div></div>
 <div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
+<section class="view" id="automation" hidden><h1>一个触发，按顺序完成。</h1><p class="muted">为麦克风、应用播放和组合键保存独立动作。原有麦克风快捷键继续保留；按键序列作用于触发时的前台窗口。</p><p id="multiReadStatus" role="status">从托盘 Settings 打开并授权后读取。</p><div class="binding-desk"><div><h2>我的动作绑定</h2><div class="binding-library" id="multiBindingList"></div><div class="actions"><button id="addMultiBinding" disabled>＋ 新建绑定</button></div></div><div class="binding-detail" id="multiDetail" hidden><label for="multiLabel">绑定名称</label><input id="multiLabel" maxlength="100" placeholder="例如：会议时暂停 agent 播报"><label class="check"><input id="multiEnabled" type="checkbox">启用此绑定</label><label for="multiTrigger">全局触发快捷键</label><div class="capture"><input id="multiTrigger" placeholder="例如 Ctrl + Alt + F10" autocomplete="off"><button id="recordMultiTrigger">录入</button></div><p class="binding-summary">媒体键可以直接选择。系统保留键、重复组合或其他软件占用会返回注册失败。</p><div class="shortcut-picker"><label class="check"><input id="multiCtrl" type="checkbox">Ctrl</label><label class="check"><input id="multiAlt" type="checkbox">Alt</label><label class="check"><input id="multiShift" type="checkbox">Shift</label><label class="check"><input id="multiWin" type="checkbox">Win</label><select id="multiKey" aria-label="选择触发键"><option value="">选择按键</option></select><button id="chooseMultiKey">使用组合</button></div><h2 style="margin-top:24px">执行顺序</h2><div class="action-sequence" id="multiActions"></div><button id="addMultiAction">＋ 添加动作</button><p class="binding-summary">最多 8 个动作。按键后的等待不超过 2 秒；切换前台、修改配置或取消会停止剩余序列。</p><div class="actions"><button id="saveMultiBinding" class="primary">保存并注册</button><button id="deleteMultiBinding">删除绑定</button><button id="previewMultiBinding">预览顺序</button></div><p id="multiEditStatus" role="status" aria-live="polite"></p></div></div><div class="signal-panel"><h2>最近一次执行</h2><p id="multiExecution" role="status">尚未读取执行结果。</p><button id="cancelMultiExecution" disabled>取消剩余动作</button><p class="binding-summary">按键已发送不代表应用已执行。音频动作只有读回匹配后才显示验证成功。</p></div></section>
 <section class="view" id="feedback" hidden><h1>知道按下去了，也知道生效没有。</h1><p class="muted">默认短提示不抢焦点；持续收音标识由真实状态驱动。</p>
 <div class="rows"><div class="row"><div><strong>触发已收到</strong><p>按键被识别，动作尚未执行。</p></div><button id="previewReceived">预览</button></div><div class="row"><div><strong>动作执行中</strong><p>已发出请求，等待真实状态回读。</p></div><button id="previewPending">预览</button></div><div class="row"><div><strong>已验证成功</strong><p>后台读回真实状态并确认生效。</p></div><button id="previewVerified">预览</button></div><div class="row"><div><strong>已发送但未验证</strong><p>快捷键已发出，不代表对方状态已改变。</p></div><button id="previewDispatched">预览</button></div><div class="row"><div><strong>屏幕角落提示</strong><p>显示动作、控制对象和结果，颜色之外保留文字。</p></div><button id="previewToast">预览提示</button></div><div class="row"><div><strong>呼吸边框</strong><p>可选；跟随系统减少动画设置。这里仅预览网页边框。</p></div><label class="check"><input id="border" type="checkbox">启用预览</label></div><div class="row"><div><strong>失败状态</strong><p>设备断开或动作失败时，不显示成功。</p></div><button id="previewError">预览失败</button></div></div></section>
 <footer>VIBDOCK / LOCAL SETTINGS — 示例与实时状态分别标注</footer></main></div><div class="edge" id="edge" hidden></div><div class="preview" id="toast" role="status" hidden></div>
@@ -87,6 +92,7 @@ function fillDeviceSelect(select,value){
 }
 function renderDevices(){
   const list=$('liveDevices');list.replaceChildren();
+  updateProbeDevices();
   if(!captureDevices.length)list.append(appNode('p','尚无可读取的麦克风。连接设备后刷新。'));
   for(const device of captureDevices){const row=appNode('div');row.className='row';const body=appNode('div');body.append(appNode('strong',device.name||device.id),appNode('p',device.id));const use=appNode('button','用于快捷键');use.onclick=()=>{document.querySelector('[data-view=bindings]').click();$('device').value=device.id;markDirty();$('record').focus();};row.append(body,use);list.append(row);}
 }
@@ -98,9 +104,13 @@ async function loadDevices(){
     return;
   }
   help.textContent='正在读取服务设备列表…';
+  const expectedToken=serviceToken;
   try{
     const response=await api('/api/actions/devices',{method:'POST',body:''});
+    if(expectedToken!==serviceToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
     const body=await response.text();
+    if(expectedToken!==serviceToken)return;
     if(!response.ok)throw new Error(serviceError(response,body));
     const data=JSON.parse(body);
     const devices=Array.isArray(data&&data.devices)?data.devices:[];
@@ -122,6 +132,7 @@ function updateModeLabels(){
   const supported=mode==='service'&&serviceToken;
   document.body.dataset.mode=mode;
   $('audioPreview').hidden=mode==='service';$('liveDevices').hidden=mode!=='service';$('refreshDevices').hidden=!supported;
+  $('micDiagnostic').hidden=!supported;updateWorkbenchControls();
   if(mode==='service'){$('audioIntro').textContent='来自本机服务的真实输入设备。选定设备断开时保留其身份，不自动切换。';$('test').textContent='检查麦克风状态';$('captureHelp').textContent='在本页录入组合键，保存后由 Windows 在后台注册。请在 Ulanzi Studio 中映射相同组合键。';$('deviceHelp').textContent='选择明确的采集设备，不自动使用默认麦克风。';}
   for(const option of $('target').options){
     // Only the microphone device is backed by the service today; integrations
@@ -164,10 +175,10 @@ async function saveBinding(){
   }
   commit({target:$('target').value,action:$('action').value,shortcut},'已保存到本浏览器草稿；尚未写入后台配置（服务未授权）。');
 }
-document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{stopRecord();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));document.querySelectorAll('.view').forEach(v=>{v.hidden=v.id!==button.dataset.view});});
+document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{stopRecord();stopMultiRecording();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));document.querySelectorAll('.view').forEach(v=>{v.hidden=v.id!==button.dataset.view});});
 document.querySelectorAll('.hardware [data-key]').forEach(button=>button.onclick=()=>selectKey(button.dataset.key));
 $('target').onchange=()=>{actionChosen=true;refresh();};$('action').onchange=()=>{actionChosen=true;scope();markDirty();};$('device').onchange=markDirty;$('refreshDevices').onclick=loadDevices;
-$('record').onclick=()=>{if(recording){stopRecord();say('已取消录入。','idle');return}recording=true;$('record').textContent='取消录入';$('record').setAttribute('aria-pressed','true');say('请在本页按下组合键；Esc 取消，10 秒后超时。','idle');timer=setTimeout(()=>{stopRecord();say('未收到按键。可以先在 Ulanzi Studio 设置独立快捷键。','error')},10000)};
+$('record').onclick=()=>{stopMultiRecording();if(recording){stopRecord();say('已取消录入。','idle');return}recording=true;$('record').textContent='取消录入';$('record').setAttribute('aria-pressed','true');say('请在本页按下组合键；Esc 取消，10 秒后超时。','idle');timer=setTimeout(()=>{stopRecord();say('未收到按键。可以先在 Ulanzi Studio 设置独立快捷键。','error')},10000)};
 document.addEventListener('keydown',e=>{if(!recording)return;if(e.key==='Escape'){e.preventDefault();stopRecord();say('已取消录入。','idle');return}if(['Control','Alt','Shift','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');if(e.metaKey)parts.push('Win');parts.push(e.key===' '?'Space':e.key==='+'?'Plus':e.key.length===1?e.key.toUpperCase():e.key);$('shortcut').value=parts.join(' + ');$('shortcutError').textContent='';$('shortcut').setAttribute('aria-invalid','false');stopRecord();say('已识别组合键；网页无法确认来源设备。','idle');markDirty();});
 $('save').onclick=saveBinding;
 $('revert').onclick=()=>{loadEditor();say('已放弃未保存的修改。','idle');};
@@ -287,8 +298,10 @@ async function probe(){
 
 // Read-only software observations. Paths stay server-side; images are bounded
 // native resources fetched inside this authenticated JSON response.
-let appsBusy=false,appRevision=0,appTimer=null,appExpiryTimer=null,appsRenderKey='',lastAppsData=null,appBindingDirty=false;
-function appButtonsBusy(){for(const button of document.querySelectorAll('#pinnedApps button,#appChoices button'))button.disabled=appsBusy||!lastAppsData?.storage_writable;updateAppBindingControls();}
+let appsBusy=false,appsReading=false,appsReadEpoch=0,appRevision=0,appTimer=null,appExpiryTimer=null,lastAppsData=null,appBindingDirty=false,appBindingDraftRevision=0,appBindingRenderKey='';
+let appValidUntil={catalog:0,choice:0};
+function appButtonsBusy(){for(const button of document.querySelectorAll('#pinnedApps button,#appChoices button'))button.disabled=appsBusy||!serviceToken||!lastAppsData?.storage_writable||!!button.appChoice&&!currentAppChoice(button.appChoice.kind,button.appChoice.identity);updateAppBindingControls();}
+function appBindingKey(entry){return JSON.stringify([entry?.id,entry?.device_id,captureDevices.map(d=>[d.id,d.name])]);}
 function selectedApp(){return lastAppsData?.entries.find(e=>e.id===$('appBindingEntry').value);}
 function updateAppBindingControls(){
   const enabled=mode==='service'&&!!serviceToken&&lastAppsData?.platform==='windows'&&lastAppsData.storage_writable;
@@ -299,36 +312,39 @@ function updateAppBindingControls(){
   $('appBindingSave').disabled=busy||!entry||!captureDevices.some(d=>d.id===$('appBindingDevice').value);
   $('appBindingClear').disabled=busy||!entry?.device_id;
   for(const id of ['appBindingTest','appMicMute','appMicUnmute'])$(id).disabled=busy||!entry?.device_id||!captureDevices.some(d=>d.id===entry.device_id);
+  updatePreferredRoute();
 }
 function selectAppBinding(id){
-  $('appBindingEntry').value=id;appBindingDirty=false;
+  $('appBindingEntry').value=id;appBindingDirty=false;appBindingDraftRevision=appRevision;
   const entry=selectedApp();fillDeviceSelect($('appBindingDevice'),entry?.device_id||'');updateAppBindingControls();
+  appBindingRenderKey=appBindingKey(entry);
   $('appBindingStatus').textContent=entry?.device_id?'已关联：'+deviceName(entry.device_id)+'。应用内的实际输入设备仍需确认。':'此应用尚未关联麦克风。';$('appBindingStatus').dataset.kind='idle';
+  updatePreferredRoute();
 }
 function renderAppBinding(data){
   const select=$('appBindingEntry'),previous=select.value;
   const options=JSON.stringify(data.entries.map(e=>[e.id,e.label]));
   if(select.dataset.options!==options){select.replaceChildren(new Option('选择已固定应用',''),...data.entries.map(e=>new Option(e.label,e.id)));select.dataset.options=options;select.value=previous;}
-  if(!selectedApp()||!appBindingDirty)selectAppBinding(select.value);
+  const entry=selectedApp();if((!entry||!appBindingDirty)&&appBindingRenderKey!==appBindingKey(entry))selectAppBinding(select.value);
   updateAppBindingControls();
 }
 async function saveAppBinding(clear){
   const entry=selectedApp();if(!entry)return;
   const deviceId=clear?null:$('appBindingDevice').value;
   if(!clear&&!captureDevices.some(d=>d.id===deviceId))return;
-  const ok=await editApp('bind',{id:entry.id,device_id:deviceId});
+  const ok=await editApp('bind',{id:entry.id,device_id:deviceId},!clear&&appBindingDirty?appBindingDraftRevision:appRevision);
   if(ok){appBindingDirty=false;selectAppBinding(entry.id);$('appBindingStatus').textContent=clear?'已解除关联，麦克风静音状态未改变。':'麦克风关联已保存到本机；请在应用内确认输入设备。';}
   else{$('appBindingStatus').textContent='关联未确认：'+$('appReadStatus').textContent;$('appBindingStatus').dataset.kind='error';}
 }
 async function appMicrophoneAction(action){
   const entry=selectedApp(),deviceId=entry?.device_id;if(appsBusy||!serviceToken||!deviceId||!captureDevices.some(d=>d.id===deviceId))return;
-  appsBusy=true;appButtonsBusy();const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  appsBusy=true;const epoch=++appsReadEpoch,session=serviceToken;appButtonsBusy();const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
   $('appBindingStatus').textContent='正在读取 '+deviceName(deviceId)+'…';
-  try{const response=await api('/api/actions/'+action,{method:'POST',signal:controller.signal,body:JSON.stringify({device_id:deviceId})});const body=await response.text();if(response.status===401||response.status===403)expireBrowserSession();if(!response.ok)throw Error(serviceError(response,body));const result=JSON.parse(body);if(result.device_id!==deviceId||typeof result.muted!=='boolean')throw Error('服务未回读同一麦克风的状态');$('appBindingStatus').textContent='已回读 '+deviceName(deviceId)+'：'+(result.muted?'已静音':'未静音')+'。此状态适用于所有使用该设备的应用。';$('appBindingStatus').dataset.kind='ok';}
-  catch(error){$('appBindingStatus').textContent='操作未确认：'+error.message;$('appBindingStatus').dataset.kind='error';}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}
+  try{const response=await api('/api/actions/'+action,{method:'POST',signal:controller.signal,body:JSON.stringify({device_id:deviceId})});const body=await response.text();if(session!==serviceToken||epoch!==appsReadEpoch)return;if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));const result=JSON.parse(body);if(result.device_id!==deviceId||typeof result.muted!=='boolean')throw Error('服务未回读同一麦克风的状态');$('appBindingStatus').textContent='已回读 '+deviceName(deviceId)+'：'+(result.muted?'已静音':'未静音')+'。此状态适用于所有使用该设备的应用。';$('appBindingStatus').dataset.kind='ok';}
+  catch(error){if(session===serviceToken&&epoch===appsReadEpoch){$('appBindingStatus').textContent='操作未确认：'+error.message;$('appBindingStatus').dataset.kind='error';}}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}
 }
 $('appBindingEntry').onchange=()=>selectAppBinding($('appBindingEntry').value);
-$('appBindingDevice').onchange=()=>{appBindingDirty=true;updateAppBindingControls();};
+$('appBindingDevice').onchange=()=>{if(!appBindingDirty)appBindingDraftRevision=appRevision;appBindingDirty=true;updateAppBindingControls();};
 $('appBindingSave').onclick=()=>saveAppBinding(false);$('appBindingClear').onclick=()=>saveAppBinding(true);
 $('appBindingTest').onclick=()=>appMicrophoneAction('status');$('appMicMute').onclick=()=>appMicrophoneAction('mute');$('appMicUnmute').onclick=()=>appMicrophoneAction('unmute');
 function appNode(tag,text){const n=document.createElement(tag);if(text)n.textContent=text;return n;}
@@ -346,45 +362,86 @@ function softwareStatus(entry,mac){
 }
 function softwareAvatar(entry,mac){const [state,symbol,label]=softwareStatus(entry,mac),avatar=appNode('span');avatar.className='software-avatar';avatar.dataset.state=state;avatar.title=entry.label+' · '+label;avatar.setAttribute('role','img');avatar.setAttribute('aria-label',avatar.title);avatar.append(appIcon(entry.icon_b64,entry.icon_mime));const badge=appNode('span',symbol);badge.className='software-badge';badge.setAttribute('aria-hidden','true');avatar.append(badge);return avatar;}
 function appState(session,mac){return mac?'应用正在运行 · 播放和语音状态不可用':(session.session_state==='active'?'播放会话活动':'播放会话空闲')+' · '+(session.muted?'已静音':'未静音')+' · PID '+session.process_id;}
+// Observation IDs keep view nodes stable; only the latest fresh selection authorizes pinning.
+function appChoiceIdentity(item){const valid=value=>typeof value==='string'&&/^[0-9a-f]{64}$/i.test(value);return valid(item.observation_id)?'observation:'+item.observation_id:valid(item.selection_id)?'ticket:'+item.selection_id:null;}
+function currentAppChoice(kind,identity){
+  if(!['catalog','choice'].includes(kind)||!serviceToken||!identity||performance.now()>=appValidUntil[kind])return null;
+  const source=kind==='catalog'?lastAppsData?.catalog:lastAppsData;if(source?.available!==true)return null;
+  const rows=kind==='catalog'?source.applications:source.choices,matches=(rows||[]).filter(item=>appChoiceIdentity(item)===identity);
+  return matches.length===1&&/^[0-9a-f]{64}$/i.test(matches[0].selection_id||'')?matches[0]:null;
+}
+async function pinAppChoice(kind,identity){
+  if(appsBusy||!lastAppsData?.storage_writable)return false;
+  const item=currentAppChoice(kind,identity);if(!item){$('appReadStatus').textContent='应用身份已过期或不唯一，请等待读取后重试。';return false;}
+  const prior=new Set(lastAppsData.entries.map(entry=>entry.id));
+  const saved=await editApp('pin',{selection_id:item.selection_id});
+  if(saved&&kind==='catalog'){const added=lastAppsData.entries.filter(entry=>!prior.has(entry.id));if(added.length===1)selectAppBinding(added[0].id);}return saved;
+}
+function createAppCard(model){
+  const row=appNode('div'),icon=appNode('span'),body=appNode('div');row.className='app-card';row.append(icon,body);
+  if(model.kind==='pinned'){
+    const id=model.item.id;if(model.platform==='windows'){const bind=appNode('button','设置麦克风');bind.onclick=()=>{selectAppBinding(id);$('appBinding').scrollIntoView({behavior:'instant',block:'nearest'});$('appBindingDevice').focus();};row.append(bind);}
+    const remove=appNode('button','移除固定');remove.onclick=()=>editApp('remove',{id});row.append(remove);
+  }else{const pin=appNode('button',model.kind==='catalog'?'固定并设置':'固定软件');pin.appChoice={kind:model.kind,identity:model.identity};pin.onclick=()=>pinAppChoice(model.kind,model.identity);row.append(pin);}
+  return {row,icon,body,visibleKey:null};
+}
+function reconcileAppCards(container,models,emptyText){
+  container.className='app-grid';const cards=container.appCards||(container.appCards=new Map()),wanted=new Set(models.map(model=>model.key));
+  for(const [key,card] of cards)if(!wanted.has(key)){card.row.remove();cards.delete(key);}
+  if(models.length&&container.appEmpty){container.appEmpty.remove();container.appEmpty=null;}
+  models.forEach((model,index)=>{
+    let card=cards.get(model.key);if(!card){card=createAppCard(model);cards.set(model.key,card);}
+    const visibleKey=JSON.stringify([model.title,model.paragraphs,model.item.icon_b64,model.item.icon_mime,model.status]);
+    if(card.visibleKey!==visibleKey){card.body.replaceChildren(appNode('strong',model.title),...model.paragraphs.map(text=>appNode('p',text)));card.icon.replaceChildren(model.kind==='pinned'?softwareAvatar(model.item,model.mac):appIcon(model.item.icon_b64,model.item.icon_mime));card.visibleKey=visibleKey;}
+    if(container.children[index]!==card.row)container.insertBefore(card.row,container.children[index]||null);
+  });
+  if(!models.length){if(!container.appEmpty){container.appEmpty=appNode('p',emptyText);container.append(container.appEmpty);}else container.appEmpty.textContent=emptyText;}
+}
 function renderAppEntries(data){
+ if(lastAppsData&&data.revision<appRevision)return false;
  lastAppsData=data;appRevision=data.revision;const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
- const key=JSON.stringify([data.platform,data.observation_kind,data.revision,data.available,data.complete,data.error,data.entries,data.choices]);if(key===appsRenderKey)return;appsRenderKey=key;
   $('appsTitle').textContent=mac?'固定软件，查看真实运行状态。':'应用与麦克风，放在一起管理。';
  $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':data.platform==='windows'?'固定条目保存在本机服务中。此页管理条目和查看播放状态；右键 Windows 软件托盘图标可静音或取消静音指定播放会话。播放活动不代表收音或通话。':'固定条目保存在本机服务中。此平台暂不支持真实播放控制；不会启动应用。';
  $('appsChoicesTitle').textContent=mac?'当前可读取的本机应用':'当前可读取的软件会话';
  $('appsChoicesHelp').textContent=mac?'仅列出身份已重新核验的当前用户应用。固定的是应用位置，重启后仍会重新观察；不会启动或终止软件。':'只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。';
  $('appReadStatus').textContent=data.error||(mac?(!data.available?'应用运行状态未知':data.complete?'已读取本机应用。运行不代表正在播放或工作。':'已读取部分应用；缺失项目运行状态未知。'):(!data.available?'播放状态未知或此平台暂不支持':data.complete?'已读取当前播放会话。语音状态不在此推断。':'已读取部分会话；缺失项目状态未知。'));
- const pinned=$('pinnedApps');pinned.replaceChildren();
-  renderAppBinding(data);
-  if(!data.entries.length)pinned.append(appNode('p','尚未固定软件。'));
- for(const entry of data.entries){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',entry.label));
- body.append(appNode('p',mac?(entry.state==='running'?'应用正在运行':entry.state==='not_running'?'应用未运行':'运行状态未知'):(entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话')));
- if(mac)body.append(appNode('p','播放和语音状态不可用；没有应用控制。'));
- for(const session of entry.sessions)body.append(appNode('p',appState(session,mac)));
-  if(data.platform==='windows')body.append(appNode('p',entry.device_id?'关联麦克风 · '+deviceName(entry.device_id):'尚未关联麦克风'));
-  const remove=appNode('button','移除固定');remove.disabled=appsBusy||!data.storage_writable;remove.onclick=()=>editApp('remove',{id:entry.id});row.append(softwareAvatar(entry,mac),body);if(data.platform==='windows'){const bind=appNode('button','设置麦克风');bind.onclick=()=>{selectAppBinding(entry.id);$('appBinding').scrollIntoView({behavior:'instant',block:'nearest'});$('appBindingDevice').focus();};row.append(bind);}row.append(remove);pinned.append(row);}
- const choices=$('appChoices');choices.replaceChildren();
- if(!data.choices.length)choices.append(appNode('p',mac?(data.available?'没有可固定的当前应用；打开目标软件后刷新。':'尚无可读取的原生应用。'):(data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。')));
- for(const item of data.choices){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p',appState(item,mac)));
- const pin=appNode('button','固定软件');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64,item.icon_mime),body,pin);choices.append(row);}
+ renderAppBinding(data);
+ const pinned=data.entries.map(entry=>{
+  const paragraphs=[mac?(entry.state==='running'?'应用正在运行':entry.state==='not_running'?'应用未运行':'运行状态未知'):(entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话')];
+  if(mac)paragraphs.push('播放和语音状态不可用；没有应用控制。');paragraphs.push(...(entry.sessions||[]).map(session=>appState(session,mac)).sort());
+  if(data.platform==='windows')paragraphs.push(entry.device_id?'关联麦克风 · '+deviceName(entry.device_id):'尚未关联麦克风');
+  return {kind:'pinned',platform:data.platform,key:entry.id,item:entry,title:entry.label,paragraphs,mac,status:softwareStatus(entry,mac)};
+ });
+ reconcileAppCards($('pinnedApps'),pinned,'尚未固定软件。');
+ const choices=[];
+ if(data.catalog?.available){$('appsChoicesTitle').textContent='当前可绑定的软件';$('appsChoicesHelp').textContent='来自可核验的本机可见窗口。运行状态、播放状态和会议状态独立显示。';
+ for(const item of data.catalog.applications||[]){const identity=appChoiceIdentity(item);choices.push({kind:'catalog',identity,key:'catalog:'+identity,item,title:item.display_name,paragraphs:['检测到可见窗口 · 语音和会议状态未知']});}}
+ for(const item of data.choices||[]){const identity=appChoiceIdentity(item);choices.push({kind:'choice',identity,key:'choice:'+identity,item,title:item.display_name,paragraphs:[appState(item,mac)]});}
+ choices.sort((a,b)=>a.title.localeCompare(b.title)||a.key.localeCompare(b.key));
+ reconcileAppCards($('appChoices'),choices,mac?(data.available?'没有可固定的当前应用；打开目标软件后刷新。':'尚无可读取的原生应用。'):(data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。'));
+ appButtonsBusy();return true;
 }
-function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],entries:lastAppsData.entries.map(e=>({...e,state:'unknown',icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
+function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;appValidUntil={catalog:0,choice:0};if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],catalog:{available:false,complete:false,applications:[]},routing_capabilities:{state:'unknown'},routing_devices:{available:false,capture:[],render:[]},entries:lastAppsData.entries.map(e=>({...e,state:'unknown',presence:'unknown',routing_selection_id:null,icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
 function receiveAppEntries(data,started){
+ if(lastAppsData&&data.revision<appRevision)return false;
+ renderMicSummary(data.microphone,started);
  clearTimeout(appExpiryTimer);appExpiryTimer=null;
- const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
- const age=mac?(Number.isSafeInteger(data.age_ms)&&data.age_ms>=0?data.age_ms:4000):0;
- const remaining=4000-age-(performance.now()-started);
+ const remaining=source=>4000-(Number.isSafeInteger(source?.age_ms)&&source.age_ms>=0?source.age_ms:4000)-(performance.now()-started);
+ appValidUntil={choice:data.available?performance.now()+Math.max(0,remaining(data)):0,catalog:data.catalog?.available?performance.now()+Math.max(0,remaining(data.catalog)):0};
  renderAppEntries(data);
- if(document.hidden||remaining<=0){markAppsUnknown('软件状态已过期，等待重新读取。');return;}
- if(data.available)appExpiryTimer=setTimeout(()=>markAppsUnknown('软件状态已过期，等待重新读取。'),remaining);
+ const deadlines=Object.values(appValidUntil).filter(deadline=>deadline>0);
+ const expired=(data.available&&appValidUntil.choice<=performance.now())||(data.catalog?.available&&appValidUntil.catalog<=performance.now());
+ if(document.hidden||expired){markAppsUnknown('软件状态已过期，等待重新读取。');return false;}
+ if(deadlines.length)appExpiryTimer=setTimeout(()=>markAppsUnknown('软件状态已过期，等待重新读取。'),Math.min(...deadlines)-performance.now());return true;
 }
-document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');if(!document.hidden)refreshApps();});
-async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
- try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)receiveAppEntries(data,started);}
- catch{markAppsUnknown('软件状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
-async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
-  try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});if(serviceToken!==expectedToken)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return true;}
-  catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
+document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');clearMicSignal('等待重新读取麦克风。');multiRecording=false;if(!document.hidden)refreshApps();});
+// Background reads do not lock controls; a mutation invalidates reads started before it.
+async function refreshApps(){if(appsBusy||appsReading||!serviceToken||document.hidden)return;appsReading=true;const expectedToken=serviceToken,epoch=appsReadEpoch,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+ try{const response=await api('/api/apps',{signal:controller.signal});if(serviceToken!==expectedToken||epoch!==appsReadEpoch)return;if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken&&epoch===appsReadEpoch)receiveAppEntries(data,started);}
+  catch{if(serviceToken===expectedToken&&epoch===appsReadEpoch){markAppsUnknown('软件状态未知：服务读取失败。');clearMicSignal('无法读取麦克风状态。');}}finally{clearTimeout(timeout);appsReading=false;}}
+async function editApp(operation,fields,revision=appRevision){if(appsBusy||!serviceToken)return;appsBusy=true;const epoch=++appsReadEpoch;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+  try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision})});if(serviceToken!==expectedToken||epoch!==appsReadEpoch)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(serviceToken!==expectedToken||epoch!==appsReadEpoch)return false;if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return result.revision===appRevision;}
+  catch{if(serviceToken===expectedToken&&epoch===appsReadEpoch)markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
 function startAppPoll(){refreshApps();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
 async function redeemBootstrap(code){
   const response=await fetch('/api/bootstrap',{method:'POST',cache:'no-store',
@@ -407,6 +464,7 @@ async function authorizeWith(token){
     applyServiceConfig();
     startBindingStatusPoll();
     startAppPoll();
+    startWorkbenchPoll();
     $('authRow').hidden=true;$('token').value='';
     $('conn').dataset.state='live';
     $('conn').textContent='服务运行中 · 已授权';
@@ -465,8 +523,10 @@ function renderBindingStatus(config){
 }
 function expireBrowserSession(){
   serviceToken=null;
+  appsReadEpoch++;appValidUntil={catalog:0,choice:0};appBindingRenderKey='';
+  clearTimeout(workbenchTimer);workbenchTimer=null;multiData=null;multiCaps=null;multiRecording=false;clearTimeout(microphonePoll);microphoneJob=null;clearTimeout(routePoll);routeJob=null;clearMicSignal('会话失效，设备状态未知。');updateWorkbenchControls();
   if(appTimer){clearInterval(appTimer);appTimer=null;}
-  clearTimeout(appExpiryTimer);appExpiryTimer=null;appsRenderKey='';lastAppsData=null;$('pinnedApps').replaceChildren();$('appChoices').replaceChildren();
+  clearTimeout(appExpiryTimer);appExpiryTimer=null;lastAppsData=null;for(const id of ['pinnedApps','appChoices']){const container=$(id);container.replaceChildren();container.appCards=new Map();container.appEmpty=null;}
   $('appReadStatus').textContent='会话已失效，软件状态未知。请从 Settings 重新打开。';
   bindingPollStarted=false;
   $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';
@@ -527,6 +587,180 @@ async function tryBootstrap(){
     return authorized;
   }catch{return false;}
 }
+// Native workbench: drafts stay in memory; only committed service state is authoritative.
+let multiData=null,multiCaps=null,multiDraft=null,multiDirty=false,multiSaving=false,multiRecording=false,multiRecordTimer=null,workbenchTimer=null;
+let microphoneExpiry=null,microphoneJob=null,microphonePoll=null,routeJob=null,routePoll=null;
+async function workbenchRequest(path,options){
+  const session=serviceToken;if(!session)throw Error('请从托盘重新授权。');
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  try{const response=await api(path,{...options,signal:controller.signal});
+    if(session!==serviceToken)throw Error('会话已变更，结果未采用。');
+    if(response.status===401||response.status===403){expireBrowserSession();throw Error('会话失效，请从托盘重新进入。');}
+    const body=await readJson(response);if(session!==serviceToken)throw Error('会话已变更，结果未采用。');if(!response.ok)throw Error(body?.error||serviceError(response,''));
+    if(!body||typeof body!=='object')throw Error('服务未返回有效结果。');return body;
+  }finally{clearTimeout(timeout);}
+}
+function multiMessage(text,error=false){$('multiEditStatus').textContent=text;$('multiEditStatus').dataset.kind=error?'error':'idle';}
+function updateWorkbenchControls(){
+  const ready=mode==='service'&&!!serviceToken&&multiCaps?.native_bindings===true&&!!multiData&&!multiData.storage_error;
+  $('addMultiBinding').disabled=!ready||multiSaving||multiData.bindings.length>=multiCaps.max_bindings;
+  for(const id of ['saveMultiBinding','deleteMultiBinding','addMultiAction','recordMultiTrigger','chooseMultiKey'])$(id).disabled=!ready||multiSaving||!multiDraft;
+  for(const input of document.querySelectorAll('#multiDetail input,#multiDetail select'))input.disabled=!ready||multiSaving;
+  for(const button of document.querySelectorAll('#multiActions button'))button.disabled=multiSaving||button.dataset.unavailable==='true';
+  $('cancelMultiExecution').disabled=!serviceToken||multiData?.busy!==true;
+  $('startMicTest').disabled=!serviceToken||!!microphoneJob||!captureDevices.some(d=>d.id===$('probeDevice').value);
+  $('cancelMicTest').disabled=!serviceToken||!microphoneJob?.id;
+  $('probeDevice').disabled=!!microphoneJob||!serviceToken||!captureDevices.length;
+}
+function renderMultiState(data){
+  if(!Array.isArray(data.bindings)||!Number.isSafeInteger(data.revision))throw Error('绑定配置格式无效。');
+  if(multiData&&data.revision<multiData.revision)return;
+  multiData=data;const list=$('multiBindingList');list.replaceChildren();
+  $('multiReadStatus').textContent=data.storage_error?'配置不可写：'+data.storage_error:'已读取 '+data.bindings.length+' 个绑定。选择一项查看动作。';
+  for(const binding of data.bindings){const button=appNode('button');button.className='binding-item';button.setAttribute('aria-pressed',String(binding.id===multiDraft?.id));
+    const activation=data.activation?.find(a=>a.id===binding.id);button.append(appNode('strong',binding.label),appNode('span',binding.trigger),appNode('small',activation?.error||({registered:'已注册',disabled:'已停用',unavailable:'此平台不可用',failed:'注册失败'}[activation?.state]||'状态未确认')));
+    button.onclick=()=>selectMultiBinding(binding.id);list.append(button);}
+  if(!data.bindings.length)list.append(appNode('p','添加绑定，把一个按键连接到麦克风、软件声音或按键序列。'));
+  const receipt=data.execution||{};
+  const states={idle:'尚无执行记录',pending:'动作执行中',verified:'音频动作已回读验证',rejected_before_dispatch:'未发送动作',cancelled:'动作已取消',failed:'动作失败',dispatched_unverified:'按键已发送，目标应用结果未验证'};
+  const binding=data.bindings.find(b=>b.id===receipt.binding_id);
+  $('multiExecution').textContent=(binding?binding.label+' · ':'')+(states[receipt.state]||'执行状态未确认')+(Number.isSafeInteger(receipt.completed_actions)?' · 已完成 '+receipt.completed_actions+' 个动作':'')+(receipt.error?' · '+receipt.error:'')+(data.last_rejection?' · '+data.last_rejection:'');
+  for(const action of receipt.results||[]){const target=action.device_id?deviceName(action.device_id):lastAppsData?.entries.find(e=>e.id===action.entry_id)?.label;const line=appNode('p',(target?target+' · ':'')+(states[action.state]||'步骤结果未确认')+(typeof action.muted==='boolean'?(action.muted?' · 已静音':' · 未静音'):'')+(action.error?' · '+action.error:''));$('multiExecution').append(line);}
+  if(multiDraft&&multiDirty&&multiDraft.revision!==data.revision)multiMessage('服务配置已更新。你的草稿保留；重新选择绑定以载入新版本。',true);
+  updateWorkbenchControls();
+}
+function selectMultiBinding(id){
+  if(multiSaving)return;
+  stopMultiRecording();
+  if(multiDirty&&!confirm('放弃当前未保存的编辑，读取已保存的绑定？'))return;
+  const source=multiData?.bindings.find(b=>b.id===id);if(!source)return;
+  multiDraft={...JSON.parse(JSON.stringify(source)),revision:multiData.revision};multiDirty=false;renderMultiEditor();renderMultiState(multiData);multiMessage('编辑后保存。按键序列只会在全局触发时发送到当时的前台应用。');
+}
+function newMultiBinding(){
+  if($('addMultiBinding').disabled||multiDirty&&!confirm('放弃当前未保存的编辑？'))return;
+  stopMultiRecording();
+  multiDraft={id:'binding-'+Date.now().toString(36),label:'新绑定',enabled:true,trigger:'',actions:[],revision:multiData.revision};multiDirty=true;renderMultiEditor();multiMessage('先录入触发键，再添加动作。');
+}
+function markMultiDirty(){multiDirty=true;}
+function renderMultiEditor(){
+  $('multiDetail').hidden=!multiDraft;if(!multiDraft)return;
+  $('multiLabel').value=multiDraft.label;$('multiEnabled').checked=multiDraft.enabled;$('multiTrigger').value=multiDraft.trigger;
+  const keys=multiCaps?.key_catalog||[];$('multiKey').replaceChildren(new Option('选择按键',''),...keys.map(key=>new Option(key,key)));
+  renderMultiActions();updateWorkbenchControls();
+}
+function actionSummary(action){return action.type==='microphone'?'麦克风 '+deviceName(action.device_id)+' · '+({mute:'静音',unmute:'取消静音',toggle:'切换静音'}[action.operation]||action.operation):action.type==='playback'?'软件声音 '+(lastAppsData?.entries.find(e=>e.id===action.entry_id)?.label||'已保存软件')+' · '+action.operation:action.chord+' · 延时 '+action.delay_ms+' ms';}
+function renderMultiActions(){
+  const list=$('multiActions');list.replaceChildren();if(!multiDraft)return;
+  multiDraft.actions.forEach((action,index)=>{const row=appNode('div');row.className='sequence-step';row.append(appNode('span',String(index+1)));
+    const fields=appNode('div'),type=appNode('select');fields.className='sequence-fields';type.setAttribute('aria-label','动作类型');type.replaceChildren(new Option('发送组合键','keys'),new Option('麦克风静音','microphone'),new Option('软件播放静音','playback'));type.value=action.type;
+    type.onchange=()=>{multiDraft.actions[index]=type.value==='keys'?{type:'keys',chord:'',delay_ms:0}:type.value==='microphone'?{type:'microphone',device_id:'',operation:'toggle'}:{type:'playback',entry_id:'',operation:'mute'};markMultiDirty();renderMultiActions();};fields.append(type);
+    if(action.type==='keys'){
+      const chord=appNode('input');chord.value=action.chord;chord.placeholder='例如 Ctrl + Shift + V';chord.setAttribute('aria-label','发送的组合键');chord.oninput=()=>{action.chord=chord.value;markMultiDirty();};
+      const delay=appNode('input');delay.type='number';delay.min=0;delay.max=multiCaps?.max_delay_ms||2000;delay.step=50;delay.value=String(action.delay_ms);delay.setAttribute('aria-label','发送前延时毫秒');delay.oninput=()=>{action.delay_ms=Number(delay.value);markMultiDirty();};fields.append(chord,delay);
+    }else{
+      const target=appNode('select');target.setAttribute('aria-label',action.type==='microphone'?'目标麦克风':'目标软件');
+      if(action.type==='microphone')fillDeviceSelect(target,action.device_id);
+      else{target.replaceChildren(new Option('选择已固定软件',''),...(lastAppsData?.entries||[]).map(e=>new Option(e.label,e.id)));if(action.entry_id&&!lastAppsData?.entries.some(e=>e.id===action.entry_id)){const missing=new Option('已保存软件当前不可用',action.entry_id);missing.disabled=true;target.append(missing);}target.value=action.entry_id;}
+      target.onchange=()=>{action[action.type==='microphone'?'device_id':'entry_id']=target.value;markMultiDirty();};
+      const op=appNode('select');op.setAttribute('aria-label','静音操作');op.replaceChildren(new Option('静音','mute'),new Option('取消静音','unmute'),new Option('切换静音','toggle'));op.value=action.operation;op.onchange=()=>{action.operation=op.value;markMultiDirty();};fields.append(target,op,appNode('small',action.type==='microphone'?'该麦克风的静音会影响所有使用它的应用。':'运行时必须匹配唯一的新鲜播放会话；不满足时停止。'));
+    }
+    const controls=appNode('div');controls.className='sequence-controls';for(const [label,offset] of [['上移',-1],['下移',1]]){const move=appNode('button',label);move.dataset.unavailable=String(index+offset<0||index+offset>=multiDraft.actions.length);move.disabled=multiSaving||move.dataset.unavailable==='true';move.onclick=()=>{if(multiSaving||move.disabled)return;const actions=multiDraft.actions;[actions[index],actions[index+offset]]=[actions[index+offset],actions[index]];markMultiDirty();renderMultiActions();};controls.append(move);}
+    const remove=appNode('button','删除');remove.disabled=multiSaving;remove.onclick=()=>{if(multiSaving)return;multiDraft.actions.splice(index,1);markMultiDirty();renderMultiActions();};controls.append(remove);row.append(fields,controls);list.append(row);
+  });
+}
+async function saveMultiBinding(remove=false){
+  if(!multiDraft||multiSaving||!serviceToken)return;
+  const draft=JSON.parse(JSON.stringify(multiDraft)),rest=multiData.bindings.filter(b=>b.id!==draft.id);
+  if(remove&&!confirm('删除此绑定？'))return;
+  delete draft.revision;
+  if(!remove){if(!draft.label.trim()||!draft.trigger.trim()||!draft.actions.length){multiMessage('请填写名称、触发键并添加至少一个动作。',true);return;}rest.push(draft);}
+  multiSaving=true;updateWorkbenchControls();
+  stopMultiRecording();
+  try{const data=await workbenchRequest('/api/bindings',{method:'POST',body:JSON.stringify({revision:multiDraft.revision,bindings:rest})});multiDirty=false;multiDraft=null;$('multiDetail').hidden=true;renderMultiState(data);multiMessage(remove?'绑定已删除。':'绑定已保存，注册状态以服务回读为准。');}
+  catch(error){multiMessage('未确认保存：'+error.message+'；草稿保留。',true);}finally{multiSaving=false;updateWorkbenchControls();}
+}
+function recordedChord(event){
+  const aliases={Control:null,Alt:null,Shift:null,Meta:null,' ':'Space','+':'Plus',ArrowUp:'Up',ArrowDown:'Down',ArrowLeft:'Left',ArrowRight:'Right',Escape:'Escape',Delete:'Delete',Insert:'Insert',AudioVolumeMute:'VolumeMute',AudioVolumeUp:'VolumeUp',AudioVolumeDown:'VolumeDown'};
+  let key=Object.hasOwn(aliases,event.key)?aliases[event.key]:event.key;if(event.code?.startsWith('Numpad'))key=event.code;if(!key)return '';
+  return [event.ctrlKey?'Ctrl':null,event.altKey?'Alt':null,event.shiftKey?'Shift':null,event.metaKey?'Win':null,key.length===1?key.toUpperCase():key].filter(Boolean).join(' + ');
+}
+function stopMultiRecording(){multiRecording=false;clearTimeout(multiRecordTimer);$('recordMultiTrigger').textContent='录入按键';}
+document.addEventListener('keydown',event=>{if(!multiRecording||!multiDraft)return;event.preventDefault();if(event.key==='Escape'&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey){stopMultiRecording();multiMessage('已取消录入。');return;}const chord=recordedChord(event);if(!chord)return;multiDraft.trigger=chord;multiDirty=true;stopMultiRecording();$('multiTrigger').value=chord;multiMessage('已录入 '+chord+'。保存时由 Windows 确认是否可注册。');});
+$('multiLabel').oninput=()=>{if(multiDraft){multiDraft.label=$('multiLabel').value;markMultiDirty();}};
+$('multiEnabled').onchange=()=>{if(multiDraft){multiDraft.enabled=$('multiEnabled').checked;markMultiDirty();}};
+$('multiTrigger').oninput=()=>{if(multiDraft){multiDraft.trigger=$('multiTrigger').value;markMultiDirty();}};
+$('recordMultiTrigger').onclick=()=>{if(multiRecording){stopMultiRecording();return;}stopRecord();multiRecording=true;$('recordMultiTrigger').textContent='请按组合键…';multiRecordTimer=setTimeout(()=>{stopMultiRecording();multiMessage('录入已超时，请重试。');},10000);};
+$('chooseMultiKey').onclick=()=>{if(!multiDraft||!$('multiKey').value)return;multiDraft.trigger=['Ctrl','Alt','Shift','Win'].filter(m=>$('multi'+m).checked).concat($('multiKey').value).join(' + ');$('multiTrigger').value=multiDraft.trigger;markMultiDirty();};
+$('addMultiBinding').onclick=newMultiBinding;$('saveMultiBinding').onclick=()=>saveMultiBinding();$('deleteMultiBinding').onclick=()=>saveMultiBinding(true);
+$('addMultiAction').onclick=()=>{if(multiDraft&&multiDraft.actions.length<(multiCaps?.max_actions||8)){multiDraft.actions.push({type:'keys',chord:'',delay_ms:0});markMultiDirty();renderMultiActions();}};
+$('previewMultiBinding').onclick=()=>multiMessage(multiDraft?multiDraft.actions.map((a,i)=>(i+1)+'. '+actionSummary(a)).join(' → ')||'尚无动作':'选择绑定后预览。');
+$('cancelMultiExecution').onclick=async()=>{try{renderMultiState(await workbenchRequest('/api/bindings/cancel',{method:'POST',body:'{}'}));multiMessage('已请求取消；等待后台停止回执。');}catch(error){multiMessage(error.message,true);}};
+async function refreshWorkbench(){
+  if(!serviceToken||document.hidden)return;
+  try{if(!multiCaps){multiCaps=await workbenchRequest('/api/bindings/capabilities');if(multiDraft)renderMultiEditor();}renderMultiState(await workbenchRequest('/api/bindings'));}
+  catch(error){$('multiReadStatus').textContent='绑定状态未知：'+error.message;}
+}
+function startWorkbenchPoll(){if(workbenchTimer)clearTimeout(workbenchTimer);const tick=async()=>{if(!serviceToken)return;await refreshWorkbench();workbenchTimer=setTimeout(tick,2000);};workbenchTimer=setTimeout(tick,1);}
+function clearMicSignal(message){clearTimeout(microphoneExpiry);$('micNativeState').textContent=message;$('micLevel').value=0;$('micLevel').setAttribute('aria-valuetext','电平未知');$('micLevelLabel').textContent='电平未知';$('signalLine').dataset.unknown='true';}
+function renderMicSummary(microphone,started=performance.now()){
+  clearTimeout(microphoneExpiry);const selected=$('probeDevice').value;
+  const remaining=4000-(Number.isSafeInteger(microphone?.age_ms)?microphone.age_ms:4000)-(performance.now()-started);
+  if(document.hidden||!selected||microphone?.device_id!==selected||remaining<=0){clearMicSignal('当前麦克风状态未知，等待读取。');return;}
+  $('micNativeState').textContent=({muted:'已静音 · 影响所有使用该设备的应用',unmuted:'未静音',disconnected:'设备已断开',unknown:'静音状态未知',unconfigured:'尚未设置麦克风'}[microphone.state]||'静音状态未知');
+  const valid=microphone.level_state==='available'&&Number.isFinite(microphone.peak)&&microphone.peak>=0&&microphone.peak<=1;
+  $('signalLine').dataset.unknown=String(!valid);$('micLevel').value=valid?microphone.peak:0;$('micLevelLabel').textContent=valid?Math.round(microphone.peak*100)+'% · 静音前电平':'电平未知 · 可点击测试';
+  $('micLevel').setAttribute('aria-valuetext',$('micLevelLabel').textContent);
+  microphoneExpiry=setTimeout(()=>clearMicSignal('麦克风状态已过期。'),remaining);
+}
+function updateProbeDevices(){const previous=$('probeDevice').value;fillDeviceSelect($('probeDevice'),previous||serviceConfig?.device_id||'');updateWorkbenchControls();}
+function updatePreferredRoute(){
+  const entry=selectedApp(),capability=lastAppsData?.routing_capabilities,devices=lastAppsData?.routing_devices;
+  $('preferredRoute').hidden=mode!=='service'||!serviceToken||lastAppsData?.platform!=='windows';
+  $('routeCapability').textContent=!entry?'先选择已固定的应用。':capability?.state==='available'?(entry.routing_selection_id?'系统支持首选输入与输出设置。':'应用身份未刷新，打开软件后重试。'):'此系统的应用首选路由不可用或状态未知。';
+  const select=$('routeDevice'),previous=select.value,flow=$('routeFlow').value||'capture',choices=devices?.available?(devices[flow]||[]):[];
+  const key=JSON.stringify([flow,choices]);if(select.dataset.options!==key){select.replaceChildren(new Option('明确选择设备',''),...choices.map(device=>new Option(device.name||device.id,device.id)));if(previous&&!choices.some(d=>d.id===previous)){const missing=new Option('所选设备当前不可用',previous);missing.disabled=true;select.append(missing);}select.value=previous;select.dataset.options=key;}
+  select.disabled=!!routeJob||!choices.length;$('routeFlow').disabled=!!routeJob;
+  $('savePreferredRoute').disabled=!!routeJob||!serviceToken||capability?.state!=='available'||!entry?.routing_selection_id||!choices.some(d=>d.id===select.value);
+}
+function finishPreferredRoute(receipt,job){
+  if(routeJob!==job||serviceToken!==job.session)return;
+  const same=receipt.operation_id===job.id&&receipt.process_id===job.process&&receipt.device_id===job.device&&receipt.flow===job.flow;
+  const verified=same&&receipt.state==='verified'&&receipt.stream_state==='unknown'&&Array.isArray(receipt.roles)&&receipt.roles.length===3&&receipt.roles.every((role,index)=>role.role===index&&role.device_id===job.device&&role.verified===true);
+  $('routeResult').textContent=verified?job.label+' · 首选'+(job.flow==='capture'?'输入':'输出')+'已写入并回读验证。应用实际音频流仍未确认。':same&&receipt.state==='rolled_back'&&receipt.rollback_verified===true?'设置未成功，原首选设备已恢复。':'设置结果未确认：'+(receipt.error||'回执身份或角色不匹配。');
+  $('routeResult').dataset.kind=verified?'ok':'error';routeJob=null;clearTimeout(routePoll);updatePreferredRoute();
+}
+async function pollPreferredRoute(job){
+  if(routeJob!==job||serviceToken!==job.session)return;
+  if(performance.now()-job.started>10000){finishPreferredRoute({error:'读取结果超时，请在 Windows 音量混合器中确认。'},job);return;}
+  try{const receipt=await workbenchRequest('/api/apps/routes/'+job.id);if(receipt.state!=='pending'){finishPreferredRoute(receipt,job);return;}routePoll=setTimeout(()=>pollPreferredRoute(job),250);}catch(error){finishPreferredRoute({error:error.message},job);}
+}
+$('routeFlow').onchange=()=>{$('routeDevice').value='';updatePreferredRoute();};$('routeDevice').onchange=updatePreferredRoute;
+$('savePreferredRoute').onclick=async()=>{
+  if($('savePreferredRoute').disabled)return;const entry=selectedApp();if(!entry)return;
+  const job={device:$('routeDevice').value,flow:$('routeFlow').value,label:entry.label,session:serviceToken,started:performance.now(),id:null};routeJob=job;updatePreferredRoute();$('routeResult').textContent='正在保存并逐角色验证首选设备…';
+  try{const receipt=await workbenchRequest('/api/apps/routes',{method:'POST',body:JSON.stringify({revision:appRevision,selection_id:entry.routing_selection_id,flow:job.flow,device_id:job.device,roles:[0,1,2]})});if(!/^[0-9a-f]{64}$/i.test(receipt.operation_id)||receipt.device_id!==job.device||receipt.flow!==job.flow||!Number.isSafeInteger(receipt.process_id))throw Error('服务未确认同一应用和设备。');job.id=receipt.operation_id;job.process=receipt.process_id;pollPreferredRoute(job);}catch(error){finishPreferredRoute({error:error.message},job);}
+};
+function finishMicTest(receipt,job){
+  if(microphoneJob!==job||serviceToken!==job.session)return;
+  const result=receipt.result;
+  const valid=receipt.operation_id===job.id&&receipt.device_id===job.device&&receipt.state==='completed'&&result?.device_id===job.device&&!result.error&&Number.isSafeInteger(result.captured_frames)&&result.captured_frames>0&&Number.isSafeInteger(result.sample_count)&&result.sample_count>0&&typeof result.muted==='boolean'&&typeof result.signal_detected==='boolean'&&result.level_state==='available'&&Number.isFinite(result.peak)&&result.peak>=0&&result.peak<=1;
+  $('micTestResult').textContent=valid?deviceName(job.device)+' · '+(result.signal_detected?'检测到输入信号':'测试完成，未检测到明显信号')+' · '+(result.muted?'设备当前已静音':'设备当前未静音')+'。目标应用是否收到声音仍需在该应用中确认。':'测试结果未确认：'+(receipt.error||'设备身份或采样结果不匹配。');
+  $('micTestResult').dataset.kind=valid?'ok':'error';microphoneJob=null;clearTimeout(microphonePoll);updateWorkbenchControls();
+}
+async function pollMicTest(job){
+  if(microphoneJob!==job||serviceToken!==job.session)return;
+  if(performance.now()-job.started>10000){finishMicTest({error:'读取测试结果超时，请重新授权后查看设备。'},job);return;}
+  try{const receipt=await workbenchRequest('/api/audio/tests/'+job.id);if(receipt.operation_id!==job.id||receipt.device_id!==job.device)throw Error('测试返回了不同设备。');if(receipt.state!=='pending'){finishMicTest(receipt,job);return;}microphonePoll=setTimeout(()=>pollMicTest(job),250);}
+  catch(error){finishMicTest({error:error.message},job);}
+}
+async function startMicTest(){
+  const device=$('probeDevice').value;if(microphoneJob||!serviceToken||!captureDevices.some(d=>d.id===device))return;
+  const job={device,session:serviceToken,started:performance.now(),id:null};microphoneJob=job;updateWorkbenchControls();$('micTestResult').textContent='正在显式测试 '+deviceName(device)+'，音频帧会立即丢弃。';
+  try{const receipt=await workbenchRequest('/api/audio/tests',{method:'POST',body:JSON.stringify({device_id:device})});if(receipt.device_id!==device||!/^[0-9a-f]{64}$/i.test(receipt.operation_id))throw Error('服务未确认同一设备的测试。');job.id=receipt.operation_id;updateWorkbenchControls();pollMicTest(job);}
+  catch(error){finishMicTest({error:error.message},job);}
+}
+$('probeDevice').onchange=()=>{clearMicSignal('等待所选麦克风的状态。');updateWorkbenchControls();};$('startMicTest').onclick=startMicTest;
+$('cancelMicTest').onclick=async()=>{const job=microphoneJob;if(!job?.id)return;try{await workbenchRequest('/api/audio/tests/'+job.id+'/cancel',{method:'POST',body:'{}'});$('micTestResult').textContent='已请求停止测试，等待清理回执。';}catch(error){finishMicTest({error:error.message},job);}};
 renderBindings();loadEditor();
 probe().then(async ()=>{
   if(mode!=='service')return;

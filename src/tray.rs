@@ -1,6 +1,6 @@
 //! Windows resident entry: notification icons and authenticated Web Settings.
 //!
-//! The hidden owner keeps the tray and compact software strip alive; only Exit stops the service.
+//! The hidden owner keeps native notification icons alive; only Exit stops the service.
 //! The independent, mouse-transparent action feedback overlay is unchanged.
 
 use crate::service;
@@ -12,14 +12,15 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    core::{w, PCWSTR, PWSTR},
+    core::PCWSTR,
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND, LPARAM,
-            LRESULT, POINT, RECT, WPARAM,
+            LRESULT, POINT, WPARAM,
         },
         Graphics::Gdi::{
-            GetStockObject, GetSysColorBrush, InvalidateRect, COLOR_WINDOW, DEFAULT_GUI_FONT,
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GdiFlush, SelectObject,
+            BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         },
         System::{
             LibraryLoader::GetModuleHandleW,
@@ -27,11 +28,6 @@ use windows::{
             Threading::CreateMutexW,
         },
         UI::{
-            Controls::{
-                InitCommonControlsEx, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, TTF_IDISHWND,
-                TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX,
-                TTTOOLINFOW,
-            },
             Shell::{
                 ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP,
                 NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
@@ -45,17 +41,15 @@ const TRAY_MESSAGE: u32 = WM_APP + 1;
 const OPEN_SETTINGS: u32 = WM_APP + 2;
 const UI_COMMAND: u32 = WM_APP + 3;
 const UI_MENU: u32 = WM_APP + 4;
+const UI_RESTORE_ICONS: u32 = WM_APP + 5;
 const FIRST_SESSION_COMMAND: u32 = 1000;
 const MENU_OPEN: u32 = 101;
 const MENU_STATUS: u32 = 102;
 const MENU_EXIT: u32 = 103;
+const MENU_STARTUP: u32 = 104;
 const TIMER: usize = 1;
 const CLASS: &str = "VibDockTray";
 const TRAY_MUTEX: &str = "VibDockTraySingleton";
-const STRIP_CELL: i32 = 44;
-const STRIP_CLASS: PCWSTR = w!("VibDockSoftwareStrip");
-// SDK TTTOOLINFOW_V2_SIZE also works without a common-controls v6 manifest.
-const TOOLINFO_SIZE: u32 = std::mem::offset_of!(TTTOOLINFOW, lpReserved) as u32;
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -91,6 +85,7 @@ struct Observation {
     port: Option<u16>,
     apps: serde_json::Value,
     checked: Option<Instant>,
+    microphone_checked: Option<Instant>,
     generation: u64,
 }
 impl Observation {
@@ -105,8 +100,15 @@ impl Observation {
             port: None,
             apps: serde_json::Value::Null,
             checked: None,
+            microphone_checked: None,
             generation,
         }
+    }
+    fn microphone_fresh(&self) -> bool {
+        self.port.is_some()
+            && self
+                .microphone_checked
+                .is_some_and(|checked| checked.elapsed() < Duration::from_secs(4))
     }
 }
 
@@ -157,12 +159,159 @@ enum WorkerCommand {
     Playback(PlaybackSelection),
     Settings,
     Shutdown,
+    Startup(StartupSelection),
 }
 enum WorkerEvent {
     Observation(Observation),
     ActionResult(String),
     Notice(String),
     Shutdown(std::result::Result<bool, String>),
+    Startup(StartupObservation),
+    StartupResult(StartupObservation, Option<String>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartupState {
+    Confirmed(bool),
+    Conflict,
+    Unknown,
+    Unsupported,
+}
+#[derive(Clone)]
+struct StartupObservation {
+    state: StartupState,
+    launcher_available: bool,
+    checked: Option<Instant>,
+    generation: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StartupSelection {
+    generation: u64,
+    enabled: bool,
+    expected_enabled: bool,
+}
+impl StartupObservation {
+    fn unavailable(generation: u64) -> Self {
+        Self {
+            state: StartupState::Unknown,
+            launcher_available: false,
+            checked: None,
+            generation,
+        }
+    }
+    fn parse(value: &serde_json::Value, generation: u64, checked: Instant) -> Self {
+        let state = if value["supported"] == false
+            && value["platform"] == "unsupported"
+            && value["state"] == "unsupported"
+        {
+            StartupState::Unsupported
+        } else if value["platform"] == "windows"
+            && value["supported"] == true
+            && value["scope"] == "current_user"
+        {
+            match (
+                value["readback_confirmed"].as_bool(),
+                value["enabled"].as_bool(),
+                value["state"].as_str(),
+                value["error"].is_null(),
+            ) {
+                (Some(true), Some(true), Some("enabled"), true) => StartupState::Confirmed(true),
+                (Some(true), Some(false), Some("disabled"), true) => StartupState::Confirmed(false),
+                (_, None, Some("conflict"), _) => StartupState::Conflict,
+                _ => StartupState::Unknown,
+            }
+        } else {
+            StartupState::Unknown
+        };
+        Self {
+            state,
+            launcher_available: value["launcher_available"] == true,
+            checked: Some(checked),
+            generation,
+        }
+    }
+    fn fresh(&self) -> bool {
+        self.checked
+            .is_some_and(|checked| checked.elapsed() < Duration::from_secs(4))
+    }
+}
+fn startup_menu(
+    view: &StartupObservation,
+    busy: bool,
+) -> (&'static str, MENU_ITEM_FLAGS, Option<StartupSelection>) {
+    if !view.fresh() {
+        return ("开机自启（状态未知）", MF_STRING | MF_GRAYED, None);
+    }
+    match view.state {
+        StartupState::Confirmed(enabled) => {
+            let flags = MF_STRING | if enabled { MF_CHECKED } else { MF_UNCHECKED };
+            if busy {
+                return ("开机自启（操作处理中）", flags | MF_GRAYED, None);
+            }
+            if !enabled && !view.launcher_available {
+                return ("开机自启（启动器不可用）", flags | MF_GRAYED, None);
+            }
+            (
+                "开机自启",
+                flags,
+                Some(StartupSelection {
+                    generation: view.generation,
+                    enabled: !enabled,
+                    expected_enabled: enabled,
+                }),
+            )
+        }
+        StartupState::Conflict => ("开机自启（启动项冲突）", MF_STRING | MF_GRAYED, None),
+        StartupState::Unsupported => ("开机自启（此平台不支持）", MF_STRING | MF_GRAYED, None),
+        StartupState::Unknown => ("开机自启（状态未知）", MF_STRING | MF_GRAYED, None),
+    }
+}
+fn startup_request(
+    client: &service::ResidentControlClient,
+    method: &str,
+    body: Option<serde_json::Value>,
+    generation: u64,
+) -> StartupObservation {
+    let checked = Instant::now();
+    match client.request(method, "/api/startup", body, 200, 8192) {
+        Ok(value) => StartupObservation::parse(&value, generation, checked),
+        Err(_) => StartupObservation::unavailable(generation),
+    }
+}
+fn update_startup(
+    previous: &StartupObservation,
+    mut next: StartupObservation,
+    instance_changed: bool,
+) -> StartupObservation {
+    next.generation = previous.generation.wrapping_add(u64::from(
+        instance_changed
+            || previous.state != next.state
+            || previous.launcher_available != next.launcher_available,
+    ));
+    next
+}
+fn apply_startup(
+    selection: StartupSelection,
+    latest: &StartupObservation,
+    mut request: impl FnMut(Option<serde_json::Value>) -> StartupObservation,
+) -> (StartupObservation, Option<String>) {
+    if selection.generation != latest.generation
+        || !latest.fresh()
+        || latest.state != StartupState::Confirmed(selection.expected_enabled)
+    {
+        return (
+            latest.clone(),
+            Some("开机自启状态已过期，请重新打开菜单后再试。".into()),
+        );
+    }
+    let result = request(Some(serde_json::json!({"enabled":selection.enabled})));
+    if result.state == StartupState::Confirmed(selection.enabled) && result.fresh() {
+        return (result, None);
+    }
+    (
+        request(None),
+        Some("开机自启设置未确认，已重新读取实际配置；请检查状态后再试。".into()),
+    )
 }
 struct PendingPlayback {
     client: service::ResidentControlClient,
@@ -201,18 +350,61 @@ fn action_result(selection: &PlaybackSelection, message: &str) -> WorkerEvent {
     ))
 }
 
+fn next_worker_command(
+    commands: &mpsc::Receiver<WorkerCommand>,
+    shutdown: &AtomicBool,
+    settings: &AtomicBool,
+) -> std::result::Result<WorkerCommand, mpsc::RecvTimeoutError> {
+    let command = if shutdown.load(Ordering::Relaxed) || settings.load(Ordering::Relaxed) {
+        commands.try_recv().map_err(|error| match error {
+            mpsc::TryRecvError::Empty => mpsc::RecvTimeoutError::Timeout,
+            mpsc::TryRecvError::Disconnected => mpsc::RecvTimeoutError::Disconnected,
+        })
+    } else {
+        commands.recv_timeout(Duration::from_millis(50))
+    };
+    // Exit cannot be displaced by a queued Settings or startup request. Check
+    // again after receiving because Exit may arrive while this worker waits.
+    if shutdown.load(Ordering::Relaxed) {
+        settings.store(false, Ordering::Relaxed);
+        while commands.try_recv().is_ok() {}
+        Ok(WorkerCommand::Shutdown)
+    } else if matches!(&command, Err(mpsc::RecvTimeoutError::Timeout))
+        && settings.swap(false, Ordering::Relaxed)
+    {
+        // Already accepted actions retain their queue order. Repeated Settings
+        // requests consume no queue slot and become one later browser opening.
+        Ok(WorkerCommand::Settings)
+    } else {
+        command
+    }
+}
+
+// Recheck at execute admission after a potentially blocking preparation.
+fn dispatch_prepared_playback<T>(shutdown: &AtomicBool, dispatch: impl FnOnce() -> T) -> Option<T> {
+    if shutdown.load(Ordering::Relaxed) {
+        None
+    } else {
+        Some(dispatch())
+    }
+}
+
 fn poll_worker(
     sender: mpsc::SyncSender<WorkerEvent>,
     commands: mpsc::Receiver<WorkerCommand>,
     stop: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    settings: Arc<AtomicBool>,
 ) {
     let mut client: Option<service::ResidentControlClient> = None;
     let mut latest: Option<Observation> = None;
     let mut pending: Option<PendingPlayback> = None;
     let mut generation = 0u64;
+    let mut startup = StartupObservation::unavailable(generation);
+    let mut startup_client: Option<service::ResidentControlClient> = None;
     let mut next_poll = Instant::now();
     while !stop.load(Ordering::Relaxed) {
-        match commands.recv_timeout(Duration::from_millis(50)) {
+        match next_worker_command(&commands, &shutdown, &settings) {
             Ok(WorkerCommand::Playback(selection)) => {
                 if pending.is_some()
                     || client.is_none()
@@ -263,14 +455,51 @@ fn poll_worker(
                     }
                 }
             }
+            Ok(WorkerCommand::Startup(selection)) => {
+                let (result, notice) = if pending.is_none() {
+                    if let Some(client) = startup_client.as_ref() {
+                        apply_startup(selection, &startup, |body| {
+                            startup_request(
+                                client,
+                                if body.is_some() { "POST" } else { "GET" },
+                                body,
+                                startup.generation,
+                            )
+                        })
+                    } else {
+                        (
+                            StartupObservation::unavailable(startup.generation),
+                            Some("服务状态未知，开机自启设置未改变。".into()),
+                        )
+                    }
+                } else {
+                    (
+                        startup.clone(),
+                        Some("请等待当前操作完成后再更改开机自启。".into()),
+                    )
+                };
+                startup = update_startup(&startup, result, false);
+                if !send_worker_event(
+                    &sender,
+                    &stop,
+                    WorkerEvent::StartupResult(startup.clone(), notice),
+                ) {
+                    return;
+                }
+            }
             Ok(WorkerCommand::Shutdown) => {
                 // Cancel an unexecuted preparation, or stop polling an executed
                 // request without implying that stopping restores its audio.
                 pending = None;
                 let result = service::request_shutdown();
+                let finished = result.is_ok();
                 if !send_worker_event(&sender, &stop, WorkerEvent::Shutdown(result)) {
                     return;
                 }
+                if finished {
+                    return;
+                }
+                shutdown.store(false, Ordering::Relaxed);
                 client = None;
                 latest = None;
                 next_poll = Instant::now();
@@ -281,6 +510,9 @@ fn poll_worker(
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        if shutdown.load(Ordering::Relaxed) {
+            continue;
+        }
         if let Some(mut operation) = pending.take() {
             let mut complete = None;
             if !operation.execute_attempted {
@@ -289,7 +521,14 @@ fn poll_worker(
                 } else {
                     // Exactly one attempt, even if the server's response is
                     // lost. Subsequent requests only read this known receipt.
-                    if operation.client.execute(&operation.prepared).is_err() {
+                    let Some(result) = dispatch_prepared_playback(&shutdown, || {
+                        operation.execute_attempted = true;
+                        operation.client.execute(&operation.prepared)
+                    }) else {
+                        pending = Some(operation);
+                        continue;
+                    };
+                    if result.is_err() {
                         latest = None;
                         let _ = send_worker_event(
                             &sender,
@@ -297,7 +536,6 @@ fn poll_worker(
                             WorkerEvent::Observation(Observation::unavailable(generation)),
                         );
                     }
-                    operation.execute_attempted = true;
                     operation.next_read = Instant::now() + Duration::from_millis(250);
                 }
             } else if operation.started.elapsed() >= Duration::from_secs(12) {
@@ -366,6 +604,7 @@ fn poll_worker(
                 let observation = Observation {
                     port: Some(candidate.port()),
                     checked: observation_time(started, &apps),
+                    microphone_checked: observation_time(started, &apps["microphone"]),
                     apps,
                     generation,
                 };
@@ -377,7 +616,32 @@ fn poll_worker(
                 Observation::unavailable(generation)
             }
         };
+        // Keep startup's instance/state epoch independent of audio observations.
+        // A repeated GET may renew freshness, but cannot invalidate an open menu.
+        match service::ResidentControlClient::discover() {
+            Ok(candidate) => {
+                let changed = !startup_client
+                    .as_ref()
+                    .is_some_and(|previous| previous.same_instance(&candidate));
+                let next = startup_request(&candidate, "GET", None, startup.generation);
+                startup = update_startup(&startup, next, changed);
+                startup_client = Some(candidate);
+            }
+            Err(_) => {
+                startup = update_startup(
+                    &startup,
+                    StartupObservation::unavailable(startup.generation),
+                    startup_client.is_some(),
+                );
+                startup_client = None;
+            }
+        }
         latest = Some(observation.clone());
+        if let Err(mpsc::TrySendError::Disconnected(_)) =
+            sender.try_send(WorkerEvent::Startup(startup.clone()))
+        {
+            return;
+        }
         match sender.try_send(WorkerEvent::Observation(observation)) {
             Err(mpsc::TrySendError::Disconnected(_)) => return,
             // Full status queues never block the next check or accept a stale
@@ -390,6 +654,8 @@ fn poll_worker(
 
 struct Poller {
     stop: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    settings: Arc<AtomicBool>,
     commands: mpsc::SyncSender<WorkerCommand>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -399,12 +665,26 @@ impl Poller {
         let (commands, requests) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown);
+        let settings = Arc::new(AtomicBool::new(false));
+        let worker_settings = Arc::clone(&settings);
         let thread = std::thread::Builder::new()
             .name("desktop-status".into())
-            .spawn(move || poll_worker(sender, requests, worker_stop))?;
+            .spawn(move || {
+                poll_worker(
+                    sender,
+                    requests,
+                    worker_stop,
+                    worker_shutdown,
+                    worker_settings,
+                )
+            })?;
         Ok((
             Self {
                 stop,
+                shutdown,
+                settings,
                 commands,
                 thread: Some(thread),
             },
@@ -412,7 +692,23 @@ impl Poller {
         ))
     }
     fn request(&self, command: WorkerCommand) -> bool {
-        self.commands.try_send(command).is_ok()
+        match command {
+            WorkerCommand::Shutdown => {
+                self.shutdown.store(true, Ordering::Relaxed);
+                self.settings.store(false, Ordering::Relaxed);
+                true
+            }
+            WorkerCommand::Settings => {
+                // Opening Settings is idempotent. Closing takes precedence and
+                // must not produce a busy modal or leave a page queued to open.
+                if !self.shutdown.load(Ordering::Relaxed) {
+                    self.settings.store(true, Ordering::Relaxed);
+                }
+                true
+            }
+            _ if self.shutdown.load(Ordering::Relaxed) => false,
+            command => self.commands.try_send(command).is_ok(),
+        }
     }
 }
 impl Drop for Poller {
@@ -430,9 +726,17 @@ impl Drop for Poller {
 /// Reuses the existing named mutex. A second launch opens authenticated Settings
 /// through the original tray, without adding another icon or service.
 pub fn run() -> crate::Result<()> {
+    run_with_settings(true)
+}
+
+/// A fixed startup entry keeps the same singleton without opening Web Settings.
+pub fn run_with_settings(open_settings: bool) -> crate::Result<()> {
     let _singleton = match TraySingleton::acquire()? {
         Some(guard) => guard,
         None => {
+            if !open_settings {
+                return Ok(());
+            }
             let class = wide(CLASS);
             // The first launcher may still be between its mutex and window.
             for _ in 0..40 {
@@ -460,16 +764,6 @@ pub fn run() -> crate::Result<()> {
         if RegisterClassW(&wc) == 0 {
             return Err(windows::core::Error::from_win32().into());
         }
-        let strip_class = WNDCLASSW {
-            lpfnWndProc: Some(strip_proc),
-            lpszClassName: STRIP_CLASS,
-            hbrBackground: GetSysColorBrush(COLOR_WINDOW),
-            ..wc
-        };
-        if RegisterClassW(&strip_class) == 0 {
-            let _ = UnregisterClassW(PCWSTR(class.as_ptr()), Some(instance));
-            return Err(windows::core::Error::from_win32().into());
-        }
         let title = wide("VibDock");
         // A hidden top-level owner receives Explorer's TaskbarCreated broadcast.
         let window = CreateWindowExW(
@@ -487,18 +781,18 @@ pub fn run() -> crate::Result<()> {
             None,
         )?;
         let result = (|| -> crate::Result<()> {
-            add_icon(window)?;
             if SetTimer(Some(window), TIMER, 250, None) == 0 {
                 return Err(windows::core::Error::from_win32().into());
             }
             let (poller, receiver) = Poller::start()?;
-            let _ = poller.request(WorkerCommand::Settings);
+            if open_settings {
+                let _ = poller.request(WorkerCommand::Settings);
+            }
             message_loop(window, receiver, &poller)
         })();
         let _ = KillTimer(Some(window), TIMER);
         let _ = Shell_NotifyIconW(NIM_DELETE, &icon(window));
         let _ = DestroyWindow(window);
-        let _ = UnregisterClassW(STRIP_CLASS, Some(instance));
         let _ = UnregisterClassW(PCWSTR(class.as_ptr()), Some(instance));
         result
     }
@@ -539,15 +833,8 @@ fn tray_icon() -> HICON {
         GetModuleHandleW(None)
             .ok()
             .and_then(|module| LoadIconW(Some(HINSTANCE(module.0)), PCWSTR(id as *const u16)).ok())
-            .unwrap_or_default()
+            .unwrap_or_else(|| LoadIconW(None, IDI_APPLICATION).unwrap_or_default())
     }
-}
-
-fn add_icon(window: HWND) -> crate::Result<()> {
-    if !unsafe { Shell_NotifyIconW(NIM_ADD, &icon(window)) }.as_bool() {
-        return Err("Could not add the VibDock tray icon.".into());
-    }
-    Ok(())
 }
 
 fn visible_text(value: &str) -> String {
@@ -672,6 +959,7 @@ fn session_menu_entries(row: &serde_json::Value, generation: u64) -> Vec<Session
 enum MenuChoice {
     Command(u32),
     Playback(PlaybackSelection),
+    Startup(StartupSelection),
 }
 
 /// The row mapping and all command bindings are immutable for the entire
@@ -681,11 +969,13 @@ fn show_menu(
     uid: usize,
     apps: &AppIcons,
     observation: Option<&Observation>,
+    startup: &StartupObservation,
     busy: bool,
 ) -> Option<MenuChoice> {
     unsafe {
         let menu = CreatePopupMenu().ok()?;
         let mut actions = Vec::new();
+        let (startup_label, startup_flags, startup_selection) = startup_menu(startup, busy);
         let built = (|| -> windows::core::Result<()> {
             if uid != 1 {
                 let Some(row) = tray_row(&apps.rows, &apps.uids, uid) else {
@@ -739,6 +1029,12 @@ fn show_menu(
                 }
                 AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             }
+            AppendMenuW(
+                menu,
+                startup_flags,
+                MENU_STARTUP as usize,
+                PCWSTR(wide(startup_label).as_ptr()),
+            )?;
             for (id, label) in [
                 (MENU_OPEN, "Settings…"),
                 (MENU_STATUS, "Service status"),
@@ -773,6 +1069,8 @@ fn show_menu(
                 .get((id - FIRST_SESSION_COMMAND) as usize)
                 .cloned()
                 .map(MenuChoice::Playback)
+        } else if id == MENU_STARTUP {
+            startup_selection.map(MenuChoice::Startup)
         } else if chosen.as_bool() {
             Some(MenuChoice::Command(id))
         } else {
@@ -870,6 +1168,8 @@ fn message_loop(
 ) -> crate::Result<()> {
     let mut observation: Option<Observation> = None;
     let mut busy = false;
+    let mut startup = StartupObservation::unavailable(0);
+    let mut startup_busy = false;
     let mut apps = AppIcons::new(window)?;
     unsafe {
         let mut message = MSG::default();
@@ -883,6 +1183,14 @@ fn message_loop(
                 while let Ok(event) = receiver.try_recv() {
                     match event {
                         WorkerEvent::Observation(next) => observation = Some(next),
+                        WorkerEvent::Startup(next) => startup = next,
+                        WorkerEvent::StartupResult(next, notice) => {
+                            startup = next;
+                            startup_busy = false;
+                            if let Some(message) = notice {
+                                notify("VibDock 开机自启", &message, MB_ICONWARNING);
+                            }
+                        }
                         WorkerEvent::ActionResult(result) => {
                             busy = false;
                             notify_playback(window, &result);
@@ -895,12 +1203,13 @@ fn message_loop(
                         }
                         WorkerEvent::Shutdown(Err(error)) => {
                             busy = false;
+                            startup_busy = false;
                             notify("VibDock could not exit", &format!("{error}\n\nPlayback outcome may be unconfirmed after cancelling its receipt check. The tray remains available. Retry Exit to stop the verified service."), MB_ICONWARNING);
                         }
                     }
                 }
                 if let Some(current) = observation.as_ref() {
-                    apps.update(&current.apps, current.fresh());
+                    apps.update(&current.apps, current.fresh(), current.microphone_fresh());
                 }
             } else if message.message == UI_COMMAND {
                 command(message.wParam.0 as u32, poller, observation.as_ref());
@@ -909,9 +1218,16 @@ fn message_loop(
                 // Revoke stale icon data before opening, then retain this exact
                 // mapping until modal tracking returns. Recheck at the click.
                 if let Some(current) = observation.as_ref() {
-                    apps.update(&current.apps, current.fresh());
+                    apps.update(&current.apps, current.fresh(), current.microphone_fresh());
                 }
-                match show_menu(window, message.wParam.0, &apps, observation.as_ref(), busy) {
+                match show_menu(
+                    window,
+                    message.wParam.0,
+                    &apps,
+                    observation.as_ref(),
+                    &startup,
+                    busy || startup_busy,
+                ) {
                     Some(MenuChoice::Command(id)) => command(id, poller, observation.as_ref()),
                     Some(MenuChoice::Playback(selection)) => {
                         if busy
@@ -930,9 +1246,30 @@ fn message_loop(
                             );
                         }
                     }
+                    Some(MenuChoice::Startup(selection)) => {
+                        if poller.request(WorkerCommand::Startup(selection)) {
+                            startup_busy = true;
+                        } else {
+                            notify(
+                                "VibDock 开机自启",
+                                "请求已排队，请稍后再试。",
+                                MB_ICONINFORMATION,
+                            );
+                        }
+                    }
                     None => {}
                 }
                 continue;
+            }
+            if message.message == UI_RESTORE_ICONS {
+                if let Some(current) = observation.as_ref() {
+                    apps.update(&current.apps, current.fresh(), current.microphone_fresh());
+                }
+                apps.restore();
+                continue;
+            }
+            if message.message == WM_SETTINGCHANGE {
+                apps.refresh_theme()?;
             }
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
@@ -950,9 +1287,7 @@ unsafe extern "system" fn window_proc(
     // restarting or changing the service.
     let taskbar_created = RegisterWindowMessageW(PCWSTR(wide("TaskbarCreated").as_ptr()));
     if taskbar_created != 0 && message == taskbar_created {
-        if add_icon(window).is_err() {
-            notify("VibDock tray unavailable", "Windows could not restore the notification icon. Reopen VibDock to access Settings.", MB_ICONWARNING);
-        }
+        let _ = PostMessageW(Some(window), UI_RESTORE_ICONS, WPARAM(0), LPARAM(0));
         return LRESULT(0);
     }
     match message {
@@ -964,10 +1299,6 @@ unsafe extern "system" fn window_proc(
                 LPARAM(0),
             );
             LRESULT(0)
-        }
-        WM_SETTINGCHANGE => {
-            let _ = Shell_NotifyIconW(NIM_MODIFY, &icon(window));
-            DefWindowProcW(window, message, wparam, lparam)
         }
         WM_CLOSE => LRESULT(0),
         WM_COMMAND => {
@@ -985,7 +1316,7 @@ unsafe extern "system" fn window_proc(
         }
         TRAY_MESSAGE => {
             match lparam.0 as u32 {
-                WM_LBUTTONUP if wparam.0 == 1 => {
+                WM_LBUTTONUP => {
                     let _ = PostMessageW(Some(window), OPEN_SETTINGS, WPARAM(0), LPARAM(0));
                 }
                 WM_RBUTTONUP => {
@@ -1056,49 +1387,156 @@ fn playback_badge(row: &serde_json::Value) -> (&'static str, &'static str) {
     }
 }
 
-fn strip_style() -> WINDOW_EX_STYLE {
-    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+fn microphone_presentation(value: &serde_json::Value, fresh: bool) -> (&'static str, String) {
+    let device = value["device_id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control));
+    let read_failed = value.get("error").is_some_and(|error| !error.is_null());
+    let (badge, state) = match value["state"].as_str() {
+        Some("unconfigured")
+            if fresh
+                && value
+                    .get("device_id")
+                    .is_some_and(serde_json::Value::is_null)
+                && !read_failed =>
+        {
+            ("?", "not configured")
+        }
+        Some("muted") if fresh && device.is_some() && !read_failed => ("×", "muted"),
+        Some("unmuted") if fresh && device.is_some() && !read_failed => ("○", "unmuted"),
+        Some("disconnected") if fresh && device.is_some() => ("–", "disconnected or disabled"),
+        _ => ("?", "state unknown"),
+    };
+    let target = if fresh {
+        device.map(|id| {
+            visible_text(
+                value["name"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id),
+            )
+        })
+    } else {
+        None
+    };
+    let target = target.map(|name| format!(" {name}")).unwrap_or_default();
+    (badge, format!("Microphone: {state}. Mute affects every application. App voice and meeting state unknown.{target}"))
 }
 
-fn strip_layout(work: RECT, count: usize) -> Option<RECT> {
-    let width = count.min(8) as i32 * STRIP_CELL;
-    if width == 0 || work.right - work.left < width + 16 || work.bottom - work.top < STRIP_CELL + 16
-    {
-        return None;
+const ICON_SIZE: usize = 32;
+
+struct OwnedIcon(HICON);
+impl Drop for OwnedIcon {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyIcon(self.0);
+        }
     }
-    Some(RECT {
-        left: work.left + 8,
-        top: work.bottom - STRIP_CELL - 8,
-        right: work.left + 8 + width,
-        bottom: work.bottom - 8,
-    })
 }
 
-unsafe extern "system" fn strip_proc(
-    window: HWND,
-    message: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match message {
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-        WM_COMMAND if lparam.0 != 0 => {
-            if let Ok(owner) = GetWindow(window, GW_OWNER) {
-                let _ = PostMessageW(Some(owner), OPEN_SETTINGS, WPARAM(0), LPARAM(0));
-            }
-            LRESULT(0)
+fn icon_pixels(icon: HICON) -> windows::core::Result<[u32; ICON_SIZE * ICON_SIZE]> {
+    unsafe {
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: ICON_SIZE as i32,
+                biHeight: -(ICON_SIZE as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let bitmap = CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0)?;
+        let dc = CreateCompatibleDC(None);
+        if dc.is_invalid() {
+            let error = windows::core::Error::from_win32();
+            let _ = DeleteObject(bitmap.into());
+            return Err(error);
         }
-        WM_CONTEXTMENU => {
-            let uid = GetPropW(HWND(wparam.0 as *mut _), w!("VibDockUID")).0 as usize;
-            if uid >= 2 {
-                if let Ok(owner) = GetWindow(window, GW_OWNER) {
-                    let _ = PostMessageW(Some(owner), UI_MENU, WPARAM(uid), LPARAM(0));
-                }
-            }
-            LRESULT(0)
+        let previous = SelectObject(dc, bitmap.into());
+        if previous.is_invalid() {
+            let error = windows::core::Error::from_win32();
+            let _ = DeleteDC(dc);
+            let _ = DeleteObject(bitmap.into());
+            return Err(error);
         }
-        WM_CLOSE => LRESULT(0),
-        _ => DefWindowProcW(window, message, wparam, lparam),
+        let result = (|| {
+            let pixels = std::slice::from_raw_parts_mut(bits.cast::<u32>(), ICON_SIZE * ICON_SIZE);
+            pixels.fill(0);
+            DrawIconEx(
+                dc,
+                0,
+                0,
+                icon,
+                ICON_SIZE as i32,
+                ICON_SIZE as i32,
+                0,
+                None,
+                DI_NORMAL,
+            )?;
+            if !GdiFlush().as_bool() {
+                return Err(windows::core::Error::from_win32());
+            }
+            Ok(pixels.try_into().unwrap())
+        })();
+        SelectObject(dc, previous);
+        let _ = DeleteDC(dc);
+        let _ = DeleteObject(bitmap.into());
+        result
+    }
+}
+
+fn badge_pixels(pixels: &mut [u32; ICON_SIZE * ICON_SIZE], badge: &str) {
+    // A contrasting 5x5 symbol remains distinct after Windows scales the icon.
+    let (glyph, background) = match badge {
+        "×" => ([17, 10, 4, 10, 17], 0xffb83232),
+        "○" => ([14, 17, 17, 17, 14], 0xff21784c),
+        "▶" => ([16, 24, 28, 24, 16], 0xff21784c),
+        "II" => ([10, 10, 10, 10, 10], 0xff6b5a28),
+        "–" => ([0, 0, 31, 0, 0], 0xff555555),
+        _ => ([14, 17, 2, 0, 4], 0xff555555),
+    };
+    for y in 18..ICON_SIZE {
+        for x in 18..ICON_SIZE {
+            let gx = x.saturating_sub(20) / 2;
+            let gy = y.saturating_sub(20) / 2;
+            let mark =
+                (20..30).contains(&x) && (20..30).contains(&y) && glyph[gy] & (1 << (4 - gx)) != 0;
+            pixels[y * ICON_SIZE + x] = if mark { 0xffffffff } else { background };
+        }
+    }
+}
+
+fn badged_icon(base: HICON, badge: &str) -> windows::core::Result<OwnedIcon> {
+    let mut pixels = icon_pixels(base)?;
+    badge_pixels(&mut pixels, badge);
+    // Reuse the existing DWORD-aligned DIB icon decoder and explicit alpha plane.
+    let mut payload = vec![0u32; 10 + ICON_SIZE * ICON_SIZE + ICON_SIZE];
+    payload[..10].copy_from_slice(&[40, 32, 64, 0x00200001, 0, 4096, 0, 0, 0, 0]);
+    for (row, source) in pixels.as_chunks::<ICON_SIZE>().0.iter().rev().enumerate() {
+        payload[10 + row * ICON_SIZE..10 + (row + 1) * ICON_SIZE].copy_from_slice(source);
+    }
+    unsafe {
+        let bytes =
+            std::slice::from_raw_parts_mut(payload.as_mut_ptr().cast::<u8>(), payload.len() * 4);
+        CreateIconFromResourceEx(bytes, true, 0x00030000, 32, 32, IMAGE_FLAGS(0)).map(OwnedIcon)
+    }
+}
+
+fn microphone_icons() -> windows::core::Result<Vec<(&'static str, OwnedIcon)>> {
+    let base = tray_icon();
+    ["?", "×", "○", "–"]
+        .into_iter()
+        .map(|badge| badged_icon(base, badge).map(|icon| (badge, icon)))
+        .collect()
+}
+
+fn modify_or_restore(data: &NOTIFYICONDATAW) -> bool {
+    unsafe {
+        Shell_NotifyIconW(NIM_MODIFY, data).as_bool() || Shell_NotifyIconW(NIM_ADD, data).as_bool()
     }
 }
 
@@ -1106,11 +1544,12 @@ unsafe extern "system" fn strip_proc(
 // mapping. Its menu captures one explicit session, never the first or all.
 struct AppIcons {
     window: HWND,
-    strip: HWND,
-    tooltip: HWND,
-    tips: Vec<Vec<u16>>,
     key: String,
-    icons: Vec<(HICON, bool)>,
+    microphone_badge: &'static str,
+    main: NOTIFYICONDATAW,
+    microphone_icons: Vec<(&'static str, OwnedIcon)>,
+    fallback: OwnedIcon,
+    icons: Vec<OwnedIcon>,
     data: Vec<NOTIFYICONDATAW>,
     rows: Vec<serde_json::Value>,
     uids: Vec<u32>,
@@ -1118,291 +1557,147 @@ struct AppIcons {
 }
 impl AppIcons {
     fn new(window: HWND) -> crate::Result<Self> {
-        let mut apps = Self {
+        let microphone_icons = microphone_icons()?;
+        let fallback = badged_icon(unsafe { LoadIconW(None, IDI_APPLICATION)? }, "?")?;
+        let mut main = icon(window);
+        let (_, unknown) = &microphone_icons[0];
+        main.hIcon = unknown.0;
+        main.szTip = notification_text(&microphone_presentation(&serde_json::Value::Null, false).1);
+        if !unsafe { Shell_NotifyIconW(NIM_ADD, &main) }.as_bool() {
+            return Err("Could not add the VibDock notification icon.".into());
+        }
+        Ok(Self {
             window,
-            strip: HWND::default(),
-            tooltip: HWND::default(),
-            tips: (0..8).map(|_| wide("")).collect(),
             key: String::new(),
+            microphone_badge: "?",
+            main,
+            microphone_icons,
+            fallback,
             icons: vec![],
             data: vec![],
             rows: vec![],
             uids: vec![],
             next_uid: 2,
-        };
-        unsafe {
-            let common = INITCOMMONCONTROLSEX {
-                dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
-                dwICC: ICC_WIN95_CLASSES,
-            };
-            if !InitCommonControlsEx(&common).as_bool() {
-                return Err(windows::core::Error::from_win32().into());
-            }
-            let instance = HINSTANCE(GetModuleHandleW(None)?.0);
-            apps.strip = CreateWindowExW(
-                strip_style(),
-                STRIP_CLASS,
-                w!("VibDock playback indicators; voice activity unknown"),
-                WS_POPUP,
-                0,
-                0,
-                0,
-                0,
-                Some(window),
-                None,
-                Some(instance),
-                None,
-            )?;
-            apps.tooltip = CreateWindowExW(
-                strip_style(),
-                w!("tooltips_class32"),
-                None,
-                WS_POPUP | WINDOW_STYLE(TTS_ALWAYSTIP | TTS_NOPREFIX),
-                0,
-                0,
-                0,
-                0,
-                Some(apps.strip),
-                None,
-                Some(instance),
-                None,
-            )?;
-            for index in 0..8 {
-                let button = CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    w!("BUTTON"),
-                    None,
-                    WS_CHILD | WS_CLIPCHILDREN | WINDOW_STYLE((BS_ICON | BS_FLAT) as u32),
-                    index * STRIP_CELL,
-                    0,
-                    STRIP_CELL,
-                    STRIP_CELL,
-                    Some(apps.strip),
-                    Some(HMENU((200 + index) as usize as *mut _)),
-                    Some(instance),
-                    None,
-                )?;
-                let badge = CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    w!("STATIC"),
-                    w!("?"),
-                    WS_CHILD | WS_VISIBLE | WS_DISABLED | WINDOW_STYLE(1), // SS_CENTER
-                    27,
-                    27,
-                    17,
-                    17,
-                    Some(button),
-                    Some(HMENU(std::ptr::without_provenance_mut(1))),
-                    Some(instance),
-                    None,
-                )?;
-                SendMessageW(
-                    badge,
-                    WM_SETFONT,
-                    Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
-                    Some(LPARAM(1)),
-                );
-                let tool = TTTOOLINFOW {
-                    cbSize: TOOLINFO_SIZE,
-                    uFlags: TTF_IDISHWND | TTF_SUBCLASS,
-                    hwnd: apps.strip,
-                    uId: button.0 as usize,
-                    lpszText: PWSTR(apps.tips[index as usize].as_mut_ptr()),
-                    ..Default::default()
-                };
-                if SendMessageW(
-                    apps.tooltip,
-                    TTM_ADDTOOLW,
-                    None,
-                    Some(LPARAM(&tool as *const _ as isize)),
-                )
-                .0 == 0
-                {
-                    return Err("Could not register a software status tooltip.".into());
-                }
-            }
-        }
-        Ok(apps)
+        })
     }
     fn clear(&mut self) {
         unsafe {
             for data in &self.data {
                 let _ = Shell_NotifyIconW(NIM_DELETE, data);
             }
-            self.data.clear();
-            if !self.strip.is_invalid() {
-                for index in 0..8 {
-                    if let Ok(button) = GetDlgItem(Some(self.strip), 200 + index) {
-                        SendMessageW(
-                            button,
-                            BM_SETIMAGE,
-                            Some(WPARAM(IMAGE_ICON.0 as usize)),
-                            Some(LPARAM(0)),
-                        );
-                        let _ = RemovePropW(button, w!("VibDockUID"));
-                        let _ = ShowWindow(button, SW_HIDE);
-                    }
-                }
-            }
-            for (icon, owned) in self.icons.drain(..) {
-                if owned {
-                    let _ = DestroyIcon(icon);
-                }
-            }
         }
+        self.data.clear();
+        self.icons.clear();
     }
-    fn update(&mut self, value: &serde_json::Value, fresh: bool) {
-        unsafe {
-            let rows = displayed_rows(value, &self.rows, fresh);
-            self.uids = stable_tray_ids(&self.rows, &self.uids, &rows, &mut self.next_uid);
-            self.rows = rows.clone();
-            let complete = fresh && value["complete"] == true;
-            let key = serde_json::to_string(&(&rows, complete)).unwrap_or_default();
-            if self.key == key {
-                // Explorer can restart while the owner is hidden. Failed modify
-                // re-adds only our icons, without spawning another resident entry.
-                for data in &self.data {
-                    if !Shell_NotifyIconW(NIM_MODIFY, data).as_bool() {
-                        let _ = Shell_NotifyIconW(NIM_ADD, data);
-                    }
-                }
-                self.place_strip();
-                return;
-            }
-            self.clear();
-            self.key = key;
-            for (index, row) in rows.iter().enumerate() {
-                let label = row["label"].as_str().unwrap_or("Software");
-                let status = match row["state"].as_str() {
-                    Some("not_connected") => "No playback session",
-                    Some("connected") if row["complete"] != true => "Partial playback observation",
-                    Some("connected") => row["playback_label"]
-                        .as_str()
-                        .unwrap_or("Playback observed"),
-                    _ => "Playback state unknown",
-                };
-                let resource = row["icon_b64"]
-                    .as_str()
-                    .and_then(crate::resident_apps::decode_icon);
-                let created = resource.and_then(|bytes| {
+    fn update(&mut self, value: &serde_json::Value, fresh: bool, microphone_fresh: bool) {
+        self.update_microphone(&value["microphone"], microphone_fresh);
+        let rows = displayed_rows(value, &self.rows, fresh);
+        self.uids = stable_tray_ids(&self.rows, &self.uids, &rows, &mut self.next_uid);
+        self.rows = rows;
+        let complete = fresh && value["complete"] == true;
+        // Capability renewal changes action data, not a notification icon's pixels.
+        let key = serde_json::to_string(
+            &self
+                .rows
+                .iter()
+                .map(|row| {
+                    (
+                        &row["id"],
+                        &row["label"],
+                        &row["icon_b64"],
+                        if complete {
+                            playback_badge(row)
+                        } else {
+                            ("?", "Playback unknown")
+                        },
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_default();
+        if self.key == key {
+            self.restore();
+            return;
+        }
+        self.clear();
+        self.key = key;
+        for (index, row) in self.rows.iter().enumerate() {
+            let label = visible_text(row["label"].as_str().unwrap_or("Software"));
+            let (badge, playback) = if complete {
+                playback_badge(row)
+            } else {
+                ("?", "Playback unknown")
+            };
+            let created = row["icon_b64"]
+                .as_str()
+                .and_then(crate::resident_apps::decode_icon)
+                .and_then(|bytes| {
                     let payload = &bytes[22..];
-                    // presbits must be DWORD-aligned; the ICO payload at offset
-                    // 22 is not. Copy into aligned storage without padding the
-                    // byte length passed to the decoder.
                     let mut aligned = vec![0u32; payload.len().div_ceil(4)];
-                    let data = std::slice::from_raw_parts_mut(
-                        aligned.as_mut_ptr().cast::<u8>(),
-                        payload.len(),
-                    );
-                    data.copy_from_slice(payload);
-                    CreateIconFromResourceEx(data, true, 0x00030000, 32, 32, IMAGE_FLAGS(0)).ok()
-                });
-                let owned = created.is_some();
-                let icon =
-                    created.unwrap_or_else(|| LoadIconW(None, IDI_APPLICATION).unwrap_or_default());
-                let mut data = NOTIFYICONDATAW {
-                    cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-                    hWnd: self.window,
-                    uID: self.uids[index],
-                    uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
-                    uCallbackMessage: TRAY_MESSAGE,
-                    hIcon: icon,
-                    ..Default::default()
-                };
-                let tip = wide(&format!("{label}: {status}"));
-                let count = (tip.len() - 1).min(data.szTip.len() - 1);
-                data.szTip[..count].copy_from_slice(&tip[..count]);
-                let _ = Shell_NotifyIconW(NIM_ADD, &data);
-                self.data.push(data);
-                self.icons.push((icon, owned));
-                let (badge, playback) = if complete {
-                    playback_badge(row)
-                } else {
-                    ("?", "Playback unknown")
-                };
-                let name = format!("{label}: {playback}. Voice activity unknown. Opens Settings.");
-                if self.configure_button(index, icon, badge, &name).is_err() {
-                    if let Ok(button) = GetDlgItem(Some(self.strip), 200 + index as i32) {
-                        let _ = ShowWindow(button, SW_HIDE);
+                    unsafe {
+                        let data = std::slice::from_raw_parts_mut(
+                            aligned.as_mut_ptr().cast::<u8>(),
+                            payload.len(),
+                        );
+                        data.copy_from_slice(payload);
+                        CreateIconFromResourceEx(data, true, 0x00030000, 32, 32, IMAGE_FLAGS(0))
+                            .ok()
+                            .map(OwnedIcon)
                     }
-                }
-            }
-            self.place_strip();
-        }
-    }
-    fn configure_button(
-        &mut self,
-        index: usize,
-        icon: HICON,
-        badge: &str,
-        name: &str,
-    ) -> windows::core::Result<HWND> {
-        unsafe {
-            let button = GetDlgItem(Some(self.strip), 200 + index as i32)?;
-            let badge_control = GetDlgItem(Some(button), 1)?;
-            let next_tip = wide(name);
-            SetPropW(
-                button,
-                w!("VibDockUID"),
-                Some(HANDLE(self.uids[index] as usize as *mut _)),
-            )?;
-            SetWindowTextW(button, PCWSTR(next_tip.as_ptr()))?;
-            SetWindowTextW(badge_control, PCWSTR(wide(badge).as_ptr()))?;
-            SendMessageW(
-                button,
-                BM_SETIMAGE,
-                Some(WPARAM(IMAGE_ICON.0 as usize)),
-                Some(LPARAM(icon.0 as isize)),
-            );
-            let previous_tip = std::mem::replace(&mut self.tips[index], next_tip);
-            let tool = TTTOOLINFOW {
-                cbSize: TOOLINFO_SIZE,
-                uFlags: TTF_IDISHWND | TTF_SUBCLASS,
-                hwnd: self.strip,
-                uId: button.0 as usize,
-                lpszText: PWSTR(self.tips[index].as_mut_ptr()),
+                });
+            let base = created
+                .as_ref()
+                .map(|icon| icon.0)
+                .unwrap_or_else(|| unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() });
+            let painted = badged_icon(base, badge).ok();
+            let mut data = NOTIFYICONDATAW {
+                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                hWnd: self.window,
+                uID: self.uids[index],
+                uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+                uCallbackMessage: TRAY_MESSAGE,
+                hIcon: painted.as_ref().unwrap_or(&self.fallback).0,
                 ..Default::default()
             };
-            SendMessageW(
-                self.tooltip,
-                TTM_UPDATETIPTEXTW,
-                None,
-                Some(LPARAM(&tool as *const _ as isize)),
-            );
-            drop(previous_tip);
-            let _ = ShowWindow(button, SW_SHOWNOACTIVATE);
-            let _ = InvalidateRect(Some(button), None, true);
-            Ok(button)
+            let playback = if painted.is_some() {
+                playback
+            } else {
+                "Playback unknown: icon rendering failed"
+            };
+            data.szTip =
+                notification_text(&format!("{playback}: {label}. Voice activity unknown."));
+            modify_or_restore(&data);
+            self.data.push(data);
+            self.icons.extend(painted);
         }
     }
-    fn place_strip(&self) {
-        unsafe {
-            // shortcut: primary work area only; add per-monitor placement when requested.
-            let mut work = RECT::default();
-            let area = SystemParametersInfoW(
-                SPI_GETWORKAREA,
-                0,
-                Some((&mut work as *mut RECT).cast()),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-            )
-            .ok()
-            .and_then(|_| strip_layout(work, self.rows.len()));
-            if let Some(area) = area {
-                if SetWindowPos(
-                    self.strip,
-                    Some(HWND_TOPMOST),
-                    area.left,
-                    area.top,
-                    area.right - area.left,
-                    STRIP_CELL,
-                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                )
-                .is_ok()
-                {
-                    return;
-                }
-            }
-            let _ = ShowWindow(self.strip, SW_HIDE);
+    fn update_microphone(&mut self, value: &serde_json::Value, fresh: bool) {
+        let (badge, name) = microphone_presentation(value, fresh);
+        self.microphone_badge = badge;
+        self.main.hIcon = self
+            .microphone_icons
+            .iter()
+            .find(|(symbol, _)| *symbol == badge)
+            .map(|(_, icon)| icon.0)
+            .unwrap();
+        self.main.szTip = notification_text(&name);
+        modify_or_restore(&self.main);
+    }
+    fn refresh_theme(&mut self) -> crate::Result<()> {
+        let icons = microphone_icons()?;
+        self.main.hIcon = icons
+            .iter()
+            .find(|(symbol, _)| *symbol == self.microphone_badge)
+            .map(|(_, icon)| icon.0)
+            .unwrap();
+        modify_or_restore(&self.main);
+        self.microphone_icons = icons;
+        Ok(())
+    }
+    fn restore(&self) {
+        modify_or_restore(&self.main);
+        for data in &self.data {
+            modify_or_restore(data);
         }
     }
 }
@@ -1410,12 +1705,7 @@ impl Drop for AppIcons {
     fn drop(&mut self) {
         self.clear();
         unsafe {
-            if !self.tooltip.is_invalid() {
-                let _ = DestroyWindow(self.tooltip);
-            }
-            if !self.strip.is_invalid() {
-                let _ = DestroyWindow(self.strip);
-            }
+            let _ = Shell_NotifyIconW(NIM_DELETE, &self.main);
         }
     }
 }
@@ -1423,75 +1713,342 @@ impl Drop for AppIcons {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::{core::w, Win32::System::Threading::GetCurrentThreadId};
+    fn command_fixture() -> (Poller, mpsc::Receiver<WorkerCommand>) {
+        let (commands, requests) = mpsc::sync_channel(1);
+        (
+            Poller {
+                stop: Arc::new(AtomicBool::new(false)),
+                shutdown: Arc::new(AtomicBool::new(false)),
+                settings: Arc::new(AtomicBool::new(false)),
+                commands,
+                thread: None,
+            },
+            requests,
+        )
+    }
+
+    #[test]
+    fn exit_during_preparation_prevents_execute_and_retains_failure_semantics() {
+        let (poller, requests) = command_fixture();
+        let shutdown = Arc::clone(&poller.shutdown);
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_writes = Arc::clone(&writes);
+        let (preparing, preparation_started) = mpsc::sync_channel(1);
+        let (prepared, preparation_finished) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            preparing.send(()).unwrap();
+            preparation_finished
+                .recv_timeout(Duration::from_secs(2))
+                .expect("The fixture preparation must be released");
+            dispatch_prepared_playback(&shutdown, || {
+                worker_writes.fetch_add(1, Ordering::Relaxed);
+                Err::<(), _>("unconfirmed response")
+            })
+        });
+        preparation_started
+            .recv_timeout(Duration::from_secs(2))
+            .expect("The fixture must enter preparation before Exit");
+        command(103, &poller, None);
+        prepared.send(()).unwrap();
+        assert_eq!(worker.join().unwrap(), None);
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Ok(WorkerCommand::Shutdown)
+        ));
+        // If shutdown fails, a later explicit action may execute once. Its lost
+        // response remains an attempted write, never a cancelled/no-write result.
+        poller.shutdown.store(false, Ordering::Relaxed);
+        let result = dispatch_prepared_playback(&poller.shutdown, || {
+            writes.fetch_add(1, Ordering::Relaxed);
+            Err::<(), _>("unconfirmed response")
+        });
+        assert_eq!(result, Some(Err("unconfirmed response")));
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn exit_keeps_legacy_id_and_preempts_a_full_settings_queue() {
+        assert_eq!(MENU_EXIT, 103);
+        assert_eq!(MENU_STARTUP, 104);
+        let ids = [MENU_OPEN, MENU_STATUS, MENU_EXIT, MENU_STARTUP];
+        for (index, id) in ids.iter().enumerate() {
+            assert!(!ids[index + 1..].contains(id));
+        }
+        let (poller, requests) = command_fixture();
+        // A bare numeric startup command has no frozen selection and cannot act.
+        command(MENU_STARTUP, &poller, None);
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        command(MENU_OPEN, &poller, None);
+        assert!(poller.commands.try_send(WorkerCommand::Settings).is_ok());
+        command(103, &poller, None);
+        assert!(poller.shutdown.load(Ordering::Relaxed));
+        command(MENU_OPEN, &poller, None);
+        assert!(!poller.settings.load(Ordering::Relaxed));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Ok(WorkerCommand::Shutdown)
+        ));
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        // A failed shutdown can be retried; no stale queued command survives it.
+        poller.shutdown.store(false, Ordering::Relaxed);
+        assert!(poller.request(WorkerCommand::Shutdown));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Ok(WorkerCommand::Shutdown)
+        ));
+    }
+
+    #[test]
+    fn repeated_settings_commands_merge_into_one_browser_request() {
+        let (poller, requests) = command_fixture();
+        for _ in 0..5 {
+            command(101, &poller, None);
+        }
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Ok(WorkerCommand::Settings)
+        ));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown, &poller.settings),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+    }
+
+    #[test]
+    fn coalesced_settings_preserve_accepted_actions_and_yield_to_exit() {
+        let startup = StartupSelection {
+            generation: 9,
+            enabled: true,
+            expected_enabled: false,
+        };
+        let playback = PlaybackSelection {
+            generation: 8,
+            entry_id: "fixture-entry".into(),
+            session_reference: "fixture-session".into(),
+            label: "Fixture only".into(),
+            process_id: 77,
+            requested_muted: true,
+        };
+        for playback_action in [false, true] {
+            for exit in [false, true] {
+                let (poller, requests) = command_fixture();
+                assert!(poller.request(if playback_action {
+                    WorkerCommand::Playback(playback.clone())
+                } else {
+                    WorkerCommand::Startup(startup)
+                }));
+                for _ in 0..3 {
+                    command(101, &poller, None);
+                }
+                if exit {
+                    command(103, &poller, None);
+                    assert!(matches!(
+                        next_worker_command(&requests, &poller.shutdown, &poller.settings),
+                        Ok(WorkerCommand::Shutdown)
+                    ));
+                    command(101, &poller, None);
+                    assert!(!poller.settings.load(Ordering::Relaxed));
+                    assert!(matches!(
+                        requests.try_recv(),
+                        Err(mpsc::TryRecvError::Empty)
+                    ));
+                } else {
+                    match (
+                        playback_action,
+                        next_worker_command(&requests, &poller.shutdown, &poller.settings),
+                    ) {
+                        (false, Ok(WorkerCommand::Startup(actual))) => assert_eq!(actual, startup),
+                        (true, Ok(WorkerCommand::Playback(actual))) => assert_eq!(actual, playback),
+                        _ => panic!("An accepted action must precede coalesced Settings"),
+                    }
+                    assert!(matches!(
+                        next_worker_command(&requests, &poller.shutdown, &poller.settings),
+                        Ok(WorkerCommand::Settings)
+                    ));
+                    assert!(!poller.settings.load(Ordering::Relaxed));
+                }
+            }
+        }
+    }
+
+    fn startup_fixture(enabled: bool, generation: u64) -> StartupObservation {
+        StartupObservation::parse(
+            &serde_json::json!({"platform":"windows","supported":true,"scope":"current_user","enabled":enabled,"state":if enabled{"enabled"}else{"disabled"},"readback_confirmed":true,"launcher_available":true,"error":null}),
+            generation,
+            Instant::now(),
+        )
+    }
+    #[test]
+    fn startup_menu_checks_only_confirmed_current_configuration() {
+        for enabled in [false, true] {
+            let view = startup_fixture(enabled, 7);
+            let (label, flags, selection) = startup_menu(&view, false);
+            assert_eq!(label, "开机自启");
+            assert_eq!(flags.contains(MF_CHECKED), enabled);
+            assert!(!flags.contains(MF_GRAYED));
+            assert_eq!(
+                selection.unwrap(),
+                StartupSelection {
+                    generation: 7,
+                    enabled: !enabled,
+                    expected_enabled: enabled,
+                }
+            );
+        }
+        let mut unavailable = startup_fixture(false, 7);
+        unavailable.launcher_available = false;
+        assert!(startup_menu(&unavailable, false).2.is_none());
+        unavailable.state = StartupState::Confirmed(true);
+        assert!(!startup_menu(&unavailable, false).2.unwrap().enabled);
+        for state in [
+            StartupState::Unknown,
+            StartupState::Conflict,
+            StartupState::Unsupported,
+        ] {
+            let mut view = startup_fixture(false, 7);
+            view.state = state;
+            let (_, flags, selection) = startup_menu(&view, false);
+            assert!(flags.contains(MF_GRAYED));
+            assert!(!flags.contains(MF_CHECKED));
+            assert!(selection.is_none());
+        }
+        let mut expired = startup_fixture(true, 7);
+        expired.checked = Some(Instant::now() - Duration::from_secs(5));
+        assert!(startup_menu(&expired, false).2.is_none());
+        assert!(!startup_menu(&expired, false).1.contains(MF_CHECKED));
+        assert!(startup_menu(&startup_fixture(true, 7), true).2.is_none());
+        let inconsistent = StartupObservation::parse(
+            &serde_json::json!({"platform":"windows","supported":true,"scope":"current_user","enabled":true,"state":"disabled","readback_confirmed":true,"launcher_available":true,"error":null}),
+            7,
+            Instant::now(),
+        );
+        assert_eq!(inconsistent.state, StartupState::Unknown);
+    }
+    #[test]
+    fn startup_worker_keeps_frozen_target_and_reads_back_after_failure() {
+        let target = startup_menu(&startup_fixture(false, 9), false).2.unwrap();
+        let changed = startup_fixture(false, 9);
+        let mut calls = Vec::new();
+        let (result, notice) = apply_startup(target, &changed, |body| {
+            calls.push(body);
+            startup_fixture(true, 9)
+        });
+        assert_eq!(calls, vec![Some(serde_json::json!({"enabled":true}))]);
+        assert_eq!(result.state, StartupState::Confirmed(true));
+        assert!(notice.is_none());
+        calls.clear();
+        let (result, notice) = apply_startup(target, &changed, |body| {
+            let posting = body.is_some();
+            calls.push(body);
+            if posting {
+                StartupObservation::unavailable(9)
+            } else {
+                startup_fixture(false, 9)
+            }
+        });
+        assert_eq!(calls, vec![Some(serde_json::json!({"enabled":true})), None]);
+        assert_eq!(result.state, StartupState::Confirmed(false));
+        assert!(notice.is_some());
+        calls.clear();
+        let (_, notice) = apply_startup(target, &startup_fixture(false, 10), |body| {
+            calls.push(body);
+            startup_fixture(true, 10)
+        });
+        assert!(calls.is_empty());
+        assert!(notice.is_some());
+    }
+    #[test]
+    fn startup_menu_survives_same_state_polls_but_not_state_or_instance_changes() {
+        let mut latest = startup_fixture(false, 31);
+        let selection = startup_menu(&latest, false).2.unwrap();
+        for unrelated_generation in 200..205 {
+            latest = update_startup(&latest, startup_fixture(false, unrelated_generation), false);
+            assert_eq!(latest.generation, 31);
+        }
+        let mut calls = Vec::new();
+        let (_, notice) = apply_startup(selection, &latest, |body| {
+            calls.push(body);
+            startup_fixture(true, 31)
+        });
+        assert!(notice.is_none());
+        assert_eq!(calls, vec![Some(serde_json::json!({"enabled":true}))]);
+        for changed in [
+            update_startup(&latest, startup_fixture(true, 31), false),
+            update_startup(&latest, startup_fixture(false, 31), true),
+        ] {
+            calls.clear();
+            let (_, notice) = apply_startup(selection, &changed, |body| {
+                calls.push(body);
+                startup_fixture(true, 31)
+            });
+            assert!(notice.is_some());
+            assert!(calls.is_empty());
+        }
+    }
     use serde_json::json;
 
     #[test]
-    #[ignore = "Bounded native fixture view for project-owned dcc-cua inspection; no live audio"]
-    fn native_strip_render_probe() -> crate::Result<()> {
+    #[ignore = "Hosted native notification-area fixture; no live audio or application actions"]
+    fn native_notification_icons_probe() -> crate::Result<()> {
         unsafe extern "system" fn probe_owner(
             window: HWND,
             message: u32,
             wparam: WPARAM,
             lparam: LPARAM,
         ) -> LRESULT {
-            match message {
-                OPEN_SETTINGS | UI_COMMAND | UI_MENU | WM_CLOSE => LRESULT(0),
-                _ => DefWindowProcW(window, message, wparam, lparam),
+            DefWindowProcW(window, message, wparam, lparam)
+        }
+        unsafe extern "system" fn floating_window_count(
+            window: HWND,
+            context: LPARAM,
+        ) -> windows::core::BOOL {
+            let mut class = [0u16; 256];
+            let len = GetClassNameW(window, &mut class) as usize;
+            let class = String::from_utf16_lossy(&class[..len]);
+            let visible = IsWindowVisible(window).as_bool();
+            eprintln!(
+                "VIBDOCK_NATIVE_PROBE_WINDOW {}",
+                json!({"class":class,"visible":visible})
+            );
+            // Shell APIs may create hidden helper windows on this thread.
+            if visible || class == "VibDockSoftwareStrip" {
+                *(context.0 as *mut usize) += 1;
             }
+            true.into()
         }
-        struct ProbeWindows {
-            instance: HINSTANCE,
-            owner: HWND,
-            owner_class: bool,
-            strip_class: bool,
-        }
-        impl Drop for ProbeWindows {
+        struct ProbeWindow(HWND);
+        impl Drop for ProbeWindow {
             fn drop(&mut self) {
                 unsafe {
-                    if !self.owner.is_invalid() {
-                        let _ = DestroyWindow(self.owner);
-                    }
-                    if self.strip_class {
-                        let _ = UnregisterClassW(STRIP_CLASS, Some(self.instance));
-                    }
-                    if self.owner_class {
-                        let _ = UnregisterClassW(w!("VibDockStripProbeOwner"), Some(self.instance));
-                    }
+                    let _ = DestroyWindow(self.0);
+                    let _ = UnregisterClassW(w!("VibDockNotificationProbe"), None);
                 }
             }
         }
         unsafe {
-            let instance = HINSTANCE(GetModuleHandleW(None)?.0);
-            let mut windows = ProbeWindows {
-                instance,
-                owner: HWND::default(),
-                owner_class: false,
-                strip_class: false,
-            };
-            let owner_class = WNDCLASSW {
+            let class = WNDCLASSW {
                 lpfnWndProc: Some(probe_owner),
-                hInstance: instance,
-                lpszClassName: w!("VibDockStripProbeOwner"),
+                hInstance: HINSTANCE(GetModuleHandleW(None)?.0),
+                lpszClassName: w!("VibDockNotificationProbe"),
                 ..Default::default()
             };
-            if RegisterClassW(&owner_class) == 0 {
-                return Err(windows::core::Error::from_win32().into());
-            }
-            windows.owner_class = true;
-            let strip_class = WNDCLASSW {
-                lpfnWndProc: Some(strip_proc),
-                lpszClassName: STRIP_CLASS,
-                hbrBackground: GetSysColorBrush(COLOR_WINDOW),
-                ..owner_class
-            };
-            if RegisterClassW(&strip_class) == 0 {
-                return Err(windows::core::Error::from_win32().into());
-            }
-            windows.strip_class = true;
-            windows.owner = CreateWindowExW(
+            assert_ne!(RegisterClassW(&class), 0);
+            let owner = ProbeWindow(CreateWindowExW(
                 WINDOW_EX_STYLE(0),
-                owner_class.lpszClassName,
-                w!("VibDock synthetic strip probe; no live app/audio"),
+                class.lpszClassName,
+                w!("VibDock synthetic notification icons; no live audio"),
                 WS_OVERLAPPED,
                 0,
                 0,
@@ -1499,115 +2056,120 @@ mod tests {
                 0,
                 None,
                 None,
-                Some(instance),
+                Some(class.hInstance),
                 None,
-            )?;
-            let mut apps = AppIcons::new(windows.owner)?;
-            apps.rows = vec![
-                json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":false}]}),
-                json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":true}]}),
-                json!({"complete":true,"state":"connected","sessions":[{"active":false,"muted":false}]}),
-                json!({"complete":false,"state":"unknown","sessions":[]}),
-            ];
-            apps.uids = vec![2, 3, 4, 5];
-            let mut buttons = vec![];
-            for (index, resource) in [IDI_INFORMATION, IDI_WARNING, IDI_APPLICATION, IDI_ERROR]
-                .into_iter()
-                .enumerate()
-            {
-                let icon = CopyIcon(LoadIconW(None, resource)?)?;
-                apps.icons.push((icon, true));
-                let (badge, playback) = playback_badge(&apps.rows[index]);
-                let name = format!("Synthetic fixture {}: {playback}. No live app/audio; voice unknown. Probe ignores Settings actions.", index + 1);
-                let button = apps.configure_button(index, icon, badge, &name)?;
-                let style = GetWindowLongPtrW(button, GWL_STYLE) as u32;
-                assert_eq!(
-                    style & 0x0f,
-                    0,
-                    "Native push-button semantics must remain enabled"
-                );
-                assert_ne!(style & BS_ICON as u32, 0);
-                let badge_control = GetDlgItem(Some(button), 1)?;
-                assert_ne!(
-                    GetWindowLongPtrW(badge_control, GWL_STYLE) as u32 & WS_DISABLED.0,
-                    0
-                );
-                assert_eq!(
-                    SendMessageW(
-                        button,
-                        BM_GETIMAGE,
-                        Some(WPARAM(IMAGE_ICON.0 as usize)),
-                        None
-                    )
-                    .0,
-                    icon.0 as isize
-                );
-                let mut text = [0u16; 256];
-                let len = GetWindowTextW(button, &mut text) as usize;
-                assert_eq!(String::from_utf16_lossy(&text[..len]), name);
-                buttons.push(json!({"hwnd":button.0 as usize,"name":name}));
-            }
-            assert!(
-                apps.data.is_empty(),
-                "Probe must not add notification-area icons"
-            );
+            )?);
             let foreground = GetForegroundWindow();
-            apps.place_strip();
-            assert_eq!(GetForegroundWindow(), foreground);
-            assert!(IsWindowVisible(apps.strip).as_bool());
-            assert!(!IsWindowVisible(windows.owner).as_bool());
-            let ex_style = GetWindowLongPtrW(apps.strip, GWL_EXSTYLE) as u32;
-            for flag in [WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST] {
-                assert_ne!(ex_style & flag.0, 0);
-            }
-            let mut work = RECT::default();
-            SystemParametersInfoW(
-                SPI_GETWORKAREA,
-                0,
-                Some((&mut work as *mut RECT).cast()),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-            )?;
-            let expected = strip_layout(work, apps.rows.len()).unwrap();
-            let mut actual = RECT::default();
-            GetWindowRect(apps.strip, &mut actual)?;
-            assert_eq!(
-                (actual.left, actual.top, actual.right, actual.bottom),
-                (expected.left, expected.top, expected.right, expected.bottom)
-            );
-            for index in 0..apps.rows.len() {
-                let button = GetDlgItem(Some(apps.strip), 200 + index as i32)?;
-                let mut rect = RECT::default();
-                GetWindowRect(button, &mut rect)?;
-                assert!(IsWindowVisible(button).as_bool());
-                assert_eq!(rect.left, actual.left + index as i32 * STRIP_CELL);
-                assert_eq!(
-                    (rect.right - rect.left, rect.bottom - rect.top),
-                    (STRIP_CELL, STRIP_CELL)
+            let mut apps = AppIcons::new(owner.0)?;
+            assert!(!IsWindowVisible(owner.0).as_bool());
+            let mut value = json!({"complete":true,"microphone":{"device_id":"synthetic","name":"Synthetic microphone","state":"muted"},"entries":[
+                {"id":"active","label":"Synthetic active","complete":true,"state":"connected","sessions":[{"active":true,"muted":false}]},
+                {"id":"muted","label":"Synthetic muted","complete":true,"state":"connected","sessions":[{"active":true,"muted":true}]},
+                {"id":"idle","label":"Synthetic idle","complete":true,"state":"connected","sessions":[{"active":false,"muted":false}]},
+                {"id":"unknown","label":"Synthetic unknown","complete":false,"state":"unknown","sessions":[]}
+            ]});
+            apps.update(&value, true, true);
+            assert_eq!(apps.data.len(), 4);
+            for uid in [1, apps.uids[0]] {
+                window_proc(
+                    owner.0,
+                    TRAY_MESSAGE,
+                    WPARAM(uid as usize),
+                    LPARAM(WM_LBUTTONUP as isize),
                 );
-                assert!(rect.right <= work.right && rect.bottom <= work.bottom);
+                let mut request = MSG::default();
+                assert!(PeekMessageW(
+                    &mut request,
+                    Some(owner.0),
+                    OPEN_SETTINGS,
+                    OPEN_SETTINGS,
+                    PM_REMOVE
+                )
+                .as_bool());
+                assert_eq!(request.message, OPEN_SETTINGS);
             }
-            eprintln!(
-                "VIBDOCK_NATIVE_STRIP_PROBE {}",
-                json!({"pid":std::process::id(),"strip_hwnd":apps.strip.0 as usize,"owner_hwnd":windows.owner.0 as usize,"fixture_only":true,"duration_ms":30_000,"buttons":buttons})
-            );
-            let deadline = Instant::now() + Duration::from_secs(30);
-            let mut message = MSG::default();
-            while Instant::now() < deadline {
-                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-                    let _ = TranslateMessage(&message);
-                    DispatchMessageW(&message);
+            let muted = icon_pixels(apps.main.hIcon)?;
+            value["microphone"]["state"] = json!("unmuted");
+            apps.update(&value, true, true);
+            let unmuted = icon_pixels(apps.main.hIcon)?;
+            apps.update(&value, true, false);
+            let unknown = icon_pixels(apps.main.hIcon)?;
+            assert_ne!(muted, unmuted);
+            assert_ne!(muted, unknown);
+            assert_ne!(unmuted, unknown);
+            assert!(Shell_NotifyIconW(NIM_MODIFY, &apps.main).as_bool());
+            for (index, data) in apps.data.iter().enumerate() {
+                assert_eq!(data.hWnd, owner.0);
+                assert_eq!(data.uID, apps.uids[index]);
+                assert!(Shell_NotifyIconW(NIM_MODIFY, data).as_bool());
+                assert!(!data.hIcon.is_invalid());
+            }
+            let displayed: Vec<_> = apps
+                .data
+                .iter()
+                .map(|data| icon_pixels(data.hIcon))
+                .collect::<windows::core::Result<_>>()?;
+            for (index, pixels) in displayed.iter().enumerate() {
+                for other in &displayed[index + 1..] {
+                    assert_ne!(pixels, other);
                 }
-                std::thread::sleep(Duration::from_millis(10));
             }
-            let strip = apps.strip;
+            let main_data = apps.main;
+            let app_data = apps.data.clone();
+            assert!(Shell_NotifyIconW(NIM_DELETE, &apps.main).as_bool());
+            for data in &apps.data {
+                assert!(Shell_NotifyIconW(NIM_DELETE, data).as_bool());
+            }
+            apps.restore();
+            assert!(Shell_NotifyIconW(NIM_MODIFY, &apps.main).as_bool());
+            for data in &apps.data {
+                assert!(Shell_NotifyIconW(NIM_MODIFY, data).as_bool());
+            }
+            assert_eq!(GetForegroundWindow(), foreground);
+            assert!(!IsWindowVisible(owner.0).as_bool());
+            let mut floating_windows = 0usize;
+            EnumThreadWindows(
+                GetCurrentThreadId(),
+                Some(floating_window_count),
+                LPARAM((&mut floating_windows as *mut usize) as isize),
+            )
+            .ok()?;
+            assert_eq!(
+                floating_windows, 0,
+                "Notification icons must not create visible windows or a floating strip"
+            );
+            eprintln!(
+                "VIBDOCK_NATIVE_NOTIFICATION_PROBE {}",
+                json!({"pid":std::process::id(),"owner_hwnd":owner.0.0 as usize,"fixture_only":true,"notification_icons":5,"floating_windows":floating_windows,"native_modify_confirmed":true,"restore_confirmed":true,"mic_states_distinct":true,"playback_states_distinct":true})
+            );
             drop(apps);
-            assert!(!IsWindow(Some(strip)).as_bool());
+            assert!(!Shell_NotifyIconW(NIM_MODIFY, &main_data).as_bool());
+            for data in &app_data {
+                assert!(!Shell_NotifyIconW(NIM_MODIFY, data).as_bool());
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn strip_badges_require_complete_known_playback_and_never_infer_voice() {
+    fn notification_badges_are_distinct_opaque_and_preserve_the_logo() {
+        let mut rendered = Vec::new();
+        for badge in ["×", "○", "▶", "II", "–", "?"] {
+            let mut pixels = [0xff123456; ICON_SIZE * ICON_SIZE];
+            badge_pixels(&mut pixels, badge);
+            assert_eq!(pixels[0], 0xff123456);
+            assert_eq!(pixels[17 * ICON_SIZE + 31], 0xff123456);
+            assert!(pixels.iter().all(|pixel| pixel >> 24 == 0xff));
+            assert!(pixels.contains(&0xffffffff));
+            for previous in &rendered {
+                assert_ne!(&pixels, previous);
+            }
+            rendered.push(pixels);
+        }
+    }
+
+    #[test]
+    fn notification_badges_require_complete_known_playback_and_never_infer_voice() {
         let mut row =
             json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":false}]});
         assert_eq!(playback_badge(&row), ("▶", "Playback session active"));
@@ -1628,32 +2190,60 @@ mod tests {
     }
 
     #[test]
-    fn strip_layout_stays_inside_work_area_and_never_takes_focus() {
-        let work = RECT {
-            left: -1920,
-            top: 40,
-            right: 0,
-            bottom: 1080,
-        };
-        let area = strip_layout(work, 12).unwrap();
-        assert_eq!(area.right - area.left, 8 * STRIP_CELL);
-        assert_eq!(area.bottom - area.top, STRIP_CELL);
-        assert!(area.left >= work.left && area.right <= work.right);
-        assert!(area.top >= work.top && area.bottom < work.bottom);
-        assert!(strip_layout(work, 0).is_none());
-        assert!(strip_layout(
-            RECT {
-                right: 40,
-                bottom: 40,
-                ..Default::default()
-            },
-            1
-        )
-        .is_none());
-        for style in [WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW] {
-            assert_ne!(strip_style().0 & style.0, 0);
+    fn microphone_indication_is_readback_only_and_endpoint_wide() {
+        let mut value = json!({"device_id":"fixture-mic","name":"Synthetic microphone","state":"muted","error":null});
+        for (state, badge) in [
+            ("muted", "×"),
+            ("unmuted", "○"),
+            ("disconnected", "–"),
+            ("unknown", "?"),
+        ] {
+            value["state"] = json!(state);
+            let (actual, name) = microphone_presentation(&value, true);
+            assert_eq!(actual, badge);
+            assert!(name.contains("Synthetic microphone"));
+            assert!(name.contains("every application"));
+            assert!(name.contains("voice and meeting state unknown"));
         }
-        assert_eq!(strip_style().0 & WS_EX_APPWINDOW.0, 0);
+        value["state"] = json!("unmuted");
+        value["error"] = json!("helper_timed_out");
+        assert_eq!(microphone_presentation(&value, true).0, "?");
+        value["error"] = serde_json::Value::Null;
+        assert_eq!(microphone_presentation(&value, false).0, "?");
+        value["device_id"] = json!("");
+        assert_eq!(microphone_presentation(&value, true).0, "?");
+        let (_, unconfigured) =
+            microphone_presentation(&json!({"device_id":null,"state":"unconfigured"}), true);
+        assert!(unconfigured.contains("not configured"));
+        assert_eq!(
+            microphone_presentation(&json!({"state":"unconfigured"}), true).0,
+            "?"
+        );
+        assert_eq!(
+            microphone_presentation(&serde_json::Value::Null, true).0,
+            "?"
+        );
+    }
+
+    #[test]
+    fn microphone_freshness_counts_source_and_transport_age_independently() {
+        let mut view = fixture_observation();
+        assert!(view.microphone_fresh());
+        view.checked = None;
+        assert!(
+            view.microphone_fresh(),
+            "Unavailable playback is not a failed microphone read"
+        );
+        let started = Instant::now() - Duration::from_secs(3);
+        view.microphone_checked = observation_time(started, &json!({"age_ms":1500}));
+        assert!(!view.microphone_fresh());
+        view.microphone_checked = observation_time(Instant::now(), &json!({"age_ms":0}));
+        view.port = None;
+        assert!(
+            !view.microphone_fresh(),
+            "A stale service identity cannot retain microphone authority"
+        );
+        assert!(!Observation::unavailable(9).microphone_fresh());
     }
 
     #[test]
@@ -1664,19 +2254,11 @@ mod tests {
         assert_eq!(notification_text::<1>("result"), [0]);
     }
 
-    #[test]
-    fn tooltip_contract_uses_the_sdk_v2_prefix() {
-        assert_eq!(
-            TOOLINFO_SIZE as usize,
-            std::mem::offset_of!(TTTOOLINFOW, lParam) + std::mem::size_of::<LPARAM>()
-        );
-        assert!((TOOLINFO_SIZE as usize) < std::mem::size_of::<TTTOOLINFOW>());
-    }
-
     fn fixture_observation() -> Observation {
         Observation {
             port: Some(43128),
             checked: Some(Instant::now()),
+            microphone_checked: Some(Instant::now()),
             generation: 7,
             apps: json!({"age_ms":0,"entries":[{"id":"a".repeat(64),"label":"Synthetic fixture, not live audio","icon_b64":"old icon","actions_enabled":true,"sessions":[
                 {"session_reference":"b".repeat(64),"process_id":41,"display_name":"First fixture","muted":false,"active":true,"actions_enabled":true},

@@ -10,12 +10,13 @@ Web Settings directly. The old Windows panel is removed; closing the browser
 leaves the tray and service running. The original supplied artwork is
 embedded through the installed Microsoft Windows SDK resource compiler.
 
-A separate compact software-logo strip uses named native buttons and playback
-badges above the primary work-area bottom edge. It does not activate on clicks;
-Settings and exact-session menus remain the controls. Missing/incomplete/expired
-observations show unknown, and no badge claims voice activity. Layout, badge
-classification and passive styles have unit coverage; actual pointer, tooltip,
-focus, DPI and multi-monitor behavior still need host acceptance.
+Native Windows notification-area icons carry microphone and playback badges;
+there is no separate taskbar-adjacent strip. The primary VibDock icon describes
+its configured microphone, while saved software icons describe playback only.
+Missing/incomplete/expired observations show unknown. Shape and color distinguish
+states, and tooltips retain the target and state in text. Windows owns icon
+placement and overflow. Actual pointer, tooltip, DPI and state-change behavior
+still need host acceptance.
 
 State vocabulary is deliberately narrow: a fresh signed service proof means
 **connected**, not **working**. A missing/expired proof means **unavailable / unknown**.
@@ -25,13 +26,12 @@ existing verified-instance functions; there is no reconnect after proof.
 
 ## Automated evidence
 
-- The ignored `tray::tests::native_strip_render_probe` creates a separate native
-  strip with labelled synthetic stock-icon fixtures for 30 seconds. Windows CI
-  runs it explicitly. It asserts native icon-button/badge styles, names, bounds,
-  work-area placement and unchanged foreground window. It adds no tray icons and
-  never touches an existing service. A local DCC-CUA observation can bind its
-  emitted PID/HWND; this is own-view rendering evidence, not real software/audio
-  or installed-client acceptance.
+- The ignored `tray::tests::native_notification_icons_probe` registers native
+  notification icons with labelled synthetic states. Windows CI runs it
+  explicitly. It checks registration, distinct status artwork, removal and
+  re-registration, a hidden owner and icon cleanup. It never touches an existing
+  service or audio endpoint. These fixtures establish native icon contracts,
+  not real software/audio or installed-client acceptance.
 
 - `cargo fmt --all --check`, `cargo clippy --locked --all-targets -- -D warnings`,
   `cargo test --locked --all-targets` on Windows, Linux and macOS.

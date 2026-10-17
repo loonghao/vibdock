@@ -78,9 +78,9 @@ jobs:
       - name: Verify voice scenario service contracts
         if: runner.os == 'Windows'
         run: node scripts/test-voice-e2e.cjs target/release/vibdock.exe --output work/voice-e2e/ci
-      - name: Verify native software strip contracts
+      - name: Verify native notification icon contracts
         if: runner.os == 'Windows'
-        run: cargo test --locked --lib tray::tests::native_strip_render_probe -- --ignored --exact --nocapture --test-threads=1
+        run: cargo test --locked --lib tray::tests::native_notification_icons_probe -- --ignored --exact --nocapture --test-threads=1
       - name: Verify native Windows tray lifecycle
         if: runner.os == 'Windows'
         shell: pwsh
@@ -131,7 +131,7 @@ jobs:
             work/windows-desktop/report.json
             work/windows-desktop/failure.json
             work/web-ui/*.png
-            work/web-ui/report.json
+            work/web-ui/*.json
             work/voice-e2e/ci/*.json
             work/voice-e2e/ci/*.log
             work/macos-desktop/*.png

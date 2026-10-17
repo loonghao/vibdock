@@ -29,8 +29,7 @@ const SHUTDOWN_SENTINEL: &str = "\u{0}vibdock-shutdown";
 
 /// The id the resident service registers its configured hotkey under.
 ///
-/// Fixed rather than derived: the service owns exactly one global binding, so
-/// there is no second registration to distinguish.
+/// Reserved for the backward-compatible single microphone shortcut.
 #[cfg(windows)]
 pub(crate) const BINDING_HOTKEY_ID: i32 = 1;
 
@@ -123,7 +122,7 @@ fn activate_hotkey(config: &Config, _current: &mut Option<()>) -> Activation {
 
 /// Outcome of a routed request: status, content type, body, and whether the
 /// client may cache it.
-type Routed = (u16, &'static str, String);
+pub(crate) type Routed = (u16, &'static str, String);
 
 /// HTTP methods the routing table distinguishes.
 ///
@@ -131,7 +130,7 @@ type Routed = (u16, &'static str, String);
 /// in-process so every stage could carry a deadline. It is intentionally small:
 /// only the verbs the router actually matches on.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Method {
+pub(crate) enum Method {
     Get,
     Post,
     Other,
@@ -150,16 +149,16 @@ impl Method {
 
 /// Everything that varies per request, grouped so the routing table stays a
 /// pure function of its inputs.
-struct Request<'a> {
-    method: Method,
-    path: &'a str,
-    host: Option<&'a str>,
-    origin: Option<&'a str>,
-    authorized: bool,
+pub(crate) struct Request<'a> {
+    pub(crate) method: Method,
+    pub(crate) path: &'a str,
+    pub(crate) host: Option<&'a str>,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) authorized: bool,
     /// Decoded request body, empty when there is none or it was rejected.
-    body: &'a str,
+    pub(crate) body: &'a str,
     /// The body was oversized or not valid UTF-8, so it was not parsed.
-    body_rejected: bool,
+    pub(crate) body_rejected: bool,
 }
 
 /// Runs one allowlisted device action and renders its result as JSON.
@@ -238,55 +237,6 @@ enum WriteOutcome {
     /// that the next restart will not see.
     PersistFailed(String),
     ActivationFailed(String),
-}
-
-/// True when the bound hotkey was pressed since the last check.
-///
-/// Non-Windows platforms have no binding to poll, so this is always false
-/// there — matching the fact that no hotkey can be armed on them either.
-#[cfg(windows)]
-fn fired_since_last_poll(binding: &Option<Binding>) -> usize {
-    if binding.is_some() {
-        crate::windows::poll_hotkey(BINDING_HOTKEY_ID)
-    } else {
-        0
-    }
-}
-
-/// Placeholder for platforms with no global hotkey to poll.
-#[cfg(not(windows))]
-fn fired_since_last_poll(_binding: &Option<Binding>) -> usize {
-    0
-}
-
-/// Performs the action the armed binding is configured for.
-///
-/// Only the toggle action exists today, and it always names the configured
-/// endpoint explicitly. A disconnected or absent device is an error rather
-/// than a reason to fall back to another microphone: silently retargeting the
-/// user's button would change the meaning of the hardware without telling
-/// them.
-#[cfg(windows)]
-fn run_bound_action(state: &Config) -> std::result::Result<String, String> {
-    let device_id = state
-        .device_id
-        .clone()
-        .ok_or("The binding has no microphone configured.".to_string())?;
-    match service::run_device_action(service::DeviceAction::Toggle, Some(&device_id))? {
-        service::ActionResult::MuteState { muted, .. } => {
-            Ok((if muted { "MUTED" } else { "LIVE" }).to_string())
-        }
-        // Enumeration is not a bound action; a binding toggles one device.
-        service::ActionResult::Devices(_) => {
-            Err("The binding can only toggle a microphone.".into())
-        }
-    }
-}
-
-/// Placeholder for platforms with no audio adapter to act on.
-#[cfg(not(windows))]
-fn run_bound_action(_state: &Config) -> std::result::Result<String, String> {
-    Err("Bound actions require the Windows audio adapter.".into())
 }
 
 /// Renders the configuration together with how its binding actually stands.
@@ -556,7 +506,7 @@ fn commit_live_patch_with_save(
 /// `state` is the live configuration snapshot; `token_configured` reports
 /// whether this instance published a write token. A service without a token
 /// stays read-only, preserving the previous design-preview behaviour.
-fn validate_request(request: &Request<'_>, token_configured: bool) -> Option<Routed> {
+pub(crate) fn validate_request(request: &Request<'_>, token_configured: bool) -> Option<Routed> {
     if !request.host.is_some_and(service::is_allowed_host) {
         return Some((403, "text/plain; charset=utf-8", "Invalid host".into()));
     }
@@ -690,7 +640,7 @@ fn route(
 }
 
 /// Uniform 401 body. Callers must not leak whether the token was close.
-fn unauthorized() -> Routed {
+pub(crate) fn unauthorized() -> Routed {
     (
         401,
         "text/plain; charset=utf-8",
@@ -769,6 +719,14 @@ fn accept_loop(
 ) -> Result<()> {
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut apps = crate::resident_apps::Registry::start(token.is_some());
+    #[cfg(windows)]
+    apps.set_microphone_device(state.device_id.as_deref());
+    let mut audio_tests = crate::audio_tests::AudioTests::new();
+    let mut bindings = crate::bindings::Store::load(service::state_dir()?.join("bindings.json"));
+    let mut runtime = crate::binding_runtime::Runtime::new()?;
+    if token.is_some() {
+        runtime.startup(&bindings, state, binding);
+    }
     let mut feedback = ActionFeedback::default();
     // The indicator is opt-in, resolved from the documented environment
     // variable. When it is off, no overlay thread starts and no window is ever
@@ -778,17 +736,33 @@ fn accept_loop(
     let mut overlay_cursor = OverlayCursor::default();
     loop {
         apps.poll();
+        audio_tests.poll();
         // Deliver any hotkey press that arrived since the last request. A
         // Win32 binding only reaches us through this thread's message queue,
         // so without this drain a registered binding could never fire.
-        for _ in 0..fired_since_last_poll(binding) {
-            let result = run_bound_action(state);
-            if let Err(error) = &result {
-                eprintln!("ERROR: the bound action failed: {error}");
+        if let Some(result) = runtime.poll() {
+            if result["binding_id"] == "legacy-microphone" {
+                let action = if result["state"] == "verified" {
+                    result["results"][0]["muted"]
+                        .as_bool()
+                        .map(|muted| if muted { "MUTED" } else { "LIVE" }.to_string())
+                        .ok_or_else(|| "Microphone readback was not verified".into())
+                } else {
+                    Err(result["error"]
+                        .as_str()
+                        .unwrap_or("Microphone action failed")
+                        .to_string())
+                };
+                feedback.record_for(action, result["device_id"].as_str());
             }
-            // The device is captured with the action, so a later rebinding
-            // cannot relabel this action's verified result with another mic.
-            feedback.record_for(result, state.device_id.as_deref());
+        }
+        #[cfg(windows)]
+        for id in crate::windows::poll_hotkeys() {
+            if id == BINDING_HOTKEY_ID && binding.is_some() {
+                runtime.trigger_legacy(state);
+            } else {
+                runtime.trigger(id, &bindings);
+            }
         }
         // Repaint the indicator from the completed action. This enqueues only
         // when the sequence or target changed, and the overlay coalesces
@@ -819,8 +793,12 @@ fn accept_loop(
         let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
+            || path == "/api/startup"
+            || path.starts_with("/api/bindings")
+            || path.starts_with("/api/audio/tests")
             || path.starts_with("/api/actions/")
             || path.starts_with("/api/apps/actions/")
+            || path.starts_with("/api/apps/routes")
             || matches!(
                 path.as_str(),
                 "/api/apps"
@@ -856,6 +834,25 @@ fn accept_loop(
         let (mut code, mut mime, mut payload) =
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
+            } else if path == "/api/startup" {
+                startup_route(&routed_request, token.is_some(), crate::startup::request)
+            } else if let Some(routed) = crate::audio_tests::route(
+                &routed_request,
+                token.is_some(),
+                &mut audio_tests,
+                principal,
+            ) {
+                routed
+            } else if path.starts_with("/api/bindings") {
+                bindings_route(
+                    &routed_request,
+                    token.is_some(),
+                    &mut bindings,
+                    &mut runtime,
+                    state,
+                    binding,
+                    &mut activation,
+                )
             } else if path.starts_with("/api/apps") {
                 apps_route(&routed_request, token.is_some(), &mut apps, principal)
             } else if bootstrap {
@@ -869,11 +866,33 @@ fn accept_loop(
                 route(&routed_request, state, token.is_some(), &activation)
             };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
-            match commit_live_patch(state, body, binding, &mut activation) {
+            let compatible = service::validate_patch(body)
+                .map_err(str::to_string)
+                .and_then(|patch| {
+                    crate::binding_runtime::Runtime::validate_legacy(
+                        &bindings.bindings,
+                        &state.apply(&patch),
+                    )
+                });
+            let outcome = match compatible {
+                Ok(()) => {
+                    runtime.cancel();
+                    audio_tests.cancel();
+                    #[cfg(windows)]
+                    let _ = crate::windows::poll_hotkeys();
+                    commit_live_patch(state, body, binding, &mut activation)
+                }
+                Err(error) => WriteOutcome::ActivationFailed(error),
+            };
+            #[cfg(windows)]
+            let _ = crate::windows::poll_hotkeys();
+            match outcome {
                 WriteOutcome::Committed(committed) => {
                     // Only now is the change real: the file is on disk, so
                     // update memory and answer with the committed state.
                     *state = committed.clone();
+                    #[cfg(windows)]
+                    apps.set_microphone_device(state.device_id.as_deref());
                     // The save succeeded, so try to make the binding live. The
                     // response reports the activation result rather than a
                     // blanket success: a binding that is stored but could not
@@ -906,6 +925,8 @@ fn accept_loop(
                         "Failed to persist configuration; the stored values are unchanged.".into();
                 }
             }
+            #[cfg(windows)]
+            runtime.legacy_changed(state, binding.is_some());
         }
         if code == 200 && path == "/api/config" {
             payload = feedback.enrich(&payload);
@@ -926,9 +947,347 @@ fn accept_loop(
         // `serve` drop the listener and clear the instance marker, so a later
         // launch does not see a stale record for a port nobody holds.
         if is_shutdown {
+            runtime.cancel();
+            audio_tests.cancel();
             connection.finish()?;
             return Ok(());
         }
+    }
+}
+
+fn startup_route(
+    request: &Request<'_>,
+    enabled: bool,
+    mut handle: impl FnMut(Option<bool>) -> (u16, serde_json::Value),
+) -> Routed {
+    if let Some(rejection) = validate_request(request, enabled) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    let reply = |code, value: serde_json::Value| (code, "application/json", value.to_string());
+    if request.path != "/api/startup" {
+        return reply(404, serde_json::json!({"error":"Unknown startup route"}));
+    }
+    let requested = match request.method {
+        Method::Get => None,
+        Method::Post => match crate::startup::parse_enabled(request.body) {
+            Ok(enabled) => Some(enabled),
+            Err(error) => return reply(400, serde_json::json!({"error":error})),
+        },
+        _ => {
+            return reply(
+                405,
+                serde_json::json!({"error":"Unsupported startup method"}),
+            )
+        }
+    };
+    let (code, value) = handle(requested);
+    reply(code, value)
+}
+
+#[cfg(test)]
+mod startup_api_tests {
+    use super::*;
+    #[test]
+    fn startup_api_keeps_auth_origin_preview_and_strict_body_guards_before_backend() {
+        let host = format!("127.0.0.1:{}", service::port());
+        let mut request = Request {
+            method: Method::Get,
+            path: "/api/startup",
+            host: Some(&host),
+            origin: None,
+            authorized: false,
+            body: "",
+            body_rejected: false,
+        };
+        let never = |_: Option<bool>| -> (u16, serde_json::Value) {
+            panic!("Rejected startup request reached the native adapter")
+        };
+        assert_eq!(startup_route(&request, true, never).0, 401);
+        request.authorized = true;
+        request.host = Some("attacker.invalid");
+        assert_eq!(startup_route(&request, true, never).0, 403);
+        request.host = Some(&host);
+        request.origin = Some("https://attacker.invalid");
+        assert_eq!(startup_route(&request, true, never).0, 403);
+        request.origin = None;
+        assert_eq!(
+            startup_route(&request, true, |requested| {
+                assert_eq!(requested, None);
+                (200, serde_json::json!({"enabled":false}))
+            })
+            .0,
+            200
+        );
+        request.method = Method::Post;
+        request.body = r#"{"enabled":true}"#;
+        assert_eq!(startup_route(&request, false, never).0, 405);
+        request.body_rejected = true;
+        assert_eq!(startup_route(&request, true, never).0, 413);
+        request.body_rejected = false;
+        for body in [
+            "{}",
+            r#"{"enabled":true,"path":"arbitrary.exe"}"#,
+            r#"{"enabled":false,"enabled":true}"#,
+            r#"{"enabled":null}"#,
+        ] {
+            request.body = body;
+            assert_eq!(startup_route(&request, true, never).0, 400);
+        }
+        request.body = r#"{"enabled":false}"#;
+        assert_eq!(
+            startup_route(&request, true, |requested| {
+                assert_eq!(requested, Some(false));
+                (200, serde_json::json!({"enabled":false}))
+            })
+            .0,
+            200
+        );
+    }
+}
+
+fn bindings_route(
+    request: &Request<'_>,
+    enabled: bool,
+    store: &mut crate::bindings::Store,
+    runtime: &mut crate::binding_runtime::Runtime,
+    legacy: &Config,
+    slot: &mut Option<Binding>,
+    activation: &mut Activation,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, enabled) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    let reply = |status, value: serde_json::Value| (status, "application/json", value.to_string());
+    match (request.method, request.path) {
+        (Method::Get, "/api/bindings") => reply(200, runtime.view(store)),
+        (Method::Get, "/api/bindings/capabilities") => reply(
+            200,
+            serde_json::json!({
+                "platform":std::env::consts::OS,"native_bindings":cfg!(windows),
+                "max_bindings":8,"max_actions":8,"max_delay_ms":2000,"max_total_delay_ms":10000,
+                "actions":["microphone","playback","keys"],"operations":["mute","unmute","toggle"],
+                "key_catalog":crate::hotkey::catalog(),"function_keys":"F1..F24; F12 is reserved as a trigger",
+                "modifiers":["Ctrl","Alt","Shift","Win"],"keyboard_result":"dispatched_unverified",
+                "application_voice_start_stop":"not_implemented","application_input_routing":"not_implemented"
+            }),
+        ),
+        (Method::Post, "/api/bindings") => {
+            let candidate = match store.candidate(request.body) {
+                Ok(candidate) => candidate,
+                Err((status, error)) => return reply(status, serde_json::json!({"error":error})),
+            };
+            if let Err(error) = runtime.save(store, candidate, legacy, slot) {
+                if legacy.is_bindable() && slot.is_none() {
+                    *activation = Activation::Failed(
+                        "Legacy hotkey could not be restored; refresh and save again".into(),
+                    );
+                }
+                return reply(
+                    409,
+                    serde_json::json!({"error":error,"current":runtime.view(store)}),
+                );
+            }
+            if slot.is_some() {
+                *activation = Activation::Armed;
+            }
+            reply(200, runtime.view(store))
+        }
+        (Method::Post, "/api/bindings/cancel") => {
+            if !crate::bindings::strict_json(request.body)
+                .is_ok_and(|value| value.as_object().is_some_and(|fields| fields.is_empty()))
+            {
+                return reply(
+                    400,
+                    serde_json::json!({"error":"Cancel accepts an empty JSON object"}),
+                );
+            }
+            runtime.cancel();
+            reply(200, runtime.view(store))
+        }
+        (Method::Get | Method::Post, _) => {
+            reply(404, serde_json::json!({"error":"Unknown binding route"}))
+        }
+        _ => reply(
+            405,
+            serde_json::json!({"error":"Unsupported binding method"}),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod binding_api_tests {
+    use super::*;
+    #[test]
+    fn binding_reads_writes_and_cancellation_enforce_auth_origin_and_revision() {
+        let directory = std::env::temp_dir().join(format!(
+            "vibdock-binding-api-{}",
+            service::generate_token().unwrap()
+        ));
+        let mut store = crate::bindings::Store::load(directory.join("bindings.json"));
+        let mut runtime = crate::binding_runtime::Runtime::new().unwrap();
+        let mut slot = None;
+        let legacy = Config::default();
+        let mut activation = Activation::Idle;
+        let host = format!("127.0.0.1:{}", service::port());
+        let mut request = Request {
+            method: Method::Get,
+            path: "/api/bindings",
+            host: Some(&host),
+            origin: None,
+            authorized: false,
+            body: "{}",
+            body_rejected: false,
+        };
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            401
+        );
+        request.authorized = true;
+        request.origin = Some("https://attacker.invalid");
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            403
+        );
+        request.origin = None;
+        request.body_rejected = true;
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            413
+        );
+        request.body_rejected = false;
+        request.method = Method::Post;
+        request.body = "{\"revision\":0,\"bindings\":[]}";
+        assert_eq!(
+            bindings_route(
+                &request,
+                false,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            405
+        );
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            200
+        );
+        assert_eq!(store.revision, 1);
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            409
+        );
+        request.body = "{\"revision\":1,\"revision\":1,\"bindings\":[]}";
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            400
+        );
+        request.path = "/api/bindings/cancel";
+        request.body = "{\"shell\":\"forbidden\"}";
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            400
+        );
+        request.body = "{}";
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            200
+        );
+        request.path = "/api/bindings/execute";
+        assert_eq!(
+            bindings_route(
+                &request,
+                true,
+                &mut store,
+                &mut runtime,
+                &legacy,
+                &mut slot,
+                &mut activation
+            )
+            .0,
+            404
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
 
@@ -1764,6 +2123,16 @@ fn apps_route(
     }
     if !request.authorized {
         return unauthorized();
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Some((code, value)) = apps.route(
+        request.method == Method::Post,
+        request.method == Method::Get,
+        request.path,
+        principal.unwrap_or(""),
+        request.body,
+    ) {
+        return (code, "application/json", value.to_string());
     }
     if request.path.starts_with("/api/apps/actions/") {
         #[cfg(not(target_os = "macos"))]

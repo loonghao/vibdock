@@ -9,6 +9,12 @@ use std::{collections::BTreeSet, ffi::c_void, ptr};
 
 use crate::resident_action_protocol::{self as action, ActionTarget, ExactSessionAction};
 use serde_json::{json, Value};
+#[path = "app_route_windows.rs"]
+mod app_route_windows;
+#[path = "audio_probe_windows.rs"]
+mod audio_probe_windows;
+#[path = "software_catalog_windows.rs"]
+mod software_catalog_windows;
 use windows::{
     core::{Interface, PCWSTR, PWSTR},
     Win32::{
@@ -154,8 +160,41 @@ fn unavailable(error: &str) -> Value {
 }
 
 /// Only call in the owned, short-lived helper process, never an HTTP/UI thread.
-pub(crate) fn snapshot() -> Value {
-    unsafe { observe_snapshot() }
+pub(crate) fn snapshot(device_id: Option<&str>) -> Value {
+    let microphone = audio_probe_windows::observe(device_id, false);
+    let catalog = software_catalog_windows::snapshot();
+    let mut value = unsafe { observe_snapshot() };
+    value["microphone"] = microphone;
+    value["catalog"] = catalog;
+    value["routing_capabilities"] = app_route_windows::capability();
+    value["routing_devices"] = app_route_windows::devices();
+    if value.to_string().len() > MAX_OUTPUT {
+        for section in ["catalog", "sessions"] {
+            let rows = if section == "catalog" {
+                value[section]["applications"].as_array_mut()
+            } else {
+                value[section].as_array_mut()
+            };
+            if let Some(rows) = rows {
+                for row in rows {
+                    row["icon_b64"] = Value::Null;
+                }
+            }
+        }
+    }
+    value
+}
+
+pub(crate) fn microphone_test(device_id: &str) -> Value {
+    audio_probe_windows::observe(Some(device_id), true)
+}
+
+pub(crate) fn microphone_action(device_id: &str, operation: &str) -> Value {
+    audio_probe_windows::action(device_id, operation)
+}
+
+pub(crate) fn preferred_route(job: &crate::resident_apps::app_route::Job) -> Value {
+    app_route_windows::execute(job)
 }
 
 /// Only an owned, contained helper may call this, with a server-captured job.

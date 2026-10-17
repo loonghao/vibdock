@@ -13,13 +13,19 @@ const macOS = process.platform === 'darwin';
 const softwareFile = macOS ? 'apps-macos.json' : 'apps.json';
 const redact=[];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function assertFits(page,view,output) {
+  const layout=await page.evaluate(()=>({width:innerWidth,documentWidth:document.documentElement.scrollWidth,
+    offenders:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>innerWidth+1).slice(0,12).map(element=>({tag:element.tagName,id:element.id,classes:element.className,right:Math.round(element.getBoundingClientRect().right),text:element.textContent.slice(0,80),minWidth:getComputedStyle(element).minWidth,grid:getComputedStyle(element).gridTemplateColumns,overflowWrap:getComputedStyle(element).overflowWrap}))}));
+  if(layout.documentWidth>layout.width+1)await page.screenshot({path:path.join(output,`overflow-${view}-${layout.width}.png`),fullPage:true});
+  assert(layout.documentWidth<=layout.width+1,`${view} overflows mobile width: ${JSON.stringify(layout)}`);
+}
 async function unusedPort() {
   const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
 }
 (async () => {
   fs.mkdirSync(output, {recursive:true});
-  for(const name of ['report.json','homepage-1280.png','homepage-390.png','homepage-320.png','original-logo-light-dark.png','apps-1280.png','apps-390.png','apps-320.png'])fs.rmSync(path.join(output,name),{force:true});
+  for(const name of ['report.json','failure.json','failure.png','homepage-1280.png','homepage-390.png','homepage-320.png','original-logo-light-dark.png','apps-1280.png','apps-390.png','apps-320.png'])fs.rmSync(path.join(output,name),{force:true});
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibdock-web-'));
   const port = await unusedPort(); const origin = `http://127.0.0.1:${port}`;
   const env = {...process.env, LOCALAPPDATA:root, HOME:root, VIBDOCK_PORT:String(port), VIBDOCK_OVERLAY:'0'};
@@ -66,13 +72,14 @@ async function unusedPort() {
       const logo = page.getByRole('img',{name:'VibDock 标志'}); await logo.waitFor();
       assert(await logo.evaluate(img=>img.complete&&img.naturalWidth===512),'original SVG did not render');
       assert.equal((await logo.getAttribute('src')).split(',')[1],fs.readFileSync('assets/brand/vibdock-symbol-light.svg').toString('base64'),'homepage logo differs from supplied SVG');
-      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'page overflows mobile width');
+      await assertFits(page,'homepage',output);
       const box=await logo.boundingBox();assert(box.width>=32&&box.height>=32);
       assert.equal(await page.evaluate(()=>localStorage.getItem('vibdock.token')),null);
       assert.deepEqual(external,[],'page loaded external resources'); assert.deepEqual(errors,[]);
       await page.screenshot({path:path.join(output,`homepage-${viewport.width}.png`),fullPage:true});
       await page.locator('button[data-view=apps]').click();
       await page.waitForFunction(()=>!document.querySelector('#appReadStatus').textContent.includes('授权后读取'));
+      if(macOS)await page.locator('#appChoices button').first().waitFor({timeout:15000});
       const apps=await page.evaluate(async()=>{const response=await api('/api/apps');return response.json()});
       assert.equal(apps.actions_enabled,false,'read-only software view enabled an action');
       if(macOS){
@@ -88,7 +95,7 @@ async function unusedPort() {
       assert(!JSON.stringify(apps).includes('executable_path'),'software view leaked executable locations');
       assert(!JSON.stringify(apps).includes('bundle_path'),'software view leaked application bundle locations');
       assert((await page.locator('#appReadStatus').innerText()).length>0);
-      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'software view overflows mobile width');
+      await assertFits(page,'software',output);
       await page.screenshot({path:path.join(output,`apps-${viewport.width}.png`),fullPage:true});
       results.push({viewport,logo:box,externalRequests:0,javascriptErrors:0,mode:await page.locator('#banner').innerText()});
       await page.close();
@@ -103,7 +110,13 @@ async function unusedPort() {
       // Pin a genuinely enumerated current-user app through the same browser
       // button as a user. Never supply a path or execute the selected program.
       await settings.locator('#appChoices button').first().waitFor({timeout:15000});
-      await settings.locator('#appChoices button').first().click();
+      const [pinResponse]=await Promise.all([
+        settings.waitForResponse(response=>response.url()===`${origin}/api/apps/pin`&&response.request().method()==='POST'),
+        settings.locator('#appChoices button').first().click(),
+      ]);
+      const pinResult=await pinResponse.json();
+      assert.equal(pinResponse.status(),200,`Mac application pin rejected: ${pinResult.error||'unknown error'}`);
+      assert.equal(pinResult.entries?.length,2,'Mac application pin did not return both saved entries');
       await settings.waitForFunction(()=>document.querySelectorAll('#pinnedApps button').length===2);
       const savedBeforeRestart=fs.readFileSync(path.join(root,'VibDock',softwareFile));
       assert.equal(JSON.parse(savedBeforeRestart).entries.length,2,'live Mac pin did not persist');
@@ -148,6 +161,28 @@ async function unusedPort() {
     await page.screenshot({path:path.join(output,'original-logo-light-dark.png')});
     fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({sourceRevision:process.env.VIBDOCK_SOURCE_REVISION||process.env.GITHUB_SHA||null,binarySHA256:crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),browser:await browser.version(),service:'real isolated process',mockedRoutes:false,oneUseHandoff:true,credentialStorage:false,idleShortcutSavedAndReopened:true,softwareReadOnlyAndUnsupportedHonest:!macOS,macOSPresenceOnly:macOS,liveMacPinPersistedAcrossRestart,softwareStore:softwareFile,savedSoftwareFixtureReadRemovedAndReopened:true,results,exclusions:['native Windows launcher','actual audio/hardware','macOS menu bar']},null,2));
     console.log(`PASS: real service homepage at 1280/390/320px; original logo bytes, alt text, no external requests or JS errors. Browser ${await browser.version()}`);
+  } catch(error) {
+    const failure={sourceRevision:process.env.VIBDOCK_SOURCE_REVISION||process.env.GITHUB_SHA||null,error:String(error.stack||error)};
+    try {
+      const pages=browser?.contexts().flatMap(context=>context.pages()).filter(page=>!page.isClosed())||[];
+      const page=pages.at(-1);
+      if(page){
+        failure.view=await page.evaluate(()=>({
+          connection:document.querySelector('#conn')?.textContent,
+          appStatus:document.querySelector('#appReadStatus')?.textContent,
+          pinnedButtons:document.querySelectorAll('#pinnedApps button').length,
+          choiceButtons:document.querySelectorAll('#appChoices button').length,
+          disabledChoices:document.querySelectorAll('#appChoices button:disabled').length,
+          revision:typeof appRevision==='number'?appRevision:null,
+          busy:typeof appsBusy==='boolean'?appsBusy:null,
+          reading:typeof appsReading==='boolean'?appsReading:null,
+          hidden:document.hidden,
+        }));
+        await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});
+      }
+    }catch{}
+    fs.writeFileSync(path.join(output,'failure.json'),redact.reduce((text,secret)=>text.split(secret).join('[redacted]'),JSON.stringify(failure,null,2)));
+    throw error;
   } finally {
     if(browser)await browser.close();
     const stopped=spawn(binary,['service-stop'],{env,stdio:'ignore'});

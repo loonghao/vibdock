@@ -122,6 +122,7 @@ try {
     [void][VibDockNative]::GetWindowThreadProcessId($window, [ref]$windowPid)
     if ($windowPid -ne $first.Id) { throw 'Tray owner belongs to a different launcher; refusing to control it' }
     if ([VibDockNative]::IsWindowVisible($window)) { throw 'Obsolete resident panel is still visible' }
+    if ([VibDockNative]::FindWindow('VibDockSoftwareStrip', $null) -ne [IntPtr]::Zero) { throw 'Taskbar-adjacent floating strip is still present' }
     foreach ($id in @(10, 11, 12, 13, 101, 105, 200, 201)) {
         if ([VibDockNative]::GetDlgItem($window, $id) -ne [IntPtr]::Zero) { throw 'Obsolete resident panel controls still exist' }
     }
@@ -166,7 +167,7 @@ try {
         [void][VibDockNative]::GetMenuString($menu, $i, $label, $label.Capacity, 0x400)
         $labels += $label.ToString()
     }
-    if (@($labels).Count -ne 3 -or -not ($labels -contains 'Settings…') -or -not ($labels -contains 'Service status') -or -not ($labels -contains 'Exit VibDock')) { throw 'Context menu must contain only Settings, Service status, and Exit' }
+    if (@($labels).Count -ne 4 -or -not ($labels -contains 'Settings…') -or -not ($labels -contains 'Service status') -or -not ($labels -contains 'Exit VibDock') -or @($labels | Where-Object { $_ -like '开机自启*' }).Count -ne 1) { throw 'Context menu must contain Settings, Service status, one explicit startup toggle, and Exit' }
     Save-Window $menuWindow 'resident-context-menu.png'
     [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CANCELMODE
     Start-Sleep -Milliseconds 150
@@ -192,8 +193,11 @@ try {
     $second = Start-Entry 'vibdock-launcher.exe'
     if (-not $second.WaitForExit(15000) -or $second.ExitCode -ne 0) { throw 'Second launcher did not hand over to the singleton' }
     if ($first.HasExited -or [IO.File]::ReadAllText($recordPath) -cne $initialRecord) { throw 'Repeated launch replaced the resident service' }
-    # Primary click requests authenticated Web Settings, never a native panel.
-    [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]1, [IntPtr]0x0202) # WM_LBUTTONUP
+    # Rapid repeated Settings requests must coalesce without a modal busy box
+    # blocking the subsequent Exit command.
+    foreach ($requestIndex in 1..3) {
+        [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]1, [IntPtr]0x0202) # WM_LBUTTONUP
+    }
     Start-Sleep -Milliseconds 500
     if ([VibDockNative]::IsWindowVisible($window)) { throw 'Launch or primary tray click revealed the obsolete panel' }
     [void][VibDockNative]::PostMessage($window, 0x0111, [IntPtr]103, [IntPtr]::Zero) # actual Exit command

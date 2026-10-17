@@ -53,6 +53,8 @@ class PackageTests(unittest.TestCase):
         shutil.copytree(SOURCE / "assets", self.root / "assets")
         (self.root / "docs").mkdir()
         (self.root / "docs/note.md").write_text("Explicit offline packaging fixture")
+        (self.root / "skills/vibdock-control").mkdir(parents=True)
+        (self.root / "skills/vibdock-control/SKILL.md").write_bytes(b"Fixture typed control instructions")
         self.binary = self.root / "bin"
         self.binary.mkdir()
         for name in ("vibdock", "vibdock-launcher"):
@@ -72,8 +74,9 @@ class PackageTests(unittest.TestCase):
             names = archive.namelist()
             prefix = "VibDock.app/Contents/"
             for name in ("MacOS/vibdock", "MacOS/vibdock-launcher", "Resources/vibdock.icns",
-                         "Resources/LICENSE", "Resources/docs/note.md"):
+                         "Resources/LICENSE", "Resources/docs/note.md", "Resources/skills/vibdock-control/SKILL.md"):
                 self.assertIn(prefix + name, names)
+            self.assertEqual(archive.read(prefix + "Resources/skills/vibdock-control/SKILL.md"), b"Fixture typed control instructions")
             metadata = plistlib.loads(archive.read(prefix + "Info.plist"))
             self.assertEqual(metadata["CFBundleExecutable"], "vibdock-launcher")
             self.assertEqual(metadata["CFBundleIdentifier"], "com.loonghao.vibdock")
@@ -98,6 +101,17 @@ class PackageTests(unittest.TestCase):
         (self.binary / "vibdock-launcher").unlink()
         with self.assertRaises(ValueError):
             self.package()
+
+    def test_missing_or_empty_control_skill_rejected_before_output(self):
+        skill = self.root / "skills/vibdock-control/SKILL.md"
+        skill.write_bytes(b"")
+        with self.assertRaisesRegex(ValueError, "control skill"):
+            self.package()
+        self.assertFalse((self.root / "out").exists())
+        skill.unlink()
+        with self.assertRaisesRegex(ValueError, "control skill"):
+            self.package()
+        self.assertFalse((self.root / "out").exists())
 
     def test_changed_original_art_rejected(self):
         (self.root / "assets/brand/vibdock.icns").write_bytes(b"changed")
@@ -169,9 +183,9 @@ class PackageTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "Windows symlink privilege is not requested")
     def test_top_level_symlinks_are_rejected(self):
-        for name in ("docs", "README.md", "assets"):
+        for name in ("docs", "README.md", "assets", "skills", "skills/vibdock-control", "skills/vibdock-control/SKILL.md"):
             original = self.root / name
-            outside = self.root / (name.replace(".", "_") + "-outside")
+            outside = self.root / (name.replace(".", "_").replace("/", "_") + "-outside")
             original.rename(outside)
             original.symlink_to(outside, target_is_directory=outside.is_dir())
             with self.assertRaises(ValueError):

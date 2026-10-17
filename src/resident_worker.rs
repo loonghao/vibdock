@@ -1,5 +1,6 @@
 //! Own exactly one disposable native helper; no in-service COM or reader thread.
 use crate::resident_action_protocol as action;
+use crate::resident_apps::audio_probe;
 use serde_json::{json, Value};
 use std::{
     ffi::c_void,
@@ -152,7 +153,156 @@ fn failure(message: &str) -> Value {
     json!({"available":false,"complete":false,"endpoints":[],"sessions":[],"skipped":0,"error":message})
 }
 
-pub(crate) fn collect(executable: &Path, stop: &AtomicBool) -> (Value, bool) {
+pub(crate) fn collect(
+    executable: &Path,
+    stop: &AtomicBool,
+    device_id: Option<&str>,
+) -> (Value, bool) {
+    let payload = match audio_probe::encode_request(device_id, false) {
+        Ok(payload) => payload,
+        Err(error) => return (failure(error), true),
+    };
+    let (mut value, cleaned) = collect_request(executable, stop, &payload);
+    if !value.is_object() {
+        value = failure("Native observation returned an invalid object");
+    }
+    if value.get("microphone").is_none() {
+        value["microphone"] = audio_probe::unknown(
+            device_id,
+            value["error"]
+                .as_str()
+                .unwrap_or("Microphone observation is unavailable"),
+        );
+    }
+    (value, cleaned)
+}
+
+pub(crate) fn probe_microphone(
+    executable: &Path,
+    stop: &AtomicBool,
+    device_id: &str,
+) -> (Value, bool) {
+    let failed = |error: &str| {
+        let mut value = audio_probe::unknown(Some(device_id), error);
+        for (key, field) in [
+            ("duration_ms", json!(1500)),
+            ("elapsed_ms", json!(0)),
+            ("sample_count", json!(0)),
+            ("captured_frames", json!(0)),
+            ("signal_detected", Value::Null),
+        ] {
+            value[key] = field;
+        }
+        value
+    };
+    let payload = match audio_probe::encode_request(Some(device_id), true) {
+        Ok(payload) => payload,
+        Err(error) => return (failed(error), true),
+    };
+    let (value, cleaned) = collect_request(executable, stop, &payload);
+    if audio_probe::valid_test(&value, device_id) {
+        (value, cleaned)
+    } else {
+        (
+            failed(
+                value["error"]
+                    .as_str()
+                    .unwrap_or("Microphone test output is invalid or changed"),
+            ),
+            cleaned,
+        )
+    }
+}
+
+pub(crate) fn microphone_action(
+    executable: &Path,
+    stop: &AtomicBool,
+    device_id: &str,
+    operation: &str,
+) -> (Value, bool) {
+    let payload = match audio_probe::encode_action(device_id, operation) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return (
+                audio_probe::action_failure(device_id, operation, false, error),
+                true,
+            )
+        }
+    };
+    let mut activated = false;
+    let (value, cleaned) = contained_request(executable, stop, &payload, &mut activated);
+    if audio_probe::valid_action(&value, device_id, operation) {
+        (value, cleaned)
+    } else {
+        (
+            audio_probe::action_failure(
+                device_id,
+                operation,
+                activated,
+                value["error"]
+                    .as_str()
+                    .unwrap_or("microphone_action_output_invalid"),
+            ),
+            cleaned,
+        )
+    }
+}
+
+pub(crate) fn preferred_route(
+    executable: &Path,
+    stop: &AtomicBool,
+    value: &Value,
+    revision: &std::sync::atomic::AtomicU64,
+    expected: u64,
+) -> (Value, bool) {
+    let payload = value.to_string().into_bytes();
+    let job = match crate::resident_apps::app_route::parse_job(&payload) {
+        Ok(job) => job,
+        Err(error) => return (json!({"error":error}), true),
+    };
+    let mut activated = false;
+    let (value, cleaned) = guarded_request(executable, &payload, &mut activated, || {
+        stop.load(Ordering::Relaxed) || revision.load(Ordering::Acquire) != expected
+    });
+    if crate::resident_apps::app_route::valid_result(&value, &job) {
+        (value, cleaned)
+    } else {
+        (
+            crate::resident_apps::app_route::failure(
+                &job,
+                activated,
+                value["error"].as_str().unwrap_or("route_result_invalid"),
+            ),
+            cleaned,
+        )
+    }
+}
+
+fn collect_request(executable: &Path, stop: &AtomicBool, payload: &[u8]) -> (Value, bool) {
+    contained_request(executable, stop, payload, &mut false)
+}
+
+fn contained_request(
+    executable: &Path,
+    stop: &AtomicBool,
+    payload: &[u8],
+    activated: &mut bool,
+) -> (Value, bool) {
+    guarded_request(executable, payload, activated, || {
+        stop.load(Ordering::Relaxed)
+    })
+}
+
+fn guarded_request(
+    executable: &Path,
+    payload: &[u8],
+    activated: &mut bool,
+    cancelled: impl Fn() -> bool,
+) -> (Value, bool) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    if cancelled() {
+        return (failure("Native observation cancelled"), true);
+    }
     let job = match Job::new() {
         Ok(value) => value,
         Err(_) => return (failure("Native helper containment is unavailable"), true),
@@ -165,9 +315,13 @@ pub(crate) fn collect(executable: &Path, stop: &AtomicBool) -> (Value, bool) {
         Ok(file) => file,
         Err(_) => return (failure("Native helper output storage is unavailable"), true),
     };
+    let Input { writer, reader } = match Input::new() {
+        Ok(input) => input,
+        Err(_) => return (failure("Native helper input is unavailable"), true),
+    };
     let mut child = match Command::new(executable)
         .arg("_resident_snapshot")
-        .stdin(Stdio::piped())
+        .stdin(Stdio::from(reader))
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::null())
         .creation_flags(0x08000000)
@@ -180,19 +334,18 @@ pub(crate) fn collect(executable: &Path, stop: &AtomicBool) -> (Value, bool) {
     // initialize COM or scan software images before containment is established.
     let assigned =
         unsafe { AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle())).is_ok() };
-    let activated = assigned
-        && child
-            .stdin
-            .take()
-            .is_some_and(|mut input| input.write_all(&[0x56]).is_ok());
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut input = Some(writer);
+    let mut bytes = Vec::with_capacity(payload.len() + 1);
+    bytes.push(0x56);
+    bytes.extend_from_slice(payload);
+    let mut sent = 0;
     let mut reason = "Native observation helper failed";
-    let success = if !activated {
+    let success = if !assigned {
         reason = "Native helper containment or activation failed";
         false
     } else {
         loop {
-            if stop.load(Ordering::Relaxed) {
+            if cancelled() {
                 reason = "Native observation cancelled";
                 break false;
             }
@@ -208,8 +361,24 @@ pub(crate) fn collect(executable: &Path, stop: &AtomicBool) -> (Value, bool) {
                 reason = "Native observation exceeded its output budget";
                 break false;
             }
+            if let Some(writer) = input.as_mut() {
+                // Once any gate/payload write is attempted the parent cannot
+                // prove that a mutating helper did not reach its native write.
+                *activated = true;
+                match writer.write(&bytes[sent..]) {
+                    Ok(count) => sent += count,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(_) => {
+                        reason = "Native helper activation failed";
+                        break false;
+                    }
+                }
+                if sent == bytes.len() {
+                    drop(input.take());
+                }
+            }
             match child.try_wait() {
-                Ok(Some(status)) => break status.success(),
+                Ok(Some(status)) => break status.success() && sent == bytes.len(),
                 Ok(None) => {}
                 Err(_) => break false,
             }
@@ -221,7 +390,7 @@ pub(crate) fn collect(executable: &Path, stop: &AtomicBool) -> (Value, bool) {
     if !success {
         let _ = child.kill();
     }
-    drop(child.stdin.take());
+    drop(input);
     let cleanup_deadline = Instant::now() + Duration::from_millis(400);
     let cleaned = loop {
         match child.try_wait() {
@@ -417,6 +586,58 @@ pub(crate) fn execute(executable: &Path, stop: &AtomicBool, value: &Value) -> (V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_route_revision_never_activates_a_helper() {
+        let value = json!({"kind":"preferred_endpoint_route","operation_id":"a".repeat(64),"target":{"process_id":42,"process_started":"123","executable_path":"C:\\Fixture\\App.exe"},"flow":"capture","device_id":"chosen","roles":[0,1,2]});
+        let (result, cleaned) = preferred_route(
+            Path::new("must-never-launch.exe"),
+            &AtomicBool::new(false),
+            &value,
+            &std::sync::atomic::AtomicU64::new(2),
+            1,
+        );
+        assert!(cleaned);
+        assert_eq!(result["state"], "rejected_before_write");
+        assert_eq!(result["write_attempted"], false);
+        assert!(crate::resident_apps::app_route::valid_result(
+            &result,
+            &crate::resident_apps::app_route::parse_job(value.to_string().as_bytes()).unwrap()
+        ));
+    }
+
+    #[test]
+    fn cancelled_microphone_action_is_rejected_before_activation() {
+        let (value, cleaned) = microphone_action(
+            Path::new("must-never-launch.exe"),
+            &AtomicBool::new(true),
+            "explicit-mic",
+            "toggle",
+        );
+        assert!(cleaned);
+        assert_eq!(value["state"], "rejected_before_write");
+        assert_eq!(value["write_attempted"], false);
+        assert!(audio_probe::valid_action(&value, "explicit-mic", "toggle"));
+    }
+
+    #[test]
+    fn cancelled_microphone_probe_never_spawns_or_selects_another_endpoint() {
+        let (value, cleaned) = probe_microphone(
+            Path::new("nonexistent-helper-must-never-launch.exe"),
+            &AtomicBool::new(true),
+            "explicit-fixture-microphone",
+        );
+        assert!(cleaned);
+        assert_eq!(value["device_id"], "explicit-fixture-microphone");
+        assert_eq!(value["state"], "unknown");
+        assert_eq!(value["sample_count"], 0);
+        assert_eq!(value["peak"], Value::Null);
+        assert_eq!(value["signal_detected"], Value::Null);
+        assert!(audio_probe::valid_test(
+            &value,
+            "explicit-fixture-microphone"
+        ));
+    }
 
     #[test]
     #[ignore = "requires a freshly built owned CLI and an isolated LOCALAPPDATA; CI runs it explicitly"]

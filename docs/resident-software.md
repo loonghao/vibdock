@@ -11,13 +11,14 @@ right-click a Windows software icon to choose one explicitly identified playback
 session (including its PID), then mute or unmute that session. Offline/stale
 entries disable playback controls. Settings/status/exit remain available.
 
-Windows also shows up to eight software logos in a passive strip just above the
-primary work area bottom edge. `×`, `▶`, `II`, `–` and `?` describe playback only;
-voice activity remains unknown. Native buttons expose the app and state to
-accessibility tools and tooltips. Clicking opens Settings; right-clicking retains
-the exact software/session menu. An unreadable or too-small work area hides the
-strip. The settings list uses the same logo-and-badge vocabulary. This source
-change has unit coverage; native pointer, DPI and focus acceptance is pending.
+Windows shows the saved software logos in its native notification area, with
+shape and color badges for playback state. The primary VibDock icon separately
+describes the configured microphone. Tooltip text names the target and state;
+clicking opens Settings and right-clicking retains the exact software/session
+menu. Placement and overflow follow Windows preferences. No separate floating
+strip covers application content. Voice activity remains unknown. The settings
+list uses the same logo-and-badge vocabulary; real pointer, DPI and state-change
+acceptance remains separate from unit and hosted native checks.
 
 ## State and action contract
 

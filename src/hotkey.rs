@@ -12,11 +12,7 @@ use std::fmt;
 
 /// The modifiers a binding may require.
 ///
-/// Only the four combinations Windows can express in a `RegisterHotKey` mask
-/// are represented. There is deliberately no `Win` variant: `MOD_WIN` is
-/// reserved for OS shell bindings that never reach an application window, so
-/// accepting it would let a user record a hotkey the platform silently refuses
-/// and then believe it is armed.
+/// Windows registrations remain subject to actual OS acceptance, including Win chords.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Modifier {
     /// `Ctrl`.
@@ -25,6 +21,8 @@ pub enum Modifier {
     Alt,
     /// `Shift`.
     Shift,
+    /// Windows logo modifier; registration may be reserved by the OS.
+    Win,
 }
 
 impl Modifier {
@@ -34,6 +32,7 @@ impl Modifier {
             Modifier::Control => "Ctrl",
             Modifier::Alt => "Alt",
             Modifier::Shift => "Shift",
+            Modifier::Win => "Win",
         }
     }
 
@@ -46,6 +45,7 @@ impl Modifier {
             "ctrl" | "control" => Some(Modifier::Control),
             "alt" | "menu" | "option" => Some(Modifier::Alt),
             "shift" => Some(Modifier::Shift),
+            "win" | "windows" | "meta" | "os" => Some(Modifier::Win),
             _ => None,
         }
     }
@@ -53,10 +53,8 @@ impl Modifier {
 
 /// The key half of a binding: a named non-printable key or one character.
 ///
-/// Printable keys are carried as their uppercase ASCII character, which is also
-/// their Windows virtual-key code, so `A`..`Z`, `0`..`9` and the punctuation
-/// that shares a code with its unshifted digit row all round-trip without a
-/// lookup table.
+/// Printable keys retain their character; the platform resolves that character
+/// against the captured keyboard layout before registration or dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
     /// A function key, `F1` through `F24`.
@@ -91,6 +89,87 @@ pub enum Key {
     Tab,
     /// `Backspace`.
     Backspace,
+    /// A canonical member of [`NAMED_KEYS`]; platform adapters reject unknown names.
+    Named(&'static str),
+}
+
+/// Closed additional physical-key catalog, independent of platform registration support.
+pub const NAMED_KEYS: &[&str] = &[
+    "Numpad0",
+    "Numpad1",
+    "Numpad2",
+    "Numpad3",
+    "Numpad4",
+    "Numpad5",
+    "Numpad6",
+    "Numpad7",
+    "Numpad8",
+    "Numpad9",
+    "NumpadAdd",
+    "NumpadSubtract",
+    "NumpadMultiply",
+    "NumpadDivide",
+    "NumpadDecimal",
+    "NumpadSeparator",
+    "NumpadEnter",
+    "CapsLock",
+    "NumLock",
+    "ScrollLock",
+    "PrintScreen",
+    "Pause",
+    "Apps",
+    "VolumeMute",
+    "VolumeDown",
+    "VolumeUp",
+    "MediaNextTrack",
+    "MediaPreviousTrack",
+    "MediaStop",
+    "MediaPlayPause",
+    "BrowserBack",
+    "BrowserForward",
+    "BrowserRefresh",
+    "BrowserStop",
+    "BrowserSearch",
+    "BrowserFavorites",
+    "BrowserHome",
+    "LaunchMail",
+    "LaunchMediaPlayer",
+    "LaunchApp1",
+    "LaunchApp2",
+    "Sleep",
+];
+
+/// Canonical common key choices; OS/layout acceptance is checked separately.
+pub(crate) fn catalog() -> Vec<String> {
+    let mut keys = [
+        "Escape",
+        "Enter",
+        "Tab",
+        "Space",
+        "Plus",
+        "Backspace",
+        "Delete",
+        "Insert",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "Up",
+        "Down",
+        "Left",
+        "Right",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    keys.extend((1..=24).map(|number| format!("F{number}")));
+    keys.extend(
+        ('A'..='Z')
+            .chain('0'..='9')
+            .map(|character| character.to_string()),
+    );
+    keys.extend(NAMED_KEYS.iter().map(|name| name.to_string()));
+    keys
 }
 
 impl Key {
@@ -129,17 +208,42 @@ impl Key {
             ("pageup", Key::PageUp),
             ("pagedown", Key::PageDown),
             ("arrowup", Key::Up),
+            ("up", Key::Up),
             ("arrowdown", Key::Down),
+            ("down", Key::Down),
             ("arrowleft", Key::Left),
+            ("left", Key::Left),
             ("arrowright", Key::Right),
+            ("right", Key::Right),
         ];
         let lowered = name.to_ascii_lowercase();
         if let Some((_, key)) = NAMED.iter().find(|(text, _)| *text == lowered.as_str()) {
             return Some(*key);
         }
+        if let Some(name) = NAMED_KEYS
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(&lowered))
+        {
+            return Some(Key::Named(name));
+        }
         let mut chars = name.chars();
+        let alias = match lowered.as_str() {
+            "audiovolumemute" => "VolumeMute",
+            "audiovolumedown" => "VolumeDown",
+            "audiovolumeup" => "VolumeUp",
+            "mediatracknext" => "MediaNextTrack",
+            "mediatrackprevious" => "MediaPreviousTrack",
+            "contextmenu" => "Apps",
+            "launchapplication1" => "LaunchApp1",
+            "launchapplication2" => "LaunchApp2",
+            "mediaselect" => "LaunchMediaPlayer",
+            _ => "",
+        };
+        if !alias.is_empty() {
+            return Some(Key::Named(alias));
+        }
         let first = chars.next()?;
-        if chars.next().is_some() {
+        if chars.next().is_some() || first.is_control() {
             return None;
         }
         Some(Key::Character(first.to_ascii_uppercase()))
@@ -168,6 +272,7 @@ impl Key {
             Key::Down => "Down".to_string(),
             Key::Left => "Left".to_string(),
             Key::Right => "Right".to_string(),
+            Key::Named(name) => name.to_string(),
         }
     }
 }
@@ -216,8 +321,30 @@ impl Hotkey {
     /// A `+` is only a separator here; a literal `+` key is spelled `Plus`,
     /// which parses as a single character key.
     pub fn parse(text: &str) -> Result<Hotkey, HotkeyError> {
+        let value = Self::parse_parts(text, true)?;
+        if value.key == Key::Function(12) {
+            return Err(HotkeyError::ReservedKey);
+        }
+        Ok(value)
+    }
+
+    /// Global triggers additionally permit the dedicated media/volume buttons.
+    pub fn parse_trigger(text: &str) -> Result<Hotkey, HotkeyError> {
+        let value = Self::parse_parts(text, false)?;
+        if value.key == Key::Function(12) {
+            return Err(HotkeyError::ReservedKey);
+        }
+        if value.modifiers.is_empty()
+            && !matches!(value.key, Key::Named(name) if name.starts_with("Media") || name.starts_with("Volume"))
+        {
+            return Err(HotkeyError::Incomplete);
+        }
+        Ok(value)
+    }
+
+    fn parse_parts(text: &str, require_modifier: bool) -> Result<Hotkey, HotkeyError> {
         let parts: Vec<&str> = text.split('+').map(str::trim).collect();
-        if parts.len() < 2 {
+        if require_modifier && parts.len() < 2 {
             return Err(HotkeyError::Incomplete);
         }
         // A blank part is a missing piece of the chord, not an unknown name:
@@ -232,7 +359,7 @@ impl Hotkey {
         for text in modifier_texts {
             modifiers.push(Modifier::parse(text).ok_or(HotkeyError::UnknownModifier)?);
         }
-        if modifiers.is_empty() {
+        if require_modifier && modifiers.is_empty() {
             return Err(HotkeyError::Incomplete);
         }
         let key = Key::parse(key_text).ok_or(HotkeyError::UnknownKey)?;
@@ -258,6 +385,24 @@ impl Hotkey {
     }
 }
 
+/// A closed key chord to dispatch to one captured foreground target, not a global registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chord(Hotkey);
+impl Chord {
+    pub fn parse(text: &str) -> Result<Self, HotkeyError> {
+        Hotkey::parse_parts(text, false).map(Self)
+    }
+    pub fn modifiers(&self) -> &[Modifier] {
+        self.0.modifiers()
+    }
+    pub fn key(&self) -> Key {
+        self.0.key()
+    }
+    pub fn as_string(&self) -> String {
+        self.0.as_string()
+    }
+}
+
 impl fmt::Display for Hotkey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.as_string())
@@ -273,6 +418,8 @@ pub enum HotkeyError {
     UnknownModifier,
     /// A key name outside the supported set.
     UnknownKey,
+    /// F12 is reserved for the Windows debugger and cannot be a global trigger.
+    ReservedKey,
 }
 
 impl fmt::Display for HotkeyError {
@@ -281,6 +428,7 @@ impl fmt::Display for HotkeyError {
             HotkeyError::Incomplete => "a binding needs at least one modifier and one key",
             HotkeyError::UnknownModifier => "unsupported modifier",
             HotkeyError::UnknownKey => "unsupported key",
+            HotkeyError::ReservedKey => "F12 is reserved and cannot be a global trigger",
         };
         f.write_str(message)
     }
@@ -291,6 +439,23 @@ impl std::error::Error for HotkeyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macro_chords_and_global_triggers_have_separate_contracts() {
+        for name in ["Enter", "Tab", "F12", "VolumeMute"] {
+            assert!(Chord::parse(name).is_ok());
+            assert!(Hotkey::parse(name).is_err());
+        }
+        assert!(Hotkey::parse_trigger("MediaPlayPause").is_ok());
+        assert!(Hotkey::parse_trigger("Enter").is_err());
+        assert_eq!(Hotkey::parse("Ctrl+F12"), Err(HotkeyError::ReservedKey));
+        assert!(Hotkey::parse("Win+Alt+F9").is_ok());
+        for name in NAMED_KEYS {
+            let chord = Chord::parse(name).unwrap();
+            assert_eq!(chord.as_string(), *name);
+        }
+        assert!(Chord::parse("Ctrl+UnknownName").is_err());
+    }
 
     #[test]
     fn parses_recorded_browser_display_strings() {
@@ -400,6 +565,14 @@ mod tests {
             Hotkey::parse("Ctrl + PageDown").unwrap().as_string(),
             "Ctrl + PageDown"
         );
+    }
+
+    #[test]
+    fn every_catalog_choice_round_trips_as_a_macro_chord() {
+        for name in catalog() {
+            let chord = Chord::parse(&name).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(Chord::parse(&chord.as_string()).unwrap(), chord);
+        }
     }
 
     #[test]
