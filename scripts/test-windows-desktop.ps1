@@ -122,6 +122,7 @@ try {
     [void][VibDockNative]::GetWindowThreadProcessId($window, [ref]$windowPid)
     if ($windowPid -ne $first.Id) { throw 'Tray owner belongs to a different launcher; refusing to control it' }
     if ([VibDockNative]::IsWindowVisible($window)) { throw 'Obsolete resident panel is still visible' }
+    if ([VibDockNative]::FindWindow('VibDockSoftwareStrip', $null) -ne [IntPtr]::Zero) { throw 'Taskbar-adjacent floating strip is still present' }
     foreach ($id in @(10, 11, 12, 13, 101, 105, 200, 201)) {
         if ([VibDockNative]::GetDlgItem($window, $id) -ne [IntPtr]::Zero) { throw 'Obsolete resident panel controls still exist' }
     }

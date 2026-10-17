@@ -58,9 +58,9 @@ and action bindings must survive normal exit and restart. Windows login startup
 is a separate opt-in, read back through the same authenticated service used by
 the tray menu and agent CLI; login startup should keep Settings closed.
 
-Status follow-up remains separate from list rendering: the current dynamic
-badges live in the floating taskbar-adjacent strip, while notification-area
-logos are static. The global microphone cell describes its configured endpoint,
+Status follow-up remains separate from list rendering: dynamic badges belong to
+native notification-area icons, without a floating taskbar-adjacent strip.
+The primary VibDock icon describes its configured microphone endpoint,
 and an application logo describes playback only. A different associated input
 needs its own exact-endpoint observation. Completed actions must invalidate
 older observations before publishing fresh status. Windows audio notifications

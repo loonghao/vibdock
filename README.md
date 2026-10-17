@@ -158,12 +158,13 @@ setting; Explorer taskbar recreation re-adds the icon. Original artwork is also
 embedded in the executable and settings homepage; it requires no external request.
 The separate optional mouse-transparent feedback overlay is unchanged.
 
-Pinned software also appears in a compact logo strip above the primary taskbar's
-work area. Badges show playback muted (`×`), active (`▶`), idle (`II`), disconnected
-(`–`) or unknown (`?`). Hover text and accessible button names explain the state;
-click opens Settings and right-click uses the same exact-session menu. Partial
-or expired observations stay unknown. This strip does not report voice activity,
-does not modify Explorer, and still requires live pointer/DPI/focus acceptance.
+Pinned software appears as native Windows notification-area icons with playback
+status badges. The primary VibDock icon separately reports the configured
+microphone. Shape and color distinguish states, while hover text names the
+target and explains the result. Click opens Settings; right-click retains the
+same exact-session menu. Partial or expired observations stay unknown. There
+is no taskbar-adjacent floating strip; icon placement and overflow follow Windows
+preferences. These indicators do not report voice or meeting activity.
 
 Settings > **应用与麦克风** lists current readable Windows playback sessions. Pin an
 observed software entry to keep its location/output selection across restart in
