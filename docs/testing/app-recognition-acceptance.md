@@ -84,11 +84,20 @@ audio isolation test: no meeting was joined and audibility was not measured.
   section, saved trigger/dispatch/scope rendering, `dispatch_available=true`,
   path redaction, no horizontal overflow and no JavaScript errors. Screenshots
   and `report.json` are uploaded as `desktop-evidence-windows-latest`.
+- The same script launches one real windowed Notepad with a unique document
+  title and waits for that row in the detected-application list. When it is
+  present, it binds a foreground-scope shortcut, confirms `armed=true` and the
+  returned scope through `/api/shortcuts`, confirms the remove button is enabled
+  immediately after the save, removes the binding through the confirm dialog,
+  and checks the list returns to empty. A host without a visible desktop, an
+  existing Notepad, or a conflicting global registration reports an explicit
+  `SKIP` with the reason instead of claiming a live save. The live screenshot is
+  `work/web-ui-windows/apps-shortcuts-live-1280.png`.
 - A separate local Playwright run with real detected applications found 23
   rows, selected the background 微信输入法 row, confirmed the `running` scope was
   checked and locked, saved the binding (`armed=true`, `scope=running`), read it
-  back through the API without a path, and removed it. Its screenshot is
-  `work/web-ui-windows/apps-shortcuts.png`.
+  back through the API without a path, and removed it. This remains a dated
+  single-host record, not automated coverage.
 - An interactive OS-level pointer/DPI run through DCC-CUA was not completed:
   a one-shot snapshot succeeds, but `start_session`/`get_window_state` on a
   persistent host returned `host_remote_failed`, and a separate `act` process
