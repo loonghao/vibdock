@@ -1102,6 +1102,62 @@ impl ResidentControlClient {
         self.request("GET", "/api/apps/summary", None, 200, 128 * 1024)
     }
 
+    /// Reads the saved microphone identity. The tray uses the exact saved id
+    /// for its quick toggle; it never chooses a default device.
+    #[cfg(windows)]
+    pub(crate) fn configuration(&self) -> Result<serde_json::Value> {
+        self.request("GET", "/api/config", None, 200, 64 * 1024)
+    }
+
+    /// Reads one explicitly named microphone's mute state.
+    #[cfg(windows)]
+    pub(crate) fn microphone_status(&self, device_id: &str) -> Result<bool> {
+        let device_id = require_device_id(Some(device_id))?;
+        let value = self.request(
+            "POST",
+            "/api/actions/status",
+            Some(serde_json::json!({ "device_id": device_id })),
+            200,
+            64 * 1024,
+        )?;
+        if value["device_id"].as_str() != Some(device_id.as_str()) {
+            return Err("Microphone status readback named a different device".into());
+        }
+        value["muted"]
+            .as_bool()
+            .ok_or_else(|| "Microphone status readback had no mute state".into())
+    }
+
+    /// Sets one explicitly named microphone to a fixed state and returns the
+    /// verified readback. The caller must not turn this into a default-device
+    /// fallback when the endpoint disappears.
+    #[cfg(windows)]
+    pub(crate) fn set_microphone(&self, device_id: &str, muted: bool) -> Result<bool> {
+        let device_id = require_device_id(Some(device_id))?;
+        let path = if muted {
+            "/api/actions/mute"
+        } else {
+            "/api/actions/unmute"
+        };
+        let value = self.request(
+            "POST",
+            path,
+            Some(serde_json::json!({ "device_id": device_id })),
+            200,
+            64 * 1024,
+        )?;
+        if value["device_id"].as_str() != Some(device_id.as_str()) {
+            return Err("Microphone action readback named a different device".into());
+        }
+        let observed = value["muted"]
+            .as_bool()
+            .ok_or_else(|| "Microphone action readback had no mute state".to_string())?;
+        if observed != muted {
+            return Err("Microphone action readback did not match the requested state".into());
+        }
+        Ok(observed)
+    }
+
     pub(crate) fn prepare(
         &self,
         entry_id: &str,
