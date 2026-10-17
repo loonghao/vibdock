@@ -17,8 +17,10 @@ Use these fixed commands rather than rebuilding authentication in a script:
 vibdock control config
 vibdock control bindings
 vibdock control apps
+vibdock control startup
 vibdock control config --json-file config-patch.json
 vibdock control bindings --json-file bindings-edit.json
+vibdock control startup --json-file startup-edit.json
 vibdock control cancel
 ```
 
@@ -27,6 +29,13 @@ request file with the user's intended device/application and shortcut; use the
 reported current revision for bindings. Preserve other entries. An omitted
 legacy field retains its value; explicit null clears it. New bindings live
 separately from the original microphone/shortcut pair.
+
+Windows login startup is a separate, explicit user choice. Read `control
+startup` first; a write file contains only `{"enabled":true}` or
+`{"enabled":false}`. The service chooses its own sibling launcher; never supply
+a command or path. Conflicting entries stay unchanged. Readback confirms the
+registration, while `effective_state: unknown` does not prove an actual login
+launch. Do not enable startup merely while inspecting or configuring bindings.
 
 A bindings edit contains `revision` and `bindings`. Each entry contains `id`,
 `label`, `enabled`, `trigger`, and `actions`. Supported action objects are:

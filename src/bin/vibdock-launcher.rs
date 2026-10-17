@@ -44,6 +44,8 @@ fn run() -> Result<()> {
     }
     #[cfg(windows)]
     {
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        let open_settings = windows_launch_settings(&args)?;
         // Ensure a service exists before showing the tray, so Open always has a
         // real bound URL to navigate to and the icon always controls something.
         //
@@ -53,7 +55,16 @@ fn run() -> Result<()> {
         // startup; this process only waits for a service to prove itself.
         start_detached_service()?;
         wait_for_service()?;
-        tray::run()
+        tray::run_with_settings(open_settings)
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_launch_settings(args: &[std::ffi::OsString]) -> Result<bool> {
+    match args {
+        [] => Ok(true),
+        [argument] if argument == "--startup" => Ok(false),
+        _ => Err("Unsupported VibDock launcher argument.".into()),
     }
 }
 
@@ -64,7 +75,7 @@ fn run() -> Result<()> {
 /// process; a detached `vibdock service-start` does not.
 ///
 /// The child is the sibling **console** executable, not this one: this launcher
-/// is a GUI-subsystem binary that ignores argv, so re-executing it would spawn
+/// is a GUI-subsystem binary with only a fixed startup flag, so re-executing it would spawn
 /// another launcher instead of a service.
 #[cfg(windows)]
 fn start_detached_service() -> Result<()> {
@@ -89,7 +100,7 @@ fn start_detached_service() -> Result<()> {
 
 /// Path of the sibling console executable that can host the service.
 ///
-/// This launcher ignores its own arguments, so starting the service means
+/// This launcher does not accept service commands, so starting the service means
 /// running the console binary next to it. A missing sibling is a visible
 /// error: silently falling back would either recurse into another launcher or
 /// leave the user with a tray that controls nothing.
@@ -157,5 +168,30 @@ fn report_error(message: &str) {
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         eprintln!("ERROR: {message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_fixed_startup_flag_selects_quiet_windows_entry() {
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>()
+        };
+        assert!(windows_launch_settings(&args(&[])).unwrap());
+        assert!(!windows_launch_settings(&args(&["--startup"])).unwrap());
+        for invalid in [
+            &["--startup", "--startup"][..],
+            &["--startup", "extra"],
+            &["--quit"],
+            &["service-start"],
+            &["--url", "https://example.invalid"],
+        ] {
+            assert!(windows_launch_settings(&args(invalid)).is_err());
+        }
     }
 }

@@ -17,11 +17,14 @@ cargo build --locked --bins
 node scripts/test-voice-e2e.cjs target/debug/vibdock.exe
 ```
 
-Without `--device`, the harness seeds four clearly labelled offline software
-and microphone metadata fixtures for WeChat Input, Codex, Dot and Mini. It
+Without `--device`, the harness seeds six clearly labelled offline software
+and microphone metadata fixtures for WeChat Input, Codex, Dot, Mini, Tencent
+Meeting and WeCom. It
 checks authentication, bootstrap, restart persistence, association clearing,
 entry removal, stale revisions, malformed/missing IDs and disconnected-device
-rejection. These fixtures do not establish that the clients exist or are running.
+rejection. Startup checks read registration state and reject unauthenticated,
+foreign-origin and malformed writes without changing a login startup item.
+These fixtures do not establish that the clients exist or are running.
 Live microphone association is reported as skipped.
 
 For real microphone validation, first read the full capture endpoint ID:

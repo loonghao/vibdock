@@ -49,6 +49,7 @@ const FIRST_SESSION_COMMAND: u32 = 1000;
 const MENU_OPEN: u32 = 101;
 const MENU_STATUS: u32 = 102;
 const MENU_EXIT: u32 = 103;
+const MENU_STARTUP: u32 = 104;
 const TIMER: usize = 1;
 const CLASS: &str = "VibDockTray";
 const TRAY_MUTEX: &str = "VibDockTraySingleton";
@@ -165,12 +166,159 @@ enum WorkerCommand {
     Playback(PlaybackSelection),
     Settings,
     Shutdown,
+    Startup(StartupSelection),
 }
 enum WorkerEvent {
     Observation(Observation),
     ActionResult(String),
     Notice(String),
     Shutdown(std::result::Result<bool, String>),
+    Startup(StartupObservation),
+    StartupResult(StartupObservation, Option<String>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartupState {
+    Confirmed(bool),
+    Conflict,
+    Unknown,
+    Unsupported,
+}
+#[derive(Clone)]
+struct StartupObservation {
+    state: StartupState,
+    launcher_available: bool,
+    checked: Option<Instant>,
+    generation: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StartupSelection {
+    generation: u64,
+    enabled: bool,
+    expected_enabled: bool,
+}
+impl StartupObservation {
+    fn unavailable(generation: u64) -> Self {
+        Self {
+            state: StartupState::Unknown,
+            launcher_available: false,
+            checked: None,
+            generation,
+        }
+    }
+    fn parse(value: &serde_json::Value, generation: u64, checked: Instant) -> Self {
+        let state = if value["supported"] == false
+            && value["platform"] == "unsupported"
+            && value["state"] == "unsupported"
+        {
+            StartupState::Unsupported
+        } else if value["platform"] == "windows"
+            && value["supported"] == true
+            && value["scope"] == "current_user"
+        {
+            match (
+                value["readback_confirmed"].as_bool(),
+                value["enabled"].as_bool(),
+                value["state"].as_str(),
+                value["error"].is_null(),
+            ) {
+                (Some(true), Some(true), Some("enabled"), true) => StartupState::Confirmed(true),
+                (Some(true), Some(false), Some("disabled"), true) => StartupState::Confirmed(false),
+                (_, None, Some("conflict"), _) => StartupState::Conflict,
+                _ => StartupState::Unknown,
+            }
+        } else {
+            StartupState::Unknown
+        };
+        Self {
+            state,
+            launcher_available: value["launcher_available"] == true,
+            checked: Some(checked),
+            generation,
+        }
+    }
+    fn fresh(&self) -> bool {
+        self.checked
+            .is_some_and(|checked| checked.elapsed() < Duration::from_secs(4))
+    }
+}
+fn startup_menu(
+    view: &StartupObservation,
+    busy: bool,
+) -> (&'static str, MENU_ITEM_FLAGS, Option<StartupSelection>) {
+    if !view.fresh() {
+        return ("开机自启（状态未知）", MF_STRING | MF_GRAYED, None);
+    }
+    match view.state {
+        StartupState::Confirmed(enabled) => {
+            let flags = MF_STRING | if enabled { MF_CHECKED } else { MF_UNCHECKED };
+            if busy {
+                return ("开机自启（操作处理中）", flags | MF_GRAYED, None);
+            }
+            if !enabled && !view.launcher_available {
+                return ("开机自启（启动器不可用）", flags | MF_GRAYED, None);
+            }
+            (
+                "开机自启",
+                flags,
+                Some(StartupSelection {
+                    generation: view.generation,
+                    enabled: !enabled,
+                    expected_enabled: enabled,
+                }),
+            )
+        }
+        StartupState::Conflict => ("开机自启（启动项冲突）", MF_STRING | MF_GRAYED, None),
+        StartupState::Unsupported => ("开机自启（此平台不支持）", MF_STRING | MF_GRAYED, None),
+        StartupState::Unknown => ("开机自启（状态未知）", MF_STRING | MF_GRAYED, None),
+    }
+}
+fn startup_request(
+    client: &service::ResidentControlClient,
+    method: &str,
+    body: Option<serde_json::Value>,
+    generation: u64,
+) -> StartupObservation {
+    let checked = Instant::now();
+    match client.request(method, "/api/startup", body, 200, 8192) {
+        Ok(value) => StartupObservation::parse(&value, generation, checked),
+        Err(_) => StartupObservation::unavailable(generation),
+    }
+}
+fn update_startup(
+    previous: &StartupObservation,
+    mut next: StartupObservation,
+    instance_changed: bool,
+) -> StartupObservation {
+    next.generation = previous.generation.wrapping_add(u64::from(
+        instance_changed
+            || previous.state != next.state
+            || previous.launcher_available != next.launcher_available,
+    ));
+    next
+}
+fn apply_startup(
+    selection: StartupSelection,
+    latest: &StartupObservation,
+    mut request: impl FnMut(Option<serde_json::Value>) -> StartupObservation,
+) -> (StartupObservation, Option<String>) {
+    if selection.generation != latest.generation
+        || !latest.fresh()
+        || latest.state != StartupState::Confirmed(selection.expected_enabled)
+    {
+        return (
+            latest.clone(),
+            Some("开机自启状态已过期，请重新打开菜单后再试。".into()),
+        );
+    }
+    let result = request(Some(serde_json::json!({"enabled":selection.enabled})));
+    if result.state == StartupState::Confirmed(selection.enabled) && result.fresh() {
+        return (result, None);
+    }
+    (
+        request(None),
+        Some("开机自启设置未确认，已重新读取实际配置；请检查状态后再试。".into()),
+    )
 }
 struct PendingPlayback {
     client: service::ResidentControlClient,
@@ -218,6 +366,8 @@ fn poll_worker(
     let mut latest: Option<Observation> = None;
     let mut pending: Option<PendingPlayback> = None;
     let mut generation = 0u64;
+    let mut startup = StartupObservation::unavailable(generation);
+    let mut startup_client: Option<service::ResidentControlClient> = None;
     let mut next_poll = Instant::now();
     while !stop.load(Ordering::Relaxed) {
         match commands.recv_timeout(Duration::from_millis(50)) {
@@ -269,6 +419,38 @@ fn poll_worker(
                     if !send_worker_event(&sender, &stop, WorkerEvent::Notice(error)) {
                         return;
                     }
+                }
+            }
+            Ok(WorkerCommand::Startup(selection)) => {
+                let (result, notice) = if pending.is_none() {
+                    if let Some(client) = startup_client.as_ref() {
+                        apply_startup(selection, &startup, |body| {
+                            startup_request(
+                                client,
+                                if body.is_some() { "POST" } else { "GET" },
+                                body,
+                                startup.generation,
+                            )
+                        })
+                    } else {
+                        (
+                            StartupObservation::unavailable(startup.generation),
+                            Some("服务状态未知，开机自启设置未改变。".into()),
+                        )
+                    }
+                } else {
+                    (
+                        startup.clone(),
+                        Some("请等待当前操作完成后再更改开机自启。".into()),
+                    )
+                };
+                startup = update_startup(&startup, result, false);
+                if !send_worker_event(
+                    &sender,
+                    &stop,
+                    WorkerEvent::StartupResult(startup.clone(), notice),
+                ) {
+                    return;
                 }
             }
             Ok(WorkerCommand::Shutdown) => {
@@ -386,7 +568,32 @@ fn poll_worker(
                 Observation::unavailable(generation)
             }
         };
+        // Keep startup's instance/state epoch independent of audio observations.
+        // A repeated GET may renew freshness, but cannot invalidate an open menu.
+        match service::ResidentControlClient::discover() {
+            Ok(candidate) => {
+                let changed = !startup_client
+                    .as_ref()
+                    .is_some_and(|previous| previous.same_instance(&candidate));
+                let next = startup_request(&candidate, "GET", None, startup.generation);
+                startup = update_startup(&startup, next, changed);
+                startup_client = Some(candidate);
+            }
+            Err(_) => {
+                startup = update_startup(
+                    &startup,
+                    StartupObservation::unavailable(startup.generation),
+                    startup_client.is_some(),
+                );
+                startup_client = None;
+            }
+        }
         latest = Some(observation.clone());
+        if let Err(mpsc::TrySendError::Disconnected(_)) =
+            sender.try_send(WorkerEvent::Startup(startup.clone()))
+        {
+            return;
+        }
         match sender.try_send(WorkerEvent::Observation(observation)) {
             Err(mpsc::TrySendError::Disconnected(_)) => return,
             // Full status queues never block the next check or accept a stale
@@ -439,9 +646,17 @@ impl Drop for Poller {
 /// Reuses the existing named mutex. A second launch opens authenticated Settings
 /// through the original tray, without adding another icon or service.
 pub fn run() -> crate::Result<()> {
+    run_with_settings(true)
+}
+
+/// A fixed startup entry keeps the same singleton without opening Web Settings.
+pub fn run_with_settings(open_settings: bool) -> crate::Result<()> {
     let _singleton = match TraySingleton::acquire()? {
         Some(guard) => guard,
         None => {
+            if !open_settings {
+                return Ok(());
+            }
             let class = wide(CLASS);
             // The first launcher may still be between its mutex and window.
             for _ in 0..40 {
@@ -501,7 +716,9 @@ pub fn run() -> crate::Result<()> {
                 return Err(windows::core::Error::from_win32().into());
             }
             let (poller, receiver) = Poller::start()?;
-            let _ = poller.request(WorkerCommand::Settings);
+            if open_settings {
+                let _ = poller.request(WorkerCommand::Settings);
+            }
             message_loop(window, receiver, &poller)
         })();
         let _ = KillTimer(Some(window), TIMER);
@@ -681,6 +898,7 @@ fn session_menu_entries(row: &serde_json::Value, generation: u64) -> Vec<Session
 enum MenuChoice {
     Command(u32),
     Playback(PlaybackSelection),
+    Startup(StartupSelection),
 }
 
 /// The row mapping and all command bindings are immutable for the entire
@@ -690,11 +908,13 @@ fn show_menu(
     uid: usize,
     apps: &AppIcons,
     observation: Option<&Observation>,
+    startup: &StartupObservation,
     busy: bool,
 ) -> Option<MenuChoice> {
     unsafe {
         let menu = CreatePopupMenu().ok()?;
         let mut actions = Vec::new();
+        let (startup_label, startup_flags, startup_selection) = startup_menu(startup, busy);
         let built = (|| -> windows::core::Result<()> {
             if uid != 1 {
                 let Some(row) = tray_row(&apps.rows, &apps.uids, uid) else {
@@ -748,6 +968,12 @@ fn show_menu(
                 }
                 AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             }
+            AppendMenuW(
+                menu,
+                startup_flags,
+                MENU_STARTUP as usize,
+                PCWSTR(wide(startup_label).as_ptr()),
+            )?;
             for (id, label) in [
                 (MENU_OPEN, "Settings…"),
                 (MENU_STATUS, "Service status"),
@@ -782,6 +1008,8 @@ fn show_menu(
                 .get((id - FIRST_SESSION_COMMAND) as usize)
                 .cloned()
                 .map(MenuChoice::Playback)
+        } else if id == MENU_STARTUP {
+            startup_selection.map(MenuChoice::Startup)
         } else if chosen.as_bool() {
             Some(MenuChoice::Command(id))
         } else {
@@ -879,6 +1107,8 @@ fn message_loop(
 ) -> crate::Result<()> {
     let mut observation: Option<Observation> = None;
     let mut busy = false;
+    let mut startup = StartupObservation::unavailable(0);
+    let mut startup_busy = false;
     let mut apps = AppIcons::new(window)?;
     unsafe {
         let mut message = MSG::default();
@@ -892,6 +1122,14 @@ fn message_loop(
                 while let Ok(event) = receiver.try_recv() {
                     match event {
                         WorkerEvent::Observation(next) => observation = Some(next),
+                        WorkerEvent::Startup(next) => startup = next,
+                        WorkerEvent::StartupResult(next, notice) => {
+                            startup = next;
+                            startup_busy = false;
+                            if let Some(message) = notice {
+                                notify("VibDock 开机自启", &message, MB_ICONWARNING);
+                            }
+                        }
                         WorkerEvent::ActionResult(result) => {
                             busy = false;
                             notify_playback(window, &result);
@@ -920,7 +1158,14 @@ fn message_loop(
                 if let Some(current) = observation.as_ref() {
                     apps.update(&current.apps, current.fresh(), current.microphone_fresh());
                 }
-                match show_menu(window, message.wParam.0, &apps, observation.as_ref(), busy) {
+                match show_menu(
+                    window,
+                    message.wParam.0,
+                    &apps,
+                    observation.as_ref(),
+                    &startup,
+                    busy || startup_busy,
+                ) {
                     Some(MenuChoice::Command(id)) => command(id, poller, observation.as_ref()),
                     Some(MenuChoice::Playback(selection)) => {
                         if busy
@@ -935,6 +1180,17 @@ fn message_loop(
                             notify(
                                 "VibDock playback",
                                 "A request is already queued. Please wait and select again.",
+                                MB_ICONINFORMATION,
+                            );
+                        }
+                    }
+                    Some(MenuChoice::Startup(selection)) => {
+                        if poller.request(WorkerCommand::Startup(selection)) {
+                            startup_busy = true;
+                        } else {
+                            notify(
+                                "VibDock 开机自启",
+                                "请求已排队，请稍后再试。",
                                 MB_ICONINFORMATION,
                             );
                         }
@@ -1528,6 +1784,120 @@ impl Drop for AppIcons {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn startup_fixture(enabled: bool, generation: u64) -> StartupObservation {
+        StartupObservation::parse(
+            &serde_json::json!({"platform":"windows","supported":true,"scope":"current_user","enabled":enabled,"state":if enabled{"enabled"}else{"disabled"},"readback_confirmed":true,"launcher_available":true,"error":null}),
+            generation,
+            Instant::now(),
+        )
+    }
+    #[test]
+    fn startup_menu_checks_only_confirmed_current_configuration() {
+        for enabled in [false, true] {
+            let view = startup_fixture(enabled, 7);
+            let (label, flags, selection) = startup_menu(&view, false);
+            assert_eq!(label, "开机自启");
+            assert_eq!(flags.contains(MF_CHECKED), enabled);
+            assert!(!flags.contains(MF_GRAYED));
+            assert_eq!(
+                selection.unwrap(),
+                StartupSelection {
+                    generation: 7,
+                    enabled: !enabled,
+                    expected_enabled: enabled,
+                }
+            );
+        }
+        let mut unavailable = startup_fixture(false, 7);
+        unavailable.launcher_available = false;
+        assert!(startup_menu(&unavailable, false).2.is_none());
+        unavailable.state = StartupState::Confirmed(true);
+        assert!(!startup_menu(&unavailable, false).2.unwrap().enabled);
+        for state in [
+            StartupState::Unknown,
+            StartupState::Conflict,
+            StartupState::Unsupported,
+        ] {
+            let mut view = startup_fixture(false, 7);
+            view.state = state;
+            let (_, flags, selection) = startup_menu(&view, false);
+            assert!(flags.contains(MF_GRAYED));
+            assert!(!flags.contains(MF_CHECKED));
+            assert!(selection.is_none());
+        }
+        let mut expired = startup_fixture(true, 7);
+        expired.checked = Some(Instant::now() - Duration::from_secs(5));
+        assert!(startup_menu(&expired, false).2.is_none());
+        assert!(!startup_menu(&expired, false).1.contains(MF_CHECKED));
+        assert!(startup_menu(&startup_fixture(true, 7), true).2.is_none());
+        let inconsistent = StartupObservation::parse(
+            &serde_json::json!({"platform":"windows","supported":true,"scope":"current_user","enabled":true,"state":"disabled","readback_confirmed":true,"launcher_available":true,"error":null}),
+            7,
+            Instant::now(),
+        );
+        assert_eq!(inconsistent.state, StartupState::Unknown);
+    }
+    #[test]
+    fn startup_worker_keeps_frozen_target_and_reads_back_after_failure() {
+        let target = startup_menu(&startup_fixture(false, 9), false).2.unwrap();
+        let changed = startup_fixture(false, 9);
+        let mut calls = Vec::new();
+        let (result, notice) = apply_startup(target, &changed, |body| {
+            calls.push(body);
+            startup_fixture(true, 9)
+        });
+        assert_eq!(calls, vec![Some(serde_json::json!({"enabled":true}))]);
+        assert_eq!(result.state, StartupState::Confirmed(true));
+        assert!(notice.is_none());
+        calls.clear();
+        let (result, notice) = apply_startup(target, &changed, |body| {
+            let posting = body.is_some();
+            calls.push(body);
+            if posting {
+                StartupObservation::unavailable(9)
+            } else {
+                startup_fixture(false, 9)
+            }
+        });
+        assert_eq!(calls, vec![Some(serde_json::json!({"enabled":true})), None]);
+        assert_eq!(result.state, StartupState::Confirmed(false));
+        assert!(notice.is_some());
+        calls.clear();
+        let (_, notice) = apply_startup(target, &startup_fixture(false, 10), |body| {
+            calls.push(body);
+            startup_fixture(true, 10)
+        });
+        assert!(calls.is_empty());
+        assert!(notice.is_some());
+    }
+    #[test]
+    fn startup_menu_survives_same_state_polls_but_not_state_or_instance_changes() {
+        let mut latest = startup_fixture(false, 31);
+        let selection = startup_menu(&latest, false).2.unwrap();
+        for unrelated_generation in 200..205 {
+            latest = update_startup(&latest, startup_fixture(false, unrelated_generation), false);
+            assert_eq!(latest.generation, 31);
+        }
+        let mut calls = Vec::new();
+        let (_, notice) = apply_startup(selection, &latest, |body| {
+            calls.push(body);
+            startup_fixture(true, 31)
+        });
+        assert!(notice.is_none());
+        assert_eq!(calls, vec![Some(serde_json::json!({"enabled":true}))]);
+        for changed in [
+            update_startup(&latest, startup_fixture(true, 31), false),
+            update_startup(&latest, startup_fixture(false, 31), true),
+        ] {
+            calls.clear();
+            let (_, notice) = apply_startup(selection, &changed, |body| {
+                calls.push(body);
+                startup_fixture(true, 31)
+            });
+            assert!(notice.is_some());
+            assert!(calls.is_empty());
+        }
+    }
     use serde_json::json;
 
     #[test]

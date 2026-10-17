@@ -53,6 +53,19 @@ These visual changes remain planned. Application discovery should refresh
 quietly in the background, preserving card focus and unsaved choices while
 still showing unavailable or expired observations honestly.
 
+Keep the service contracts ahead of additional frontend work. Configuration
+and action bindings must survive normal exit and restart. Windows login startup
+is a separate opt-in, read back through the same authenticated service used by
+the tray menu and agent CLI; login startup should keep Settings closed.
+
+Status follow-up remains separate from list rendering: the current dynamic
+badges live in the floating taskbar-adjacent strip, while notification-area
+logos are static. The global microphone cell describes its configured endpoint,
+and an application logo describes playback only. A different associated input
+needs its own exact-endpoint observation. Completed actions must invalidate
+older observations before publishing fresh status. Windows audio notifications
+can prompt a reread; they must not directly imply voice or meeting activity.
+
 ## Execution boundaries
 
 Global triggers, native input and audio adapters remain separate from the
@@ -89,9 +102,14 @@ certify them.
   explicit capture/render endpoint and unique Windows roles. Its principal-scoped
   receipt distinguishes verified policy, verified rollback and unconfirmed
   outcomes. Preferred policy never establishes a stream or voice transition.
-- `vibdock control capabilities|config|bindings|apps|cancel` uses the native
+- `vibdock control capabilities|config|bindings|apps|startup|cancel` uses the native
   verified-instance client. Config and binding writes accept bounded JSON;
   packaged Skills use this contract without reading credentials.
+- `GET/POST /api/startup` reads or explicitly changes the Windows current-user
+  login registration. The only write body is `{"enabled":true}` or
+  `{"enabled":false}`; the command is the service's fixed sibling launcher.
+  `control startup` exposes the same contract. Confirmation describes the Run
+  entry, while `effective_state` remains unknown until actual login acceptance.
 
 The Windows preferred-policy adapter is build-gated and capability-probed. It
 uses a guarded internal interface whose availability can change with Windows;

@@ -150,12 +150,23 @@ async function unchangedAfter(route, status, options) {
   for(const route of ['/api/bindings','/api/bindings/capabilities','/api/audio/tests/'+ '0'.repeat(64)])await request(route,401,{token:null});
   await request('/api/audio/tests',401,{method:'POST',token:null,body:{device_id:'not-captured'}});
   await request('/api/apps/routes',401,{method:'POST',token:null,body:{}});
+  await request('/api/startup',401,{token:null});
+  await request('/api/startup',401,{method:'POST',token:null,body:{enabled:true}});
   await request('/api/bootstrap/new', 401, {method:'POST', token:null});
   await request('/api/bootstrap', 401, {method:'POST', token:null, body:{code:'0'.repeat(64)}});
   await bootstrap();
   await request('/api/apps', 403, {requestOrigin:'https://attacker.invalid'});
   await unchangedAfter('/api/apps/bind', 403, {method:'POST', body:{}, requestOrigin:'https://attacker.invalid'});
   checks.push('one-use bootstrap, browser session scope, unauthenticated and foreign-origin rejection');
+
+  const startup = await request('/api/startup',200);
+  assert.equal(typeof startup.supported,'boolean');
+  assert(startup.enabled===null||typeof startup.enabled==='boolean');
+  assert.equal(startup.effective_state,'unknown','registration must not certify an actual Windows login');
+  await request('/api/startup',403,{method:'POST',body:{enabled:true},requestOrigin:'https://attacker.invalid'});
+  for(const body of [{},{enabled:'true'},{enabled:false,command:'unused'}])await request('/api/startup',400,{method:'POST',body});
+  assert.deepEqual(await request('/api/startup',200),startup,'rejected startup requests changed its registration state');
+  checks.push('startup read contract, auth/origin/type/closed-field boundaries; no startup registration changed');
 
   let view = await request('/api/apps', 200);
   assert.equal(view.platform, 'windows');

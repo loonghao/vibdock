@@ -48,6 +48,7 @@ pub mod resident_apps;
 pub mod resident_apps;
 #[cfg(windows)]
 mod resident_windows;
+mod startup;
 
 pub mod hotkey;
 #[cfg(windows)]
@@ -235,8 +236,10 @@ pub fn help() {
     println!("  tray             Run the Windows tray and open authenticated Web Settings");
     println!("  devices          List active microphone endpoints and their IDs");
     println!("  capabilities     Report documented integration capabilities");
-    println!("  control capabilities|config|bindings|apps|cancel");
-    println!("  control config|bindings --json-file FILE  Save typed JSON through the service");
+    println!("  control capabilities|config|bindings|apps|startup|cancel");
+    println!(
+        "  control config|bindings|startup --json-file FILE  Save typed JSON through the service"
+    );
     println!("  status|mute|unmute|toggle   Read or change one microphone's mute state");
     println!("  listen           Print state and toggle it on Ctrl+Alt+Shift+F9");
     println!("  app-devices      List playback endpoints for application session control");
@@ -263,13 +266,16 @@ fn control_request(
     args: &[String],
 ) -> Result<(&'static str, &'static str, Option<serde_json::Value>)> {
     let Some(verb) = args.first().map(String::as_str) else {
-        return Err("Expected control capabilities, config, bindings, apps, or cancel".into());
+        return Err(
+            "Expected control capabilities, config, bindings, apps, startup, or cancel".into(),
+        );
     };
     let path = match verb {
         "capabilities" => "/api/bindings/capabilities",
         "config" => "/api/config",
         "bindings" => "/api/bindings",
         "apps" => "/api/apps/summary",
+        "startup" => "/api/startup",
         "cancel" => "/api/bindings/cancel",
         _ => return Err("Unsupported control verb".into()),
     };
@@ -284,8 +290,8 @@ fn control_request(
             },
         ));
     }
-    if args.len() != 3 || !matches!(verb, "config" | "bindings") {
-        return Err("Use control config|bindings --json-file FILE or --json JSON".into());
+    if args.len() != 3 || !matches!(verb, "config" | "bindings" | "startup") {
+        return Err("Use control config|bindings|startup --json-file FILE or --json JSON".into());
     }
     let raw = match args[1].as_str() {
         "--json" => args[2].clone(),
@@ -309,7 +315,10 @@ fn control_request(
     if !value.is_object() {
         return Err("Control body must be a JSON object".into());
     }
-    let allowed = if verb == "config" {
+    let allowed = if verb == "startup" {
+        startup::parse_enabled(&raw)?;
+        &["enabled"][..]
+    } else if verb == "config" {
         &["device_id", "hotkey"][..]
     } else {
         &["revision", "bindings"][..]
@@ -628,11 +637,20 @@ mod tests {
             ("config", "/api/config"),
             ("bindings", "/api/bindings"),
             ("apps", "/api/apps/summary"),
+            ("startup", "/api/startup"),
         ] {
             let (method, actual, body) = control_request(&args(&[verb])).unwrap();
             assert_eq!((method, actual), ("GET", path));
             assert!(body.is_none());
         }
+        assert_eq!(
+            control_request(&args(&["startup", "--json", r#"{"enabled":true}"#])).unwrap(),
+            (
+                "POST",
+                "/api/startup",
+                Some(serde_json::json!({"enabled":true}))
+            )
+        );
         assert_eq!(
             control_request(&args(&["cancel"])).unwrap(),
             ("POST", "/api/bindings/cancel", Some(serde_json::json!({})))
@@ -652,6 +670,14 @@ mod tests {
             vec!["apps", "--json", "{}"],
             vec!["bindings", "--url", "http://attacker.invalid"],
             vec!["config", "--json", "[]"],
+            vec!["startup", "--json", "{}"],
+            vec!["startup", "--json", r#"{"enabled":"true"}"#],
+            vec![
+                "startup",
+                "--json",
+                r#"{"enabled":true,"command":"arbitrary.exe"}"#,
+            ],
+            vec!["startup", "--json", r#"{"enabled":false,"enabled":true}"#],
             vec![
                 "config",
                 "--json",
@@ -659,6 +685,28 @@ mod tests {
             ],
         ] {
             assert!(control_request(&args(&bad)).is_err(), "{bad:?}");
+        }
+    }
+    #[test]
+    fn control_cli_startup_json_file_and_inline_share_the_closed_contract() {
+        let path = std::env::temp_dir().join(format!(
+            "vibdock-startup-cli-{}.json",
+            service::generate_token().unwrap()
+        ));
+        std::fs::write(&path, r#"{"enabled":false}"#).unwrap();
+        let from_file =
+            control_request(&args(&["startup", "--json-file", path.to_str().unwrap()])).unwrap();
+        let inline =
+            control_request(&args(&["startup", "--json", r#"{"enabled":false}"#])).unwrap();
+        assert_eq!(from_file, inline);
+        std::fs::remove_file(path).unwrap();
+        for raw in [
+            "{}",
+            r#"{"enabled":true,"launcher":"other.exe"}"#,
+            r#"{"enabled":false,"enabled":true}"#,
+            r#"{"enabled":1}"#,
+        ] {
+            assert!(control_request(&args(&["startup", "--json", raw])).is_err());
         }
     }
 

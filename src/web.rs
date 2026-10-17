@@ -793,6 +793,7 @@ fn accept_loop(
         let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
+            || path == "/api/startup"
             || path.starts_with("/api/bindings")
             || path.starts_with("/api/audio/tests")
             || path.starts_with("/api/actions/")
@@ -833,6 +834,8 @@ fn accept_loop(
         let (mut code, mut mime, mut payload) =
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
+            } else if path == "/api/startup" {
+                startup_route(&routed_request, token.is_some(), crate::startup::request)
             } else if let Some(routed) = crate::audio_tests::route(
                 &routed_request,
                 token.is_some(),
@@ -949,6 +952,99 @@ fn accept_loop(
             connection.finish()?;
             return Ok(());
         }
+    }
+}
+
+fn startup_route(
+    request: &Request<'_>,
+    enabled: bool,
+    mut handle: impl FnMut(Option<bool>) -> (u16, serde_json::Value),
+) -> Routed {
+    if let Some(rejection) = validate_request(request, enabled) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    let reply = |code, value: serde_json::Value| (code, "application/json", value.to_string());
+    if request.path != "/api/startup" {
+        return reply(404, serde_json::json!({"error":"Unknown startup route"}));
+    }
+    let requested = match request.method {
+        Method::Get => None,
+        Method::Post => match crate::startup::parse_enabled(request.body) {
+            Ok(enabled) => Some(enabled),
+            Err(error) => return reply(400, serde_json::json!({"error":error})),
+        },
+        _ => {
+            return reply(
+                405,
+                serde_json::json!({"error":"Unsupported startup method"}),
+            )
+        }
+    };
+    let (code, value) = handle(requested);
+    reply(code, value)
+}
+
+#[cfg(test)]
+mod startup_api_tests {
+    use super::*;
+    #[test]
+    fn startup_api_keeps_auth_origin_preview_and_strict_body_guards_before_backend() {
+        let host = format!("127.0.0.1:{}", service::port());
+        let mut request = Request {
+            method: Method::Get,
+            path: "/api/startup",
+            host: Some(&host),
+            origin: None,
+            authorized: false,
+            body: "",
+            body_rejected: false,
+        };
+        let never = |_: Option<bool>| -> (u16, serde_json::Value) {
+            panic!("Rejected startup request reached the native adapter")
+        };
+        assert_eq!(startup_route(&request, true, never).0, 401);
+        request.authorized = true;
+        request.host = Some("attacker.invalid");
+        assert_eq!(startup_route(&request, true, never).0, 403);
+        request.host = Some(&host);
+        request.origin = Some("https://attacker.invalid");
+        assert_eq!(startup_route(&request, true, never).0, 403);
+        request.origin = None;
+        assert_eq!(
+            startup_route(&request, true, |requested| {
+                assert_eq!(requested, None);
+                (200, serde_json::json!({"enabled":false}))
+            })
+            .0,
+            200
+        );
+        request.method = Method::Post;
+        request.body = r#"{"enabled":true}"#;
+        assert_eq!(startup_route(&request, false, never).0, 405);
+        request.body_rejected = true;
+        assert_eq!(startup_route(&request, true, never).0, 413);
+        request.body_rejected = false;
+        for body in [
+            "{}",
+            r#"{"enabled":true,"path":"arbitrary.exe"}"#,
+            r#"{"enabled":false,"enabled":true}"#,
+            r#"{"enabled":null}"#,
+        ] {
+            request.body = body;
+            assert_eq!(startup_route(&request, true, never).0, 400);
+        }
+        request.body = r#"{"enabled":false}"#;
+        assert_eq!(
+            startup_route(&request, true, |requested| {
+                assert_eq!(requested, Some(false));
+                (200, serde_json::json!({"enabled":false}))
+            })
+            .0,
+            200
+        );
     }
 }
 

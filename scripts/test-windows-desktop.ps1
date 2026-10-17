@@ -166,7 +166,7 @@ try {
         [void][VibDockNative]::GetMenuString($menu, $i, $label, $label.Capacity, 0x400)
         $labels += $label.ToString()
     }
-    if (@($labels).Count -ne 3 -or -not ($labels -contains 'Settings…') -or -not ($labels -contains 'Service status') -or -not ($labels -contains 'Exit VibDock')) { throw 'Context menu must contain only Settings, Service status, and Exit' }
+    if (@($labels).Count -ne 4 -or -not ($labels -contains 'Settings…') -or -not ($labels -contains 'Service status') -or -not ($labels -contains 'Exit VibDock') -or @($labels | Where-Object { $_ -like '开机自启*' }).Count -ne 1) { throw 'Context menu must contain Settings, Service status, one explicit startup toggle, and Exit' }
     Save-Window $menuWindow 'resident-context-menu.png'
     [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CANCELMODE
     Start-Sleep -Milliseconds 150
