@@ -13,6 +13,12 @@ const macOS = process.platform === 'darwin';
 const softwareFile = macOS ? 'apps-macos.json' : 'apps.json';
 const redact=[];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function assertFits(page,view,output) {
+  const layout=await page.evaluate(()=>({width:innerWidth,documentWidth:document.documentElement.scrollWidth,
+    offenders:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>innerWidth+1).slice(0,12).map(element=>({tag:element.tagName,id:element.id,classes:element.className,right:Math.round(element.getBoundingClientRect().right),text:element.textContent.slice(0,80),minWidth:getComputedStyle(element).minWidth,grid:getComputedStyle(element).gridTemplateColumns,overflowWrap:getComputedStyle(element).overflowWrap}))}));
+  if(layout.documentWidth>layout.width+1)await page.screenshot({path:path.join(output,`overflow-${view}-${layout.width}.png`),fullPage:true});
+  assert(layout.documentWidth<=layout.width+1,`${view} overflows mobile width: ${JSON.stringify(layout)}`);
+}
 async function unusedPort() {
   const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
@@ -66,7 +72,7 @@ async function unusedPort() {
       const logo = page.getByRole('img',{name:'VibDock 标志'}); await logo.waitFor();
       assert(await logo.evaluate(img=>img.complete&&img.naturalWidth===512),'original SVG did not render');
       assert.equal((await logo.getAttribute('src')).split(',')[1],fs.readFileSync('assets/brand/vibdock-symbol-light.svg').toString('base64'),'homepage logo differs from supplied SVG');
-      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'page overflows mobile width');
+      await assertFits(page,'homepage',output);
       const box=await logo.boundingBox();assert(box.width>=32&&box.height>=32);
       assert.equal(await page.evaluate(()=>localStorage.getItem('vibdock.token')),null);
       assert.deepEqual(external,[],'page loaded external resources'); assert.deepEqual(errors,[]);
@@ -88,7 +94,7 @@ async function unusedPort() {
       assert(!JSON.stringify(apps).includes('executable_path'),'software view leaked executable locations');
       assert(!JSON.stringify(apps).includes('bundle_path'),'software view leaked application bundle locations');
       assert((await page.locator('#appReadStatus').innerText()).length>0);
-      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'software view overflows mobile width');
+      await assertFits(page,'software',output);
       await page.screenshot({path:path.join(output,`apps-${viewport.width}.png`),fullPage:true});
       results.push({viewport,logo:box,externalRequests:0,javascriptErrors:0,mode:await page.locator('#banner').innerText()});
       await page.close();
