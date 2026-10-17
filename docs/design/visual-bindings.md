@@ -46,6 +46,13 @@ trigger-to-actions sequence with the affected endpoint/application next to
 every step. Avoid generic metric dashboards, invented device imagery and
 success states based only on saved drafts.
 
+Local candidate feedback adds a usability follow-up: make the bounded audio
+test's progress, detected signal and final result easier to see; refine the
+layout and guide people through application, device and trigger choices.
+These visual changes remain planned. Application discovery should refresh
+quietly in the background, preserving card focus and unsaved choices while
+still showing unavailable or expired observations honestly.
+
 ## Execution boundaries
 
 Global triggers, native input and audio adapters remain separate from the
@@ -74,7 +81,10 @@ certify them.
 - `/api/apps` returns the native application catalog, independent microphone
   state and guarded routing capability/device lists. Presence pins have no
   invented playback endpoint. Browser-supplied paths or process IDs never
-  authorize an action.
+  authorize an action. Application/session `observation_id` values identify
+  cards within one service instance, including across selection-token renewal;
+  they do not authorize actions. The UI uses the latest selection token for a
+  retained card and keeps observation expiry separate from background polling.
 - `POST /api/apps/routes` accepts the current revision, a fresh selection token,
   explicit capture/render endpoint and unique Windows roles. Its principal-scoped
   receipt distinguishes verified policy, verified rollback and unconfirmed

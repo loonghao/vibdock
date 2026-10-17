@@ -19,11 +19,35 @@ fn mac(token: &str, nonce: &str) -> Option<Hmac<Sha256>> {
 
 pub(crate) fn respond(token: &str, nonce: &str) -> Option<String> {
     let digest = mac(token, nonce)?.finalize().into_bytes();
-    Some(digest.iter().fold(String::new(), |mut output, byte| {
+    Some(hex(&digest))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut output, byte| {
         use std::fmt::Write;
         let _ = write!(output, "{byte:02x}");
         output
-    }))
+    })
+}
+
+/// Public presentation identity only. This separate HMAC domain is never an
+/// instance proof, selection capability, or permission to act on an application.
+pub(crate) fn observation_id(salt: Option<&str>, kind: &str, identity: &str) -> Option<String> {
+    let salt =
+        salt.filter(|salt| salt.len() == 64 && salt.bytes().all(|byte| byte.is_ascii_hexdigit()))?;
+    if !matches!(
+        kind,
+        "windows.catalog" | "windows.playback" | "macos.application"
+    ) || identity.is_empty()
+    {
+        return None;
+    }
+    let mut mac = Hmac::<Sha256>::new_from_slice(salt.as_bytes()).ok()?;
+    mac.update(b"VibDock observation v1\0");
+    mac.update(kind.as_bytes());
+    mac.update(&[0]);
+    mac.update(identity.as_bytes());
+    Some(hex(&mac.finalize().into_bytes()))
 }
 
 pub(crate) fn verify(token: &str, nonce: &str, proof: &str) -> bool {
@@ -43,6 +67,38 @@ pub(crate) fn verify(token: &str, nonce: &str, proof: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observation_ids_are_instance_and_kind_scoped_and_never_proofs() {
+        let salt = "a".repeat(64);
+        let identity = "private process identity";
+        let id = observation_id(Some(&salt), "windows.catalog", identity).unwrap();
+        assert_eq!(
+            id,
+            observation_id(Some(&salt), "windows.catalog", identity).unwrap()
+        );
+        assert_ne!(
+            id,
+            observation_id(Some(&"b".repeat(64)), "windows.catalog", identity).unwrap()
+        );
+        assert_ne!(
+            id,
+            observation_id(Some(&salt), "windows.playback", identity).unwrap()
+        );
+        assert_ne!(
+            id,
+            observation_id(Some(&salt), "macos.application", identity).unwrap()
+        );
+        assert_eq!(id.len(), 64);
+        assert!(id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+        assert!(!verify(&salt, &id, &id));
+        assert!(!id.contains(identity));
+        assert!(observation_id(None, "windows.catalog", identity).is_none());
+        assert!(observation_id(Some("weak"), "windows.catalog", identity).is_none());
+        assert!(observation_id(Some(&salt), "instance proof", identity).is_none());
+    }
 
     #[test]
     fn proof_matches_an_independent_hmac_sha256_vector() {

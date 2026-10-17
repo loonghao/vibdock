@@ -298,8 +298,10 @@ async function probe(){
 
 // Read-only software observations. Paths stay server-side; images are bounded
 // native resources fetched inside this authenticated JSON response.
-let appsBusy=false,appRevision=0,appTimer=null,appExpiryTimer=null,appsRenderKey='',lastAppsData=null,appBindingDirty=false;
-function appButtonsBusy(){for(const button of document.querySelectorAll('#pinnedApps button,#appChoices button'))button.disabled=appsBusy||!lastAppsData?.storage_writable;updateAppBindingControls();}
+let appsBusy=false,appsReading=false,appsReadEpoch=0,appRevision=0,appTimer=null,appExpiryTimer=null,lastAppsData=null,appBindingDirty=false,appBindingDraftRevision=0,appBindingRenderKey='';
+let appValidUntil={catalog:0,choice:0};
+function appButtonsBusy(){for(const button of document.querySelectorAll('#pinnedApps button,#appChoices button'))button.disabled=appsBusy||!serviceToken||!lastAppsData?.storage_writable||!!button.appChoice&&!currentAppChoice(button.appChoice.kind,button.appChoice.identity);updateAppBindingControls();}
+function appBindingKey(entry){return JSON.stringify([entry?.id,entry?.device_id,captureDevices.map(d=>[d.id,d.name])]);}
 function selectedApp(){return lastAppsData?.entries.find(e=>e.id===$('appBindingEntry').value);}
 function updateAppBindingControls(){
   const enabled=mode==='service'&&!!serviceToken&&lastAppsData?.platform==='windows'&&lastAppsData.storage_writable;
@@ -313,8 +315,9 @@ function updateAppBindingControls(){
   updatePreferredRoute();
 }
 function selectAppBinding(id){
-  $('appBindingEntry').value=id;appBindingDirty=false;
+  $('appBindingEntry').value=id;appBindingDirty=false;appBindingDraftRevision=appRevision;
   const entry=selectedApp();fillDeviceSelect($('appBindingDevice'),entry?.device_id||'');updateAppBindingControls();
+  appBindingRenderKey=appBindingKey(entry);
   $('appBindingStatus').textContent=entry?.device_id?'已关联：'+deviceName(entry.device_id)+'。应用内的实际输入设备仍需确认。':'此应用尚未关联麦克风。';$('appBindingStatus').dataset.kind='idle';
   updatePreferredRoute();
 }
@@ -322,26 +325,26 @@ function renderAppBinding(data){
   const select=$('appBindingEntry'),previous=select.value;
   const options=JSON.stringify(data.entries.map(e=>[e.id,e.label]));
   if(select.dataset.options!==options){select.replaceChildren(new Option('选择已固定应用',''),...data.entries.map(e=>new Option(e.label,e.id)));select.dataset.options=options;select.value=previous;}
-  if(!selectedApp()||!appBindingDirty)selectAppBinding(select.value);
+  const entry=selectedApp();if((!entry||!appBindingDirty)&&appBindingRenderKey!==appBindingKey(entry))selectAppBinding(select.value);
   updateAppBindingControls();
 }
 async function saveAppBinding(clear){
   const entry=selectedApp();if(!entry)return;
   const deviceId=clear?null:$('appBindingDevice').value;
   if(!clear&&!captureDevices.some(d=>d.id===deviceId))return;
-  const ok=await editApp('bind',{id:entry.id,device_id:deviceId});
+  const ok=await editApp('bind',{id:entry.id,device_id:deviceId},!clear&&appBindingDirty?appBindingDraftRevision:appRevision);
   if(ok){appBindingDirty=false;selectAppBinding(entry.id);$('appBindingStatus').textContent=clear?'已解除关联，麦克风静音状态未改变。':'麦克风关联已保存到本机；请在应用内确认输入设备。';}
   else{$('appBindingStatus').textContent='关联未确认：'+$('appReadStatus').textContent;$('appBindingStatus').dataset.kind='error';}
 }
 async function appMicrophoneAction(action){
   const entry=selectedApp(),deviceId=entry?.device_id;if(appsBusy||!serviceToken||!deviceId||!captureDevices.some(d=>d.id===deviceId))return;
-  appsBusy=true;appButtonsBusy();const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  appsBusy=true;const epoch=++appsReadEpoch,session=serviceToken;appButtonsBusy();const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
   $('appBindingStatus').textContent='正在读取 '+deviceName(deviceId)+'…';
-  try{const response=await api('/api/actions/'+action,{method:'POST',signal:controller.signal,body:JSON.stringify({device_id:deviceId})});const body=await response.text();if(response.status===401||response.status===403)expireBrowserSession();if(!response.ok)throw Error(serviceError(response,body));const result=JSON.parse(body);if(result.device_id!==deviceId||typeof result.muted!=='boolean')throw Error('服务未回读同一麦克风的状态');$('appBindingStatus').textContent='已回读 '+deviceName(deviceId)+'：'+(result.muted?'已静音':'未静音')+'。此状态适用于所有使用该设备的应用。';$('appBindingStatus').dataset.kind='ok';}
-  catch(error){$('appBindingStatus').textContent='操作未确认：'+error.message;$('appBindingStatus').dataset.kind='error';}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}
+  try{const response=await api('/api/actions/'+action,{method:'POST',signal:controller.signal,body:JSON.stringify({device_id:deviceId})});const body=await response.text();if(session!==serviceToken||epoch!==appsReadEpoch)return;if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));const result=JSON.parse(body);if(result.device_id!==deviceId||typeof result.muted!=='boolean')throw Error('服务未回读同一麦克风的状态');$('appBindingStatus').textContent='已回读 '+deviceName(deviceId)+'：'+(result.muted?'已静音':'未静音')+'。此状态适用于所有使用该设备的应用。';$('appBindingStatus').dataset.kind='ok';}
+  catch(error){if(session===serviceToken&&epoch===appsReadEpoch){$('appBindingStatus').textContent='操作未确认：'+error.message;$('appBindingStatus').dataset.kind='error';}}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}
 }
 $('appBindingEntry').onchange=()=>selectAppBinding($('appBindingEntry').value);
-$('appBindingDevice').onchange=()=>{appBindingDirty=true;updateAppBindingControls();};
+$('appBindingDevice').onchange=()=>{if(!appBindingDirty)appBindingDraftRevision=appRevision;appBindingDirty=true;updateAppBindingControls();};
 $('appBindingSave').onclick=()=>saveAppBinding(false);$('appBindingClear').onclick=()=>saveAppBinding(true);
 $('appBindingTest').onclick=()=>appMicrophoneAction('status');$('appMicMute').onclick=()=>appMicrophoneAction('mute');$('appMicUnmute').onclick=()=>appMicrophoneAction('unmute');
 function appNode(tag,text){const n=document.createElement(tag);if(text)n.textContent=text;return n;}
@@ -359,48 +362,86 @@ function softwareStatus(entry,mac){
 }
 function softwareAvatar(entry,mac){const [state,symbol,label]=softwareStatus(entry,mac),avatar=appNode('span');avatar.className='software-avatar';avatar.dataset.state=state;avatar.title=entry.label+' · '+label;avatar.setAttribute('role','img');avatar.setAttribute('aria-label',avatar.title);avatar.append(appIcon(entry.icon_b64,entry.icon_mime));const badge=appNode('span',symbol);badge.className='software-badge';badge.setAttribute('aria-hidden','true');avatar.append(badge);return avatar;}
 function appState(session,mac){return mac?'应用正在运行 · 播放和语音状态不可用':(session.session_state==='active'?'播放会话活动':'播放会话空闲')+' · '+(session.muted?'已静音':'未静音')+' · PID '+session.process_id;}
+// Observation IDs keep view nodes stable; only the latest fresh selection authorizes pinning.
+function appChoiceIdentity(item){const valid=value=>typeof value==='string'&&/^[0-9a-f]{64}$/i.test(value);return valid(item.observation_id)?'observation:'+item.observation_id:valid(item.selection_id)?'ticket:'+item.selection_id:null;}
+function currentAppChoice(kind,identity){
+  if(!['catalog','choice'].includes(kind)||!serviceToken||!identity||performance.now()>=appValidUntil[kind])return null;
+  const source=kind==='catalog'?lastAppsData?.catalog:lastAppsData;if(source?.available!==true)return null;
+  const rows=kind==='catalog'?source.applications:source.choices,matches=(rows||[]).filter(item=>appChoiceIdentity(item)===identity);
+  return matches.length===1&&/^[0-9a-f]{64}$/i.test(matches[0].selection_id||'')?matches[0]:null;
+}
+async function pinAppChoice(kind,identity){
+  if(appsBusy||!lastAppsData?.storage_writable)return false;
+  const item=currentAppChoice(kind,identity);if(!item){$('appReadStatus').textContent='应用身份已过期或不唯一，请等待读取后重试。';return false;}
+  const prior=new Set(lastAppsData.entries.map(entry=>entry.id));
+  const saved=await editApp('pin',{selection_id:item.selection_id});
+  if(saved&&kind==='catalog'){const added=lastAppsData.entries.filter(entry=>!prior.has(entry.id));if(added.length===1)selectAppBinding(added[0].id);}return saved;
+}
+function createAppCard(model){
+  const row=appNode('div'),icon=appNode('span'),body=appNode('div');row.className='app-card';row.append(icon,body);
+  if(model.kind==='pinned'){
+    const id=model.item.id;if(model.platform==='windows'){const bind=appNode('button','设置麦克风');bind.onclick=()=>{selectAppBinding(id);$('appBinding').scrollIntoView({behavior:'instant',block:'nearest'});$('appBindingDevice').focus();};row.append(bind);}
+    const remove=appNode('button','移除固定');remove.onclick=()=>editApp('remove',{id});row.append(remove);
+  }else{const pin=appNode('button',model.kind==='catalog'?'固定并设置':'固定软件');pin.appChoice={kind:model.kind,identity:model.identity};pin.onclick=()=>pinAppChoice(model.kind,model.identity);row.append(pin);}
+  return {row,icon,body,visibleKey:null};
+}
+function reconcileAppCards(container,models,emptyText){
+  container.className='app-grid';const cards=container.appCards||(container.appCards=new Map()),wanted=new Set(models.map(model=>model.key));
+  for(const [key,card] of cards)if(!wanted.has(key)){card.row.remove();cards.delete(key);}
+  if(models.length&&container.appEmpty){container.appEmpty.remove();container.appEmpty=null;}
+  models.forEach((model,index)=>{
+    let card=cards.get(model.key);if(!card){card=createAppCard(model);cards.set(model.key,card);}
+    const visibleKey=JSON.stringify([model.title,model.paragraphs,model.item.icon_b64,model.item.icon_mime,model.status]);
+    if(card.visibleKey!==visibleKey){card.body.replaceChildren(appNode('strong',model.title),...model.paragraphs.map(text=>appNode('p',text)));card.icon.replaceChildren(model.kind==='pinned'?softwareAvatar(model.item,model.mac):appIcon(model.item.icon_b64,model.item.icon_mime));card.visibleKey=visibleKey;}
+    if(container.children[index]!==card.row)container.insertBefore(card.row,container.children[index]||null);
+  });
+  if(!models.length){if(!container.appEmpty){container.appEmpty=appNode('p',emptyText);container.append(container.appEmpty);}else container.appEmpty.textContent=emptyText;}
+}
 function renderAppEntries(data){
+ if(lastAppsData&&data.revision<appRevision)return false;
  lastAppsData=data;appRevision=data.revision;const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
- const key=JSON.stringify([data.platform,data.observation_kind,data.revision,data.available,data.complete,data.error,data.entries,data.choices,data.catalog]);if(key===appsRenderKey)return;appsRenderKey=key;
   $('appsTitle').textContent=mac?'固定软件，查看真实运行状态。':'应用与麦克风，放在一起管理。';
  $('appsIntro').textContent=mac?'固定条目保存在本机 Mac 服务中。运行中不代表播放、收音、通话或工作；此处只读，不提供应用控制。':data.platform==='windows'?'固定条目保存在本机服务中。此页管理条目和查看播放状态；右键 Windows 软件托盘图标可静音或取消静音指定播放会话。播放活动不代表收音或通话。':'固定条目保存在本机服务中。此平台暂不支持真实播放控制；不会启动应用。';
  $('appsChoicesTitle').textContent=mac?'当前可读取的本机应用':'当前可读取的软件会话';
  $('appsChoicesHelp').textContent=mac?'仅列出身份已重新核验的当前用户应用。固定的是应用位置，重启后仍会重新观察；不会启动或终止软件。':'只列出当前可确定所属进程的本机播放会话。固定后按相同输出设备和软件文件位置关联，新会话仍单独显示。';
  $('appReadStatus').textContent=data.error||(mac?(!data.available?'应用运行状态未知':data.complete?'已读取本机应用。运行不代表正在播放或工作。':'已读取部分应用；缺失项目运行状态未知。'):(!data.available?'播放状态未知或此平台暂不支持':data.complete?'已读取当前播放会话。语音状态不在此推断。':'已读取部分会话；缺失项目状态未知。'));
- const pinned=$('pinnedApps');pinned.replaceChildren();pinned.className='app-grid';
-  renderAppBinding(data);
-  if(!data.entries.length)pinned.append(appNode('p','尚未固定软件。'));
- for(const entry of data.entries){const row=appNode('div');row.className='app-card';const body=appNode('div');body.append(appNode('strong',entry.label));
- body.append(appNode('p',mac?(entry.state==='running'?'应用正在运行':entry.state==='not_running'?'应用未运行':'运行状态未知'):(entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话')));
- if(mac)body.append(appNode('p','播放和语音状态不可用；没有应用控制。'));
- for(const session of entry.sessions)body.append(appNode('p',appState(session,mac)));
-  if(data.platform==='windows')body.append(appNode('p',entry.device_id?'关联麦克风 · '+deviceName(entry.device_id):'尚未关联麦克风'));
-  const remove=appNode('button','移除固定');remove.disabled=appsBusy||!data.storage_writable;remove.onclick=()=>editApp('remove',{id:entry.id});row.append(softwareAvatar(entry,mac),body);if(data.platform==='windows'){const bind=appNode('button','设置麦克风');bind.onclick=()=>{selectAppBinding(entry.id);$('appBinding').scrollIntoView({behavior:'instant',block:'nearest'});$('appBindingDevice').focus();};row.append(bind);}row.append(remove);pinned.append(row);}
- const choices=$('appChoices');choices.replaceChildren();choices.className='app-grid';
+ renderAppBinding(data);
+ const pinned=data.entries.map(entry=>{
+  const paragraphs=[mac?(entry.state==='running'?'应用正在运行':entry.state==='not_running'?'应用未运行':'运行状态未知'):(entry.state==='not_connected'?'未连接播放会话':entry.state==='unknown'?'状态未知，不能确认是否连接':entry.complete?'已读取播放会话':'已读取部分播放会话')];
+  if(mac)paragraphs.push('播放和语音状态不可用；没有应用控制。');paragraphs.push(...(entry.sessions||[]).map(session=>appState(session,mac)).sort());
+  if(data.platform==='windows')paragraphs.push(entry.device_id?'关联麦克风 · '+deviceName(entry.device_id):'尚未关联麦克风');
+  return {kind:'pinned',platform:data.platform,key:entry.id,item:entry,title:entry.label,paragraphs,mac,status:softwareStatus(entry,mac)};
+ });
+ reconcileAppCards($('pinnedApps'),pinned,'尚未固定软件。');
+ const choices=[];
  if(data.catalog?.available){$('appsChoicesTitle').textContent='当前可绑定的软件';$('appsChoicesHelp').textContent='来自可核验的本机可见窗口。运行状态、播放状态和会议状态独立显示。';
- for(const item of data.catalog.applications||[]){const row=appNode('div');row.className='app-card';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p','检测到可见窗口 · 语音和会议状态未知'));const pin=appNode('button','固定并设置');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=async()=>{const prior=new Set(lastAppsData.entries.map(e=>e.id));if(await editApp('pin',{selection_id:item.selection_id})){const entry=lastAppsData.entries.find(e=>!prior.has(e.id));if(entry)selectAppBinding(entry.id);}};row.append(appIcon(item.icon_b64,item.icon_mime),body,pin);choices.append(row);}}
- if(!data.choices.length)choices.append(appNode('p',mac?(data.available?'没有可固定的当前应用；打开目标软件后刷新。':'尚无可读取的原生应用。'):(data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。')));
- for(const item of data.choices){const row=appNode('div');row.className='app-card';const body=appNode('div');body.append(appNode('strong',item.display_name),appNode('p',appState(item,mac)));
- const pin=appNode('button','固定软件');pin.disabled=appsBusy||!data.storage_writable;pin.onclick=()=>editApp('pin',{selection_id:item.selection_id});row.append(appIcon(item.icon_b64,item.icon_mime),body,pin);choices.append(row);}
+ for(const item of data.catalog.applications||[]){const identity=appChoiceIdentity(item);choices.push({kind:'catalog',identity,key:'catalog:'+identity,item,title:item.display_name,paragraphs:['检测到可见窗口 · 语音和会议状态未知']});}}
+ for(const item of data.choices||[]){const identity=appChoiceIdentity(item);choices.push({kind:'choice',identity,key:'choice:'+identity,item,title:item.display_name,paragraphs:[appState(item,mac)]});}
+ choices.sort((a,b)=>a.title.localeCompare(b.title)||a.key.localeCompare(b.key));
+ reconcileAppCards($('appChoices'),choices,mac?(data.available?'没有可固定的当前应用；打开目标软件后刷新。':'尚无可读取的原生应用。'):(data.available?'没有可固定的当前会话；请让目标软件播放声音后刷新。':'尚无可读取的原生播放会话。'));
+ appButtonsBusy();return true;
 }
-function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],catalog:{available:false,complete:false,applications:[]},routing_capabilities:{state:'unknown'},routing_devices:{available:false,capture:[],render:[]},entries:lastAppsData.entries.map(e=>({...e,state:'unknown',presence:'unknown',routing_selection_id:null,icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
+function markAppsUnknown(message){clearTimeout(appExpiryTimer);appExpiryTimer=null;appValidUntil={catalog:0,choice:0};if(lastAppsData)renderAppEntries({...lastAppsData,available:false,complete:false,error:message,choices:[],catalog:{available:false,complete:false,applications:[]},routing_capabilities:{state:'unknown'},routing_devices:{available:false,capture:[],render:[]},entries:lastAppsData.entries.map(e=>({...e,state:'unknown',presence:'unknown',routing_selection_id:null,icon_b64:null,sessions:[]}))});else $('appReadStatus').textContent=message;}
 function receiveAppEntries(data,started){
+ if(lastAppsData&&data.revision<appRevision)return false;
  renderMicSummary(data.microphone,started);
  clearTimeout(appExpiryTimer);appExpiryTimer=null;
- const mac=data.platform==='macos'&&data.observation_kind==='application_presence';
- const age=mac?(Number.isSafeInteger(data.age_ms)&&data.age_ms>=0?data.age_ms:4000):0;
- const remaining=4000-age-(performance.now()-started);
+ const remaining=source=>4000-(Number.isSafeInteger(source?.age_ms)&&source.age_ms>=0?source.age_ms:4000)-(performance.now()-started);
+ appValidUntil={choice:data.available?performance.now()+Math.max(0,remaining(data)):0,catalog:data.catalog?.available?performance.now()+Math.max(0,remaining(data.catalog)):0};
  renderAppEntries(data);
- if(document.hidden||remaining<=0){markAppsUnknown('软件状态已过期，等待重新读取。');return;}
- if(data.available)appExpiryTimer=setTimeout(()=>markAppsUnknown('软件状态已过期，等待重新读取。'),remaining);
+ const deadlines=Object.values(appValidUntil).filter(deadline=>deadline>0);
+ const expired=(data.available&&appValidUntil.choice<=performance.now())||(data.catalog?.available&&appValidUntil.catalog<=performance.now());
+ if(document.hidden||expired){markAppsUnknown('软件状态已过期，等待重新读取。');return false;}
+ if(deadlines.length)appExpiryTimer=setTimeout(()=>markAppsUnknown('软件状态已过期，等待重新读取。'),Math.min(...deadlines)-performance.now());return true;
 }
 document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');clearMicSignal('等待重新读取麦克风。');multiRecording=false;if(!document.hidden)refreshApps();});
-async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
- try{const response=await api('/api/apps',{signal:controller.signal});if(serviceToken!==expectedToken)return;if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)receiveAppEntries(data,started);}
-  catch{markAppsUnknown('软件状态未知：服务读取失败。');clearMicSignal('无法读取麦克风状态。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
-async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
-  try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});if(serviceToken!==expectedToken)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return true;}
-  catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
+// Background reads do not lock controls; a mutation invalidates reads started before it.
+async function refreshApps(){if(appsBusy||appsReading||!serviceToken||document.hidden)return;appsReading=true;const expectedToken=serviceToken,epoch=appsReadEpoch,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+ try{const response=await api('/api/apps',{signal:controller.signal});if(serviceToken!==expectedToken||epoch!==appsReadEpoch)return;if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken&&epoch===appsReadEpoch)receiveAppEntries(data,started);}
+  catch{if(serviceToken===expectedToken&&epoch===appsReadEpoch){markAppsUnknown('软件状态未知：服务读取失败。');clearMicSignal('无法读取麦克风状态。');}}finally{clearTimeout(timeout);appsReading=false;}}
+async function editApp(operation,fields,revision=appRevision){if(appsBusy||!serviceToken)return;appsBusy=true;const epoch=++appsReadEpoch;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
+  try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision})});if(serviceToken!==expectedToken||epoch!==appsReadEpoch)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(serviceToken!==expectedToken||epoch!==appsReadEpoch)return false;if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return result.revision===appRevision;}
+  catch{if(serviceToken===expectedToken&&epoch===appsReadEpoch)markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
 function startAppPoll(){refreshApps();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
 async function redeemBootstrap(code){
   const response=await fetch('/api/bootstrap',{method:'POST',cache:'no-store',
@@ -482,9 +523,10 @@ function renderBindingStatus(config){
 }
 function expireBrowserSession(){
   serviceToken=null;
+  appsReadEpoch++;appValidUntil={catalog:0,choice:0};appBindingRenderKey='';
   clearTimeout(workbenchTimer);workbenchTimer=null;multiData=null;multiCaps=null;multiRecording=false;clearTimeout(microphonePoll);microphoneJob=null;clearTimeout(routePoll);routeJob=null;clearMicSignal('会话失效，设备状态未知。');updateWorkbenchControls();
   if(appTimer){clearInterval(appTimer);appTimer=null;}
-  clearTimeout(appExpiryTimer);appExpiryTimer=null;appsRenderKey='';lastAppsData=null;$('pinnedApps').replaceChildren();$('appChoices').replaceChildren();
+  clearTimeout(appExpiryTimer);appExpiryTimer=null;lastAppsData=null;for(const id of ['pinnedApps','appChoices']){const container=$(id);container.replaceChildren();container.appCards=new Map();container.appEmpty=null;}
   $('appReadStatus').textContent='会话已失效，软件状态未知。请从 Settings 重新打开。';
   bindingPollStarted=false;
   $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';

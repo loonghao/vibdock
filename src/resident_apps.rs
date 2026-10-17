@@ -186,6 +186,7 @@ pub(crate) struct Registry {
     catalog: Vec<Application>,
     catalog_selections: BTreeMap<String, CatalogSelection>,
     catalog_choices: Vec<(String, Application)>,
+    observation_salt: Option<String>,
     routes: BTreeMap<String, RouteOperation>,
     worker: Option<Worker>,
     actions: crate::resident_actions::Actions,
@@ -234,6 +235,7 @@ impl Registry {
             catalog: vec![],
             catalog_selections: BTreeMap::new(),
             catalog_choices: vec![],
+            observation_salt: crate::service::generate_token().ok(),
             routes: BTreeMap::new(),
             worker: None,
             actions: crate::resident_actions::Actions::default(),
@@ -452,6 +454,9 @@ impl Registry {
     }
     fn fresh(&self) -> bool {
         self.checked.is_some_and(|t| t.elapsed() < FRESH) && self.snapshot["available"] == true
+    }
+    fn observation_id(&self, kind: &str, key: &str) -> Option<String> {
+        crate::instance_proof::observation_id(self.observation_salt.as_deref(), kind, key)
     }
     fn catalog_fresh(&self) -> bool {
         self.checked.is_some_and(|at| at.elapsed() < FRESH)
@@ -704,11 +709,12 @@ impl Registry {
         let entries=self.entries.iter().map(|e| {
             let sessions:Vec<Value>=if fresh { self.sessions.iter().filter(|s|e.endpoint.as_deref().is_some_and(|endpoint|s.value["endpoint_id"]==endpoint) && s.value["executable_path"].as_str().is_some_and(|p|same_location(p,&e.executable))).map(|session| {
                 let mut v=session.public();
+                v["observation_id"]=json!(self.observation_id("windows.playback",&session.key));
                 if let Some((id,_))=self.current_choices.iter().find(|(id,s)|s.key==session.key && self.selections.get(id).is_some_and(|selection|selection.issued.elapsed()<SELECTION_TTL)) {
                     v["session_reference"]=json!(id);
                     v["actions_enabled"]=json!(self.worker.as_ref().is_some_and(|worker|worker.alive.load(std::sync::atomic::Ordering::Acquire)) && self.load_error.is_none() && !self.actions.pending() && !self.route_pending() && self.unique_session(session));
                 }
-                // Creation stamps remain internal action identity, never a browser authority.
+                // Creation stamps remain internal for saved-session rows.
                 v.as_object_mut().unwrap().remove("process_started");
                 v
             }).collect() } else {vec![]};
@@ -734,6 +740,7 @@ impl Registry {
                 .iter()
                 .map(|(id, s)| {
                     let mut v = s.public();
+                    v["observation_id"] = json!(self.observation_id("windows.playback", &s.key));
                     v["selection_id"] = json!(id);
                     v
                 })
@@ -781,6 +788,8 @@ impl Registry {
                 })
                 .map(|(id, application)| {
                     let mut row = application.public();
+                    row["observation_id"] =
+                        json!(self.observation_id("windows.catalog", &application.key));
                     row["selection_id"] = json!(id);
                     row
                 })
@@ -1437,6 +1446,123 @@ mod tests {
         value["routing_capabilities"] = json!({"state":"available","preferred_input":"available","preferred_output":"available","stream_state":"unknown","app_microphone_mute":"unsupported","error":null});
         value["routing_devices"] = json!({"available":true,"complete":true,"capture":[{"id":"chosen","name":"Desk microphone"}],"render":[{"id":"speaker","name":"Speakers"}],"error":null});
         value
+    }
+    #[test]
+    fn observation_ids_survive_ticket_rotation_without_renewing_authority() {
+        let mut r = Registry::empty(PathBuf::new(), None);
+        let mut observed = snapshot(123, "session-a");
+        observed["catalog"] = catalog_snapshot(42, "123")["catalog"].clone();
+        r.observe(observed.clone(), Instant::now());
+        let before = r.view(false);
+        let catalog_ticket = before["catalog"]["applications"][0]["selection_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let session_ticket = before["choices"][0]["selection_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let catalog_id = before["catalog"]["applications"][0]["observation_id"].clone();
+        let session_id = before["choices"][0]["observation_id"].clone();
+        assert!(token(catalog_id.as_str().unwrap()));
+        assert!(token(session_id.as_str().unwrap()));
+        r.catalog_selections
+            .get_mut(&catalog_ticket)
+            .unwrap()
+            .issued = Instant::now() - Duration::from_secs(16);
+        r.selections.get_mut(&session_ticket).unwrap().issued =
+            Instant::now() - Duration::from_secs(16);
+        assert!(r.route_target(&catalog_ticket).is_none());
+        assert!(r.route_target(&session_ticket).is_none());
+        r.observe(observed.clone(), Instant::now());
+        let after = r.view(false);
+        assert_ne!(
+            after["catalog"]["applications"][0]["selection_id"],
+            catalog_ticket
+        );
+        assert_ne!(after["choices"][0]["selection_id"], session_ticket);
+        assert_eq!(
+            after["catalog"]["applications"][0]["observation_id"],
+            catalog_id
+        );
+        assert_eq!(after["choices"][0]["observation_id"], session_id);
+        let mut restarted = Registry::empty(PathBuf::new(), None);
+        restarted.observe(observed, Instant::now());
+        assert_ne!(
+            restarted.view(false)["catalog"]["applications"][0]["observation_id"],
+            catalog_id
+        );
+        assert!(r.view(true)["catalog"]["applications"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn observation_ids_distinguish_reused_processes_and_exact_playback_sessions() {
+        let mut r = Registry::empty(PathBuf::new(), None);
+        r.observe(catalog_snapshot(42, "123"), Instant::now());
+        let id = r.view(false)["catalog"]["applications"][0]["observation_id"].clone();
+        r.observe(catalog_snapshot(42, "124"), Instant::now());
+        assert_ne!(
+            r.view(false)["catalog"]["applications"][0]["observation_id"],
+            id
+        );
+        let original = snapshot(123, "session-a");
+        r.observe(original.clone(), Instant::now());
+        let id = r.view(false)["choices"][0]["observation_id"].clone();
+        for (field, changed) in [
+            ("session_instance_id", json!("session-b")),
+            ("endpoint_id", json!("another-speaker")),
+            ("process_started", json!("124")),
+            ("process_id", json!(124)),
+            ("executable_path", json!("C:\\Fixture\\Other.exe")),
+        ] {
+            let mut observed = original.clone();
+            observed["sessions"][0][field] = changed;
+            r.observe(observed, Instant::now());
+            assert_ne!(r.view(false)["choices"][0]["observation_id"], id, "{field}");
+        }
+    }
+    #[test]
+    fn observation_ids_are_redacted_non_authority_and_absent_without_entropy() {
+        let path = temp();
+        let mut r = Registry::load(path);
+        r.observe(catalog_snapshot(42, "123"), Instant::now());
+        let view = r.view(false);
+        let observation = view["catalog"]["applications"][0]["observation_id"].clone();
+        assert!(!view.to_string().contains("Fixture"));
+        assert!(!view.to_string().contains("process_started"));
+        assert_eq!(
+            r.mutate(
+                "pin",
+                &json!({"revision":0,"selection_id":observation}).to_string()
+            )
+            .0,
+            409
+        );
+        assert!(!r.path.exists());
+        r.observation_salt = None;
+        let mut observed = snapshot(123, "session-a");
+        observed["catalog"] = catalog_snapshot(42, "123")["catalog"].clone();
+        r.observe(observed, Instant::now());
+        let view = r.view(false);
+        assert!(view["choices"][0]["observation_id"].is_null());
+        assert!(view["catalog"]["applications"][0]["observation_id"].is_null());
+        clean_fixture(r);
+        let (mut r, requests, _) = control_fixture();
+        let row = r.view(false)["entries"][0].clone();
+        assert!(row["sessions"][0].get("process_started").is_none());
+        assert!(row["sessions"][0]["observation_id"].as_str().is_some());
+        assert_eq!(r.prepare_action("fixture-browser",&json!({"entry_id":row["id"],"session_reference":row["sessions"][0]["observation_id"],"action":"mute"}).to_string()).0,409);
+        #[cfg(windows)]
+        {
+            r.snapshot["routing_capabilities"] =
+                catalog_snapshot(42, "123")["routing_capabilities"].clone();
+            let revision = r.revision;
+            assert_eq!(r.route(true,false,"/api/apps/routes","fixture-browser",&json!({"revision":revision,"selection_id":row["sessions"][0]["observation_id"],"flow":"capture","device_id":"chosen","roles":[0,1,2]}).to_string()).unwrap().0,409);
+        }
+        assert!(requests.try_recv().is_err());
+        clean_fixture(r);
     }
     #[test]
     fn catalog_presence_pin_roundtrips_without_inventing_an_audio_endpoint() {

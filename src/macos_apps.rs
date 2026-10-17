@@ -187,6 +187,7 @@ pub(crate) struct Registry {
     checked: Option<Instant>,
     selections: BTreeMap<String, Selection>,
     current_choices: Vec<(String, Application)>,
+    observation_salt: Option<String>,
     worker: Option<Worker>,
 }
 impl Registry {
@@ -233,6 +234,7 @@ impl Registry {
             checked: None,
             selections: BTreeMap::new(),
             current_choices: vec![],
+            observation_salt: crate::service::generate_token().ok(),
             worker: None,
         }
     }
@@ -439,7 +441,15 @@ impl Registry {
                             .iter()
                             .any(|entry| entry.bundle_path == app.bundle_path)
                 })
-                .map(|(id, app)| app.choice(id))
+                .map(|(id, app)| {
+                    let mut row = app.choice(id);
+                    row["observation_id"] = json!(crate::instance_proof::observation_id(
+                        self.observation_salt.as_deref(),
+                        "macos.application",
+                        &app.key
+                    ));
+                    row
+                })
                 .collect::<Vec<_>>()
         } else {
             vec![]
@@ -885,6 +895,45 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned()
+    }
+    #[test]
+    fn observation_id_survives_rotation_but_reused_pid_has_a_different_id() {
+        let fixture = Fixture::new();
+        let mut r = fixture.registry();
+        let old_ticket = select(&mut r);
+        let id = r.view(false)["choices"][0]["observation_id"].clone();
+        assert!(token(id.as_str().unwrap()));
+        r.selections.get_mut(&old_ticket).unwrap().issued =
+            Instant::now() - Duration::from_secs(16);
+        assert_eq!(pin(&mut r, &old_ticket).0, 409);
+        r.observe(snapshot(), Instant::now());
+        let view = r.view(false);
+        assert_ne!(view["choices"][0]["selection_id"], old_ticket);
+        assert_eq!(view["choices"][0]["observation_id"], id);
+        let mut observed = snapshot();
+        observed["applications"][0]["process_started"] =
+            json!(kernel_start(1_700_000_000, 123_457));
+        r.observe(observed, Instant::now());
+        assert_ne!(r.view(false)["choices"][0]["observation_id"], id);
+        let mut restarted = fixture.registry();
+        select(&mut restarted);
+        assert_ne!(restarted.view(false)["choices"][0]["observation_id"], id);
+        assert!(r.view(true)["choices"].as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn observation_id_does_not_disclose_paths_or_authorize_pin_and_entropy_failure_is_null() {
+        let fixture = Fixture::new();
+        let mut r = fixture.registry();
+        select(&mut r);
+        let view = r.view(false);
+        let id = view["choices"][0]["observation_id"].as_str().unwrap();
+        assert!(!view.to_string().contains("/Applications"));
+        assert!(!view.to_string().contains("process_started"));
+        assert!(!view.to_string().contains("executable_path"));
+        assert_eq!(pin(&mut r, id).0, 409);
+        assert!(!fixture.path().exists());
+        r.observation_salt = None;
+        assert!(r.view(false)["choices"][0]["observation_id"].is_null());
     }
     fn pin(registry: &mut Registry, selection: &str) -> (u16, Value) {
         registry.mutate(
