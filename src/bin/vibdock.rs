@@ -29,6 +29,9 @@ fn run() -> Result<()> {
         vibdock::help();
         return Ok(());
     }
+    if args.first().is_some_and(|argument| argument == "control") {
+        return vibdock::control(&args[1..]);
+    }
     let action = vibdock::parse(&args)?;
     if action == Action::Help {
         vibdock::help();

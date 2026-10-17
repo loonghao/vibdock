@@ -1,5 +1,5 @@
 use crate::{
-    hotkey::{Hotkey, Key, Modifier},
+    hotkey::{Chord, Hotkey, Key, Modifier},
     Action, Result,
 };
 use windows::{
@@ -42,6 +42,7 @@ impl HotkeyCode {
                 Modifier::Control => MOD_CONTROL,
                 Modifier::Alt => MOD_ALT,
                 Modifier::Shift => MOD_SHIFT,
+                Modifier::Win => MOD_WIN,
             };
         }
         modifiers |= MOD_NOREPEAT;
@@ -60,10 +61,12 @@ impl HotkeyCode {
 /// A character the active layout cannot produce has no virtual-key code at
 /// all, so it is reported as `None` rather than falling back to a sentinel
 /// value that could be mistaken for a real key.
-fn virtual_key(key: Key) -> Option<u32> {
+pub(crate) fn virtual_key(key: Key) -> Option<u32> {
     match key {
         // VK_F1 is 0x70 and the function keys are contiguous through VK_F24.
-        Key::Function(number) => Some(0x6F + u32::from(number)),
+        Key::Function(number) => (1..=24)
+            .contains(&number)
+            .then_some(0x6F + u32::from(number)),
         Key::Character(character) => {
             character_key(character).map(|mapping| u32::from(mapping as u8))
         }
@@ -81,7 +84,94 @@ fn virtual_key(key: Key) -> Option<u32> {
         Key::Enter => Some(u32::from(VK_RETURN.0)),
         Key::Tab => Some(u32::from(VK_TAB.0)),
         Key::Backspace => Some(u32::from(VK_BACK.0)),
+        Key::Named(name) => Some(match name {
+            "Numpad0" => 0x60,
+            "Numpad1" => 0x61,
+            "Numpad2" => 0x62,
+            "Numpad3" => 0x63,
+            "Numpad4" => 0x64,
+            "Numpad5" => 0x65,
+            "Numpad6" => 0x66,
+            "Numpad7" => 0x67,
+            "Numpad8" => 0x68,
+            "Numpad9" => 0x69,
+            "NumpadMultiply" => 0x6a,
+            "NumpadAdd" => 0x6b,
+            "NumpadSeparator" => 0x6c,
+            "NumpadSubtract" => 0x6d,
+            "NumpadDecimal" => 0x6e,
+            "NumpadDivide" => 0x6f,
+            "NumpadEnter" => 0x0d,
+            "CapsLock" => 0x14,
+            "NumLock" => 0x90,
+            "ScrollLock" => 0x91,
+            "PrintScreen" => 0x2c,
+            "Pause" => 0x13,
+            "Apps" => 0x5d,
+            "VolumeMute" => 0xad,
+            "VolumeDown" => 0xae,
+            "VolumeUp" => 0xaf,
+            "MediaNextTrack" => 0xb0,
+            "MediaPreviousTrack" => 0xb1,
+            "MediaStop" => 0xb2,
+            "MediaPlayPause" => 0xb3,
+            "BrowserBack" => 0xa6,
+            "BrowserForward" => 0xa7,
+            "BrowserRefresh" => 0xa8,
+            "BrowserStop" => 0xa9,
+            "BrowserSearch" => 0xaa,
+            "BrowserFavorites" => 0xab,
+            "BrowserHome" => 0xac,
+            "LaunchMail" => 0xb4,
+            "LaunchMediaPlayer" => 0xb5,
+            "LaunchApp1" => 0xb6,
+            "LaunchApp2" => 0xb7,
+            "Sleep" => 0x5f,
+            _ => return None,
+        }),
     }
+}
+
+pub(crate) fn chord_keys(chord: &Chord, layout: HKL) -> std::result::Result<Vec<u16>, String> {
+    let key = if chord.key() == Key::Named("NumpadEnter") {
+        0x010d
+    } else if let Key::Character(character) = chord.key() {
+        let character_code = u16::try_from(u32::from(character))
+            .map_err(|_| "Key is unavailable on the target keyboard layout")?;
+        let mapping = unsafe { VkKeyScanExW(character_code, layout) };
+        if mapping == -1 {
+            return Err("Key is unavailable on the target keyboard layout".into());
+        }
+        if (mapping as u16 >> 8) & !7 != 0 {
+            return Err("Key requires an unsupported keyboard-layout shift state".into());
+        }
+        if !character.is_ascii_alphabetic() {
+            for (bit, modifier) in [
+                (1, Modifier::Shift),
+                (2, Modifier::Control),
+                (4, Modifier::Alt),
+            ] {
+                if (mapping as u16 >> 8) & bit != 0 && !chord.modifiers().contains(&modifier) {
+                    return Err("Key requires explicit keyboard-layout modifiers".into());
+                }
+            }
+        }
+        mapping as u8 as u16
+    } else {
+        virtual_key(chord.key()).ok_or("Unsupported physical key")? as u16
+    };
+    let mut keys: Vec<u16> = chord
+        .modifiers()
+        .iter()
+        .map(|modifier| match modifier {
+            Modifier::Control => VK_CONTROL.0,
+            Modifier::Alt => VK_MENU.0,
+            Modifier::Shift => VK_SHIFT.0,
+            Modifier::Win => VK_LWIN.0,
+        })
+        .collect();
+    keys.push(key);
+    Ok(keys)
 }
 
 fn character_key(character: char) -> Option<u16> {
@@ -120,9 +210,20 @@ pub struct RegisteredHotkey {
 impl RegisteredHotkey {
     /// Registers `hotkey` for this thread, returning the live registration.
     pub fn register(hotkey: &Hotkey, id: i32) -> std::result::Result<RegisteredHotkey, String> {
+        if hotkey.key() == Key::Named("NumpadEnter") {
+            return Err("Windows global hotkeys cannot distinguish NumpadEnter from Enter; use Enter for a trigger.".into());
+        }
+        if hotkey.key() == Key::Function(12) {
+            return Err("F12 is reserved and cannot be a global trigger.".into());
+        }
         if let Key::Character(character) = hotkey.key() {
             let mapping = character_key(character)
                 .ok_or("The character is unavailable on the active keyboard layout.")?;
+            if (mapping >> 8) & !7 != 0 {
+                return Err(
+                    "The character requires an unsupported keyboard-layout shift state.".into(),
+                );
+            }
             // Letters are normalized to uppercase in the domain parser, but
             // letter shortcuts do not imply Shift. Symbols retain the layout's
             // required modifiers, which must be explicit in the recorded chord.
@@ -166,19 +267,20 @@ impl Drop for RegisteredHotkey {
 /// live, which is worse than reporting it as failed. This drains the queue
 /// without blocking so the HTTP accept loop keeps serving.
 ///
-/// Only messages matching `id` are treated as the binding; everything else is
-/// dispatched normally, so the thread does not accumulate a stuck queue.
-pub(crate) fn poll_hotkey(id: i32) -> usize {
+/// Preserve every hotkey ID in order; dispatch other messages normally.
+pub(crate) fn poll_hotkeys() -> Vec<i32> {
     let mut message = MSG::default();
-    let mut fired = 0;
+    let mut fired = Vec::new();
     unsafe {
         // PM_REMOVE takes each message out of the queue rather than peeking,
         // so one press is consumed exactly once and never re-delivered.
         while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-            if message.message == WM_HOTKEY && message.wParam.0 == id as usize {
+            if message.message == WM_HOTKEY {
                 // MOD_NOREPEAT suppresses held-key repeats. Preserve each
                 // queued press, including distinct presses between polls.
-                fired += 1;
+                if let Ok(id) = i32::try_from(message.wParam.0) {
+                    fired.push(id);
+                }
                 continue;
             }
             let _ = TranslateMessage(&message);
@@ -186,6 +288,14 @@ pub(crate) fn poll_hotkey(id: i32) -> usize {
         }
     }
     fired
+}
+
+/// Legacy single-ID polling wrapper; the resident service uses the batch drain.
+pub fn poll_hotkey(id: i32) -> usize {
+    poll_hotkeys()
+        .into_iter()
+        .filter(|received| *received == id)
+        .count()
 }
 
 struct Com;
@@ -215,7 +325,7 @@ unsafe fn endpoint(manager: &IMMDeviceEnumerator, id: &str) -> Result<IAudioEndp
     Ok(device.Activate(CLSCTX_ALL, None)?)
 }
 
-unsafe fn device_name(device: &IMMDevice) -> Result<String> {
+pub(crate) unsafe fn device_name(device: &IMMDevice) -> Result<String> {
     let store = device.OpenPropertyStore(STGM_READ)?;
     let mut value = store.GetValue(&PKEY_Device_FriendlyName)?;
     let raw = StructuredStorage::PropVariantToStringAlloc(&value);
@@ -226,7 +336,7 @@ unsafe fn device_name(device: &IMMDevice) -> Result<String> {
     Ok(name?)
 }
 
-unsafe fn device_id(device: &IMMDevice) -> Result<String> {
+pub(crate) unsafe fn device_id(device: &IMMDevice) -> Result<String> {
     let raw = device.GetId()?;
     let result = raw.to_string();
     CoTaskMemFree(Some(raw.0.cast()));
@@ -447,6 +557,32 @@ mod tests {
             // The queue was still drained, so a foreign binding cannot
             // starve this one by filling the queue.
             assert_eq!(poll_hotkey(4100), 0);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn all_named_keys_map_and_mixed_hotkey_ids_survive_one_drain() {
+        for name in crate::hotkey::NAMED_KEYS {
+            assert!(virtual_key(Key::parse(name).unwrap()).is_some(), "{name}");
+        }
+        assert!(virtual_key(Key::Named("Unknown")).is_none());
+        std::thread::spawn(|| unsafe {
+            let mut message = MSG::default();
+            let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+            let thread = windows::Win32::System::Threading::GetCurrentThreadId();
+            for id in [11, 12, 11] {
+                PostThreadMessageW(
+                    thread,
+                    WM_HOTKEY,
+                    windows::Win32::Foundation::WPARAM(id),
+                    windows::Win32::Foundation::LPARAM(0),
+                )
+                .unwrap();
+            }
+            assert_eq!(poll_hotkeys(), vec![11, 12, 11]);
+            assert!(poll_hotkeys().is_empty());
         })
         .join()
         .unwrap();

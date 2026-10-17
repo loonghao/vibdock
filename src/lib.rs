@@ -11,6 +11,9 @@ mod app_audio;
 mod app_session_stub;
 #[cfg(windows)]
 mod app_session_windows;
+mod audio_tests;
+mod binding_runtime;
+mod bindings;
 mod browser_auth;
 mod capabilities;
 pub mod feedback;
@@ -47,6 +50,8 @@ pub mod resident_apps;
 mod resident_windows;
 
 pub mod hotkey;
+#[cfg(windows)]
+mod key_sequence_windows;
 pub mod service;
 pub mod transport;
 #[cfg(windows)]
@@ -230,6 +235,8 @@ pub fn help() {
     println!("  tray             Run the Windows tray and open authenticated Web Settings");
     println!("  devices          List active microphone endpoints and their IDs");
     println!("  capabilities     Report documented integration capabilities");
+    println!("  control capabilities|config|bindings|apps|cancel");
+    println!("  control config|bindings --json-file FILE  Save typed JSON through the service");
     println!("  status|mute|unmute|toggle   Read or change one microphone's mute state");
     println!("  listen           Print state and toggle it on Ctrl+Alt+Shift+F9");
     println!("  app-devices      List playback endpoints for application session control");
@@ -240,6 +247,82 @@ pub fn help() {
     println!();
     println!("Exit codes are zero on success and nonzero on error. `service-start`");
     println!("reuses a running instance instead of binding a second listener.");
+}
+
+/// Uses the resident service's fixed authenticated control routes. No service
+/// token, arbitrary URL, executable, or shell command is accepted or printed.
+pub fn control(args: &[String]) -> Result<()> {
+    let (method, path, body) = control_request(args)?;
+    let client = service::ResidentControlClient::discover()?;
+    let value = client.request(method, path, body, 200, 128 * 1024)?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn control_request(
+    args: &[String],
+) -> Result<(&'static str, &'static str, Option<serde_json::Value>)> {
+    let Some(verb) = args.first().map(String::as_str) else {
+        return Err("Expected control capabilities, config, bindings, apps, or cancel".into());
+    };
+    let path = match verb {
+        "capabilities" => "/api/bindings/capabilities",
+        "config" => "/api/config",
+        "bindings" => "/api/bindings",
+        "apps" => "/api/apps/summary",
+        "cancel" => "/api/bindings/cancel",
+        _ => return Err("Unsupported control verb".into()),
+    };
+    if args.len() == 1 {
+        return Ok((
+            if verb == "cancel" { "POST" } else { "GET" },
+            path,
+            if verb == "cancel" {
+                Some(serde_json::json!({}))
+            } else {
+                None
+            },
+        ));
+    }
+    if args.len() != 3 || !matches!(verb, "config" | "bindings") {
+        return Err("Use control config|bindings --json-file FILE or --json JSON".into());
+    }
+    let raw = match args[1].as_str() {
+        "--json" => args[2].clone(),
+        "--json-file" => {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::fs::File::open(&args[2])?
+                .take(65537)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > 65536 {
+                return Err("Control JSON exceeds 65536 bytes".into());
+            }
+            String::from_utf8(bytes)?
+        }
+        _ => return Err("Only --json-file or --json is accepted".into()),
+    };
+    if raw.len() > 65536 {
+        return Err("Control JSON exceeds 65536 bytes".into());
+    }
+    let value = bindings::strict_json(&raw)?;
+    if !value.is_object() {
+        return Err("Control body must be a JSON object".into());
+    }
+    let allowed = if verb == "config" {
+        &["device_id", "hotkey"][..]
+    } else {
+        &["revision", "bindings"][..]
+    };
+    if value
+        .as_object()
+        .unwrap()
+        .keys()
+        .any(|key| !allowed.contains(&key.as_str()))
+    {
+        return Err("Unsupported control body field".into());
+    }
+    Ok(("POST", path, Some(value)))
 }
 
 /// Ensures a resident service is running and reports how it was obtained.
@@ -536,6 +619,47 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn control_cli_has_only_fixed_routes_and_closed_body_flags() {
+        for (verb, path) in [
+            ("capabilities", "/api/bindings/capabilities"),
+            ("config", "/api/config"),
+            ("bindings", "/api/bindings"),
+            ("apps", "/api/apps/summary"),
+        ] {
+            let (method, actual, body) = control_request(&args(&[verb])).unwrap();
+            assert_eq!((method, actual), ("GET", path));
+            assert!(body.is_none());
+        }
+        assert_eq!(
+            control_request(&args(&["cancel"])).unwrap(),
+            ("POST", "/api/bindings/cancel", Some(serde_json::json!({})))
+        );
+        assert_eq!(
+            control_request(&args(&[
+                "bindings",
+                "--json",
+                "{\"revision\":0,\"bindings\":[]}"
+            ]))
+            .unwrap()
+            .0,
+            "POST"
+        );
+        for bad in [
+            vec!["http://attacker.invalid"],
+            vec!["apps", "--json", "{}"],
+            vec!["bindings", "--url", "http://attacker.invalid"],
+            vec!["config", "--json", "[]"],
+            vec![
+                "config",
+                "--json",
+                "{\"device_id\":\"a\",\"device_id\":\"b\"}",
+            ],
+        ] {
+            assert!(control_request(&args(&bad)).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -927,7 +927,6 @@ pub(crate) fn resident_app_view() -> Result<(u16, serde_json::Value)> {
 /// Captured service identity for one resident playback operation. This handle
 /// and prepared capabilities stay on the single desktop worker, never in HWND
 /// data, window messages, menus, tooltips, URLs, or diagnostics.
-#[cfg(any(windows, test))]
 pub(crate) struct ResidentControlClient {
     instance: Instance,
 }
@@ -1047,9 +1046,7 @@ fn is_control_reference(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-#[cfg(any(windows, test))]
 impl ResidentControlClient {
-    #[cfg(windows)]
     pub(crate) fn discover() -> Result<Self> {
         Ok(Self {
             instance: read_instance().ok_or("No service instance")?,
@@ -1068,7 +1065,7 @@ impl ResidentControlClient {
 
     /// Each call gets a new pinned IPv4 socket, fresh proof, and exactly one
     /// privileged exchange. No reconnect, token reload, or automatic retry.
-    fn request(
+    pub(crate) fn request(
         &self,
         method: &str,
         path: &str,
@@ -1090,9 +1087,7 @@ impl ResidentControlClient {
         if status != expected_status {
             // Never include untrusted response contents, capabilities or bearer
             // values in a diagnostic that may later reach window text or logs.
-            return Err(
-                format!("Playback service request was not accepted (HTTP {status})").into(),
-            );
+            return Err(format!("Control service request was not accepted (HTTP {status})").into());
         }
         Ok(serde_json::from_str(&response)?)
     }
@@ -1102,6 +1097,7 @@ impl ResidentControlClient {
         self.request("GET", "/api/apps/summary", None, 200, 128 * 1024)
     }
 
+    #[cfg(any(windows, test))]
     pub(crate) fn prepare(
         &self,
         entry_id: &str,
@@ -1153,6 +1149,7 @@ impl ResidentControlClient {
 
     /// Send once only. A failed/lost response must be resolved by receipt GET,
     /// never by resending this execute body or preparing a replacement action.
+    #[cfg(any(windows, test))]
     pub(crate) fn execute(&self, prepared: &PreparedPlayback) -> Result<()> {
         if std::time::Instant::now() >= prepared.expires {
             return Err("Playback preparation expired before execute".into());
@@ -1170,6 +1167,7 @@ impl ResidentControlClient {
         Ok(())
     }
 
+    #[cfg(any(windows, test))]
     pub(crate) fn receipt(&self, operation_id: &str) -> Result<PlaybackReceipt> {
         if !is_control_reference(operation_id) {
             return Err("Invalid playback operation reference".into());
@@ -1753,16 +1751,15 @@ mod tests {
 
     #[test]
     fn stale_record_without_a_listener_is_not_a_live_instance() {
-        // A killed service leaves its file behind; believing it would make
-        // every later launch claim to reuse an instance that is not running.
-        assert!(live_instance().is_none() || instance_answers_port_of());
-    }
-
-    /// Confirms the running instance (if any) still answers its challenge.
-    pub(crate) fn instance_answers_port_of() -> bool {
-        live_instance()
-            .map(|i| instance_answers(i.port, &i.token))
-            .unwrap_or(false)
+        // Use an isolated stale record; a user's live instance can stop between probes.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let record = Instance {
+            port: listener.local_addr().unwrap().port(),
+            token: generate_token().unwrap(),
+        };
+        let stale = Instance::parse(&record.to_json()).unwrap();
+        drop(listener);
+        assert!(!instance_answers(stale.port, &stale.token));
     }
 
     #[test]

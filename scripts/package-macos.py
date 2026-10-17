@@ -75,13 +75,17 @@ def package(root, binary_directory, output, tag, target):
     if target not in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         raise ValueError("Unsupported macOS target")
     root, binary_directory, output = root.resolve(), binary_directory.resolve(), output.absolute()
-    for name in ("README.md", "LICENSE", "Cargo.toml", "assets", "assets/brand", "docs"):
+    for name in ("README.md", "LICENSE", "Cargo.toml", "assets", "assets/brand", "docs",
+                 "skills", "skills/vibdock-control", "skills/vibdock-control/SKILL.md"):
         if (root / name).is_symlink():
             raise ValueError("Top-level package inputs must not be symlinks")
     for name in ("assets", "docs"):
         for source in (root / name).rglob("*"):
             if source.is_symlink():
                 raise ValueError("Package resources must not follow symlinks")
+    skill = root / "skills/vibdock-control/SKILL.md"
+    if not skill.is_file() or skill.stat().st_size == 0:
+        raise ValueError("Required control skill is missing or empty")
     for name in ("vibdock", "vibdock-launcher"):
         check_macho(binary_directory / name, target)
     check_brand(root / "assets/brand")
@@ -102,6 +106,8 @@ def package(root, binary_directory, output, tag, target):
         shutil.copy2(root / name, resources / name)
     for name in ("assets", "docs"):
         shutil.copytree(root / name, resources / name, symlinks=False)
+    (resources / "skills/vibdock-control").mkdir(parents=True)
+    shutil.copy2(skill, resources / "skills/vibdock-control/SKILL.md")
     shutil.copy2(root / "assets/brand/vibdock.icns", resources / "vibdock.icns")
     metadata = {
         "CFBundleIdentifier": "com.loonghao.vibdock",

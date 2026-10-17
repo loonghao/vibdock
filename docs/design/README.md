@@ -64,7 +64,9 @@ In **service mode** (`audio_control: true`) the backend exposes an authenticated
 
 The global shortcut targets one selected microphone. The service reports whether Windows registered that shortcut; browser capture alone is not registration or physical-device evidence. Pinned Windows software entries can also retain an exact microphone association and expose explicit status/mute/unmute controls for that endpoint. The association is metadata, not an application input-route change. Application `start_voice`, `end_voice` and `input_routing` remain `not_implemented` and cannot be invoked.
 
-The backend stores exactly one global binding — a device plus a hotkey — and service mode presents one editor with real microphone choices. Per-key hardware drafts belong to design-preview mode. Software microphone associations are separate from the global shortcut; saving one does not register another shortcut or change the existing binding.
+The original microphone/hotkey pair remains compatible. The action editor additionally stores up to eight independent bindings in revisioned `bindings.json`, with typed microphone, playback and key-sequence actions. Software microphone associations remain separate metadata; saving an association does not register a shortcut. Per-key hardware drawings are design-preview data.
+
+The [visual audio and action binding specification](visual-bindings.md) describes the new application catalog, explicit microphone tests, guarded preferred input/output routing and bundled [agent control skill](../../skills/vibdock-control/SKILL.md). These are source capabilities; installed-client acceptance is a separate gate.
 
 ## Interaction behavior
 

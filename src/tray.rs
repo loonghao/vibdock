@@ -91,6 +91,7 @@ struct Observation {
     port: Option<u16>,
     apps: serde_json::Value,
     checked: Option<Instant>,
+    microphone_checked: Option<Instant>,
     generation: u64,
 }
 impl Observation {
@@ -105,8 +106,15 @@ impl Observation {
             port: None,
             apps: serde_json::Value::Null,
             checked: None,
+            microphone_checked: None,
             generation,
         }
+    }
+    fn microphone_fresh(&self) -> bool {
+        self.port.is_some()
+            && self
+                .microphone_checked
+                .is_some_and(|checked| checked.elapsed() < Duration::from_secs(4))
     }
 }
 
@@ -366,6 +374,7 @@ fn poll_worker(
                 let observation = Observation {
                     port: Some(candidate.port()),
                     checked: observation_time(started, &apps),
+                    microphone_checked: observation_time(started, &apps["microphone"]),
                     apps,
                     generation,
                 };
@@ -900,7 +909,7 @@ fn message_loop(
                     }
                 }
                 if let Some(current) = observation.as_ref() {
-                    apps.update(&current.apps, current.fresh());
+                    apps.update(&current.apps, current.fresh(), current.microphone_fresh());
                 }
             } else if message.message == UI_COMMAND {
                 command(message.wParam.0 as u32, poller, observation.as_ref());
@@ -909,7 +918,7 @@ fn message_loop(
                 // Revoke stale icon data before opening, then retain this exact
                 // mapping until modal tracking returns. Recheck at the click.
                 if let Some(current) = observation.as_ref() {
-                    apps.update(&current.apps, current.fresh());
+                    apps.update(&current.apps, current.fresh(), current.microphone_fresh());
                 }
                 match show_menu(window, message.wParam.0, &apps, observation.as_ref(), busy) {
                     Some(MenuChoice::Command(id)) => command(id, poller, observation.as_ref()),
@@ -1056,14 +1065,49 @@ fn playback_badge(row: &serde_json::Value) -> (&'static str, &'static str) {
     }
 }
 
+fn microphone_presentation(value: &serde_json::Value, fresh: bool) -> (&'static str, String) {
+    let device = value["device_id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control));
+    let read_failed = value.get("error").is_some_and(|error| !error.is_null());
+    let (badge, state) = match value["state"].as_str() {
+        Some("unconfigured")
+            if fresh
+                && value
+                    .get("device_id")
+                    .is_some_and(serde_json::Value::is_null)
+                && !read_failed =>
+        {
+            ("?", "not configured")
+        }
+        Some("muted") if fresh && device.is_some() && !read_failed => ("×", "muted"),
+        Some("unmuted") if fresh && device.is_some() && !read_failed => ("○", "unmuted"),
+        Some("disconnected") if fresh && device.is_some() => ("–", "disconnected or disabled"),
+        _ => ("?", "state unknown"),
+    };
+    let target = if fresh {
+        device.map(|id| {
+            visible_text(
+                value["name"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id),
+            )
+        })
+    } else {
+        None
+    };
+    let target = target.map(|name| format!(" {name}")).unwrap_or_default();
+    (badge, format!("Microphone{target}: {state}. Endpoint mute affects every application using this device. App voice and meeting state unknown. Opens Settings."))
+}
+
 fn strip_style() -> WINDOW_EX_STYLE {
     WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
 }
 
 fn strip_layout(work: RECT, count: usize) -> Option<RECT> {
-    let width = count.min(8) as i32 * STRIP_CELL;
-    if width == 0 || work.right - work.left < width + 16 || work.bottom - work.top < STRIP_CELL + 16
-    {
+    let width = (count.min(8) + 1) as i32 * STRIP_CELL;
+    if work.right - work.left < width + 16 || work.bottom - work.top < STRIP_CELL + 16 {
         return None;
     }
     Some(RECT {
@@ -1090,7 +1134,7 @@ unsafe extern "system" fn strip_proc(
         }
         WM_CONTEXTMENU => {
             let uid = GetPropW(HWND(wparam.0 as *mut _), w!("VibDockUID")).0 as usize;
-            if uid >= 2 {
+            if uid >= 1 {
                 if let Ok(owner) = GetWindow(window, GW_OWNER) {
                     let _ = PostMessageW(Some(owner), UI_MENU, WPARAM(uid), LPARAM(0));
                 }
@@ -1110,6 +1154,7 @@ struct AppIcons {
     tooltip: HWND,
     tips: Vec<Vec<u16>>,
     key: String,
+    microphone_key: String,
     icons: Vec<(HICON, bool)>,
     data: Vec<NOTIFYICONDATAW>,
     rows: Vec<serde_json::Value>,
@@ -1122,8 +1167,9 @@ impl AppIcons {
             window,
             strip: HWND::default(),
             tooltip: HWND::default(),
-            tips: (0..8).map(|_| wide("")).collect(),
+            tips: (0..9).map(|_| wide("")).collect(),
             key: String::new(),
+            microphone_key: String::new(),
             icons: vec![],
             data: vec![],
             rows: vec![],
@@ -1142,7 +1188,7 @@ impl AppIcons {
             apps.strip = CreateWindowExW(
                 strip_style(),
                 STRIP_CLASS,
-                w!("VibDock playback indicators; voice activity unknown"),
+                w!("VibDock microphone and playback indicators; voice and meeting state unknown"),
                 WS_POPUP,
                 0,
                 0,
@@ -1167,18 +1213,27 @@ impl AppIcons {
                 Some(instance),
                 None,
             )?;
-            for index in 0..8 {
+            for index in 0..9 {
+                let microphone = index == 8;
                 let button = CreateWindowExW(
                     WINDOW_EX_STYLE(0),
                     w!("BUTTON"),
                     None,
                     WS_CHILD | WS_CLIPCHILDREN | WINDOW_STYLE((BS_ICON | BS_FLAT) as u32),
-                    index * STRIP_CELL,
+                    if microphone {
+                        0
+                    } else {
+                        (index + 1) * STRIP_CELL
+                    },
                     0,
                     STRIP_CELL,
                     STRIP_CELL,
                     Some(apps.strip),
-                    Some(HMENU((200 + index) as usize as *mut _)),
+                    Some(HMENU(if microphone {
+                        199usize
+                    } else {
+                        (200 + index) as usize
+                    } as *mut _)),
                     Some(instance),
                     None,
                 )?;
@@ -1202,6 +1257,28 @@ impl AppIcons {
                     Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
                     Some(LPARAM(1)),
                 );
+                if microphone {
+                    let label = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("STATIC"),
+                        w!("MIC"),
+                        WS_CHILD | WS_VISIBLE | WS_DISABLED | WINDOW_STYLE(1),
+                        0,
+                        8,
+                        STRIP_CELL,
+                        19,
+                        Some(button),
+                        Some(HMENU(std::ptr::without_provenance_mut(2))),
+                        Some(instance),
+                        None,
+                    )?;
+                    SendMessageW(
+                        label,
+                        WM_SETFONT,
+                        Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
+                        Some(LPARAM(1)),
+                    );
+                }
                 let tool = TTTOOLINFOW {
                     cbSize: TOOLINFO_SIZE,
                     uFlags: TTF_IDISHWND | TTF_SUBCLASS,
@@ -1222,6 +1299,8 @@ impl AppIcons {
                 }
             }
         }
+        apps.update_microphone(&serde_json::Value::Null, false);
+        apps.place_strip();
         Ok(apps)
     }
     fn clear(&mut self) {
@@ -1251,7 +1330,8 @@ impl AppIcons {
             }
         }
     }
-    fn update(&mut self, value: &serde_json::Value, fresh: bool) {
+    fn update(&mut self, value: &serde_json::Value, fresh: bool, microphone_fresh: bool) {
+        self.update_microphone(&value["microphone"], microphone_fresh);
         unsafe {
             let rows = displayed_rows(value, &self.rows, fresh);
             self.uids = stable_tray_ids(&self.rows, &self.uids, &rows, &mut self.next_uid);
@@ -1338,13 +1418,21 @@ impl AppIcons {
         name: &str,
     ) -> windows::core::Result<HWND> {
         unsafe {
-            let button = GetDlgItem(Some(self.strip), 200 + index as i32)?;
+            let microphone = index == 8;
+            let button = GetDlgItem(
+                Some(self.strip),
+                if microphone { 199 } else { 200 + index as i32 },
+            )?;
             let badge_control = GetDlgItem(Some(button), 1)?;
             let next_tip = wide(name);
             SetPropW(
                 button,
                 w!("VibDockUID"),
-                Some(HANDLE(self.uids[index] as usize as *mut _)),
+                Some(HANDLE(if microphone {
+                    1usize
+                } else {
+                    self.uids[index] as usize
+                } as *mut _)),
             )?;
             SetWindowTextW(button, PCWSTR(next_tip.as_ptr()))?;
             SetWindowTextW(badge_control, PCWSTR(wide(badge).as_ptr()))?;
@@ -1373,6 +1461,23 @@ impl AppIcons {
             let _ = ShowWindow(button, SW_SHOWNOACTIVATE);
             let _ = InvalidateRect(Some(button), None, true);
             Ok(button)
+        }
+    }
+    fn update_microphone(&mut self, value: &serde_json::Value, fresh: bool) {
+        let (badge, name) = microphone_presentation(value, fresh);
+        if self.microphone_key == name {
+            return;
+        }
+        if self
+            .configure_button(8, HICON::default(), badge, &name)
+            .is_ok()
+        {
+            self.microphone_key = name;
+        } else if let Ok(button) = unsafe { GetDlgItem(Some(self.strip), 199) } {
+            unsafe {
+                let _ = ShowWindow(button, SW_HIDE);
+            }
+            self.microphone_key.clear();
         }
     }
     fn place_strip(&self) {
@@ -1502,7 +1607,13 @@ mod tests {
                 Some(instance),
                 None,
             )?;
+            let foreground = GetForegroundWindow();
             let mut apps = AppIcons::new(windows.owner)?;
+            assert!(
+                IsWindowVisible(apps.strip).as_bool(),
+                "Microphone cell must be visible with no software pins"
+            );
+            apps.update_microphone(&json!({"device_id":"synthetic-microphone","name":"Synthetic microphone fixture; no live hardware","state":"muted"}), true);
             apps.rows = vec![
                 json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":false}]}),
                 json!({"complete":true,"state":"connected","sessions":[{"active":true,"muted":true}]}),
@@ -1510,7 +1621,12 @@ mod tests {
                 json!({"complete":false,"state":"unknown","sessions":[]}),
             ];
             apps.uids = vec![2, 3, 4, 5];
-            let mut buttons = vec![];
+            let microphone = GetDlgItem(Some(apps.strip), 199)?;
+            let mut microphone_name = [0u16; 512];
+            let microphone_len = GetWindowTextW(microphone, &mut microphone_name) as usize;
+            let mut buttons = vec![
+                json!({"hwnd":microphone.0 as usize,"name":String::from_utf16_lossy(&microphone_name[..microphone_len])}),
+            ];
             for (index, resource) in [IDI_INFORMATION, IDI_WARNING, IDI_APPLICATION, IDI_ERROR]
                 .into_iter()
                 .enumerate()
@@ -1551,7 +1667,6 @@ mod tests {
                 apps.data.is_empty(),
                 "Probe must not add notification-area icons"
             );
-            let foreground = GetForegroundWindow();
             apps.place_strip();
             assert_eq!(GetForegroundWindow(), foreground);
             assert!(IsWindowVisible(apps.strip).as_bool());
@@ -1579,7 +1694,7 @@ mod tests {
                 let mut rect = RECT::default();
                 GetWindowRect(button, &mut rect)?;
                 assert!(IsWindowVisible(button).as_bool());
-                assert_eq!(rect.left, actual.left + index as i32 * STRIP_CELL);
+                assert_eq!(rect.left, actual.left + (index + 1) as i32 * STRIP_CELL);
                 assert_eq!(
                     (rect.right - rect.left, rect.bottom - rect.top),
                     (STRIP_CELL, STRIP_CELL)
@@ -1628,6 +1743,63 @@ mod tests {
     }
 
     #[test]
+    fn microphone_indication_is_readback_only_and_endpoint_wide() {
+        let mut value = json!({"device_id":"fixture-mic","name":"Synthetic microphone","state":"muted","error":null});
+        for (state, badge) in [
+            ("muted", "×"),
+            ("unmuted", "○"),
+            ("disconnected", "–"),
+            ("unknown", "?"),
+        ] {
+            value["state"] = json!(state);
+            let (actual, name) = microphone_presentation(&value, true);
+            assert_eq!(actual, badge);
+            assert!(name.contains("Synthetic microphone"));
+            assert!(name.contains("every application"));
+            assert!(name.contains("voice and meeting state unknown"));
+        }
+        value["state"] = json!("unmuted");
+        value["error"] = json!("helper_timed_out");
+        assert_eq!(microphone_presentation(&value, true).0, "?");
+        value["error"] = serde_json::Value::Null;
+        assert_eq!(microphone_presentation(&value, false).0, "?");
+        value["device_id"] = json!("");
+        assert_eq!(microphone_presentation(&value, true).0, "?");
+        let (_, unconfigured) =
+            microphone_presentation(&json!({"device_id":null,"state":"unconfigured"}), true);
+        assert!(unconfigured.contains("not configured"));
+        assert_eq!(
+            microphone_presentation(&json!({"state":"unconfigured"}), true).0,
+            "?"
+        );
+        assert_eq!(
+            microphone_presentation(&serde_json::Value::Null, true).0,
+            "?"
+        );
+    }
+
+    #[test]
+    fn microphone_freshness_counts_source_and_transport_age_independently() {
+        let mut view = fixture_observation();
+        assert!(view.microphone_fresh());
+        view.checked = None;
+        assert!(
+            view.microphone_fresh(),
+            "Unavailable playback is not a failed microphone read"
+        );
+        let started = Instant::now() - Duration::from_secs(3);
+        view.microphone_checked = observation_time(started, &json!({"age_ms":1500}));
+        assert!(!view.microphone_fresh());
+        view.microphone_checked = observation_time(Instant::now(), &json!({"age_ms":0}));
+        view.port = None;
+        assert!(
+            !view.microphone_fresh(),
+            "A stale service identity cannot retain microphone authority"
+        );
+        assert!(!Observation::unavailable(9).microphone_fresh());
+    }
+
+    #[test]
     fn strip_layout_stays_inside_work_area_and_never_takes_focus() {
         let work = RECT {
             left: -1920,
@@ -1636,11 +1808,12 @@ mod tests {
             bottom: 1080,
         };
         let area = strip_layout(work, 12).unwrap();
-        assert_eq!(area.right - area.left, 8 * STRIP_CELL);
+        assert_eq!(area.right - area.left, 9 * STRIP_CELL);
         assert_eq!(area.bottom - area.top, STRIP_CELL);
         assert!(area.left >= work.left && area.right <= work.right);
         assert!(area.top >= work.top && area.bottom < work.bottom);
-        assert!(strip_layout(work, 0).is_none());
+        let microphone_only = strip_layout(work, 0).unwrap();
+        assert_eq!(microphone_only.right - microphone_only.left, STRIP_CELL);
         assert!(strip_layout(
             RECT {
                 right: 40,
@@ -1677,6 +1850,7 @@ mod tests {
         Observation {
             port: Some(43128),
             checked: Some(Instant::now()),
+            microphone_checked: Some(Instant::now()),
             generation: 7,
             apps: json!({"age_ms":0,"entries":[{"id":"a".repeat(64),"label":"Synthetic fixture, not live audio","icon_b64":"old icon","actions_enabled":true,"sessions":[
                 {"session_reference":"b".repeat(64),"process_id":41,"display_name":"First fixture","muted":false,"active":true,"actions_enabled":true},

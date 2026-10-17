@@ -8,7 +8,7 @@ workflow on all three targets and runnable offline for fixture acceptance when
 hosted Actions are unavailable.
 
 On a Windows target the archive contains BOTH entry points - the console CLI
-(vibdock.exe) and the GUI launcher (vibdock-launcher.exe) - plus README.md, LICENSE, assets, docs, and
+(vibdock.exe) and the GUI launcher (vibdock-launcher.exe) - plus README.md, LICENSE, assets, docs, the control skill, and
 packaging fails if any is missing. Each Windows executable is verified against
 its PE subsystem: the CLI must be the console subsystem (3) and the launcher the
 GUI subsystem (2), so a miscompiled launcher can never ship as a flashing
@@ -183,6 +183,22 @@ try {
         Copy-Item -LiteralPath $source -Destination $packagePath -Recurse
     }
 
+    # Ship only the public control skill, never unrelated local agent content.
+    foreach ($name in @('skills', 'skills/vibdock-control', 'skills/vibdock-control/SKILL.md')) {
+        $source = Join-Path $outputRoot $name
+        if (-not (Test-Path -LiteralPath $source)) { throw "Required control skill is missing: $name" }
+        if ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Control skill inputs must not be symlinks or reparse points: $name"
+        }
+    }
+    $skill = Join-Path $outputRoot 'skills/vibdock-control/SKILL.md'
+    if (-not (Test-Path -LiteralPath $skill -PathType Leaf) -or (Get-Item -LiteralPath $skill).Length -eq 0) {
+        throw 'Required control skill is missing or empty'
+    }
+    $skillDestination = Join-Path $packagePath 'skills/vibdock-control'
+    New-Item -ItemType Directory -Path $skillDestination -Force | Out-Null
+    Copy-Item -LiteralPath $skill -Destination (Join-Path $skillDestination 'SKILL.md')
+
     # Git must not rewrite original SVG line endings on Windows. Verify the
     # shipped bytes rather than assuming a successful copy preserved the art.
     $brand = Join-Path $packagePath 'assets/brand'
@@ -224,7 +240,7 @@ try {
     # keeps `sha256sum -c` working on every platform.
     "$digest  $archiveName`n" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii -NoNewline
 
-    Write-Output "Packaged $archiveName (entries: $($artifacts -join ', '), README.md, LICENSE, assets, docs)"
+    Write-Output "Packaged $archiveName (entries: $($artifacts -join ', '), README.md, LICENSE, assets, docs, skills/vibdock-control/SKILL.md)"
 }
 finally {
     # Remove only the unique staging directory created above, and only after

@@ -1,6 +1,10 @@
 //! Persisted locations, bounded playback observations and explicit exact-session actions.
 //! A saved path is a correlation location, never authority to execute or mute.
 use serde_json::{json, Value};
+#[path = "app_route.rs"]
+pub(crate) mod app_route;
+#[path = "audio_probe.rs"]
+pub(crate) mod audio_probe;
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -16,7 +20,7 @@ const SELECTION_TTL: Duration = Duration::from_secs(15);
 struct Entry {
     id: String,
     label: String,
-    endpoint: String,
+    endpoint: Option<String>,
     executable: String,
     device_id: Option<String>,
 }
@@ -40,7 +44,10 @@ impl Entry {
         Some(Self {
             id,
             label: string(value, "label", 80)?,
-            endpoint: string(value, "endpoint_id", 512)?,
+            endpoint: match value.get("endpoint_id") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(string(value, "endpoint_id", 512)?),
+            },
             executable,
             device_id,
         })
@@ -120,6 +127,49 @@ struct Selection {
     issued: Instant,
 }
 
+#[derive(Clone)]
+struct Application {
+    value: Value,
+    key: String,
+}
+impl Application {
+    fn parse(value: Value) -> Option<Self> {
+        let exe = string(&value, "executable_path", 1024)?;
+        if !local_executable(&exe) {
+            return None;
+        }
+        let pid = value["process_id"]
+            .as_u64()
+            .filter(|pid| *pid > 4 && *pid <= u32::MAX as u64)?;
+        let started = string(&value, "process_started", 32)?;
+        if !started.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        string(&value, "display_name", 160)?;
+        string(&value, "window_title", 160)?;
+        let key = json!([pid, started, exe]).to_string();
+        let mut value = value;
+        if value["icon_b64"].as_str().and_then(decode_icon).is_none() {
+            value["icon_b64"] = Value::Null;
+        }
+        Some(Self { value, key })
+    }
+    fn public(&self) -> Value {
+        json!({"process_id":self.value["process_id"],"display_name":self.value["display_name"],"window_title":self.value["window_title"],"icon_b64":self.value["icon_b64"],"presence":"visible_window","playback_state":"unknown","voice_state":"unknown"})
+    }
+}
+struct CatalogSelection {
+    application: Application,
+    issued: Instant,
+}
+struct RouteOperation {
+    principal: String,
+    revision: u64,
+    job: app_route::Job,
+    result: Value,
+    completed: Option<Instant>,
+}
+
 pub(crate) struct Registry {
     path: PathBuf,
     entries: Vec<Entry>,
@@ -129,8 +179,14 @@ pub(crate) struct Registry {
     snapshot: Value,
     sessions: Vec<Session>,
     checked: Option<Instant>,
+    microphone_device: Option<Option<String>>,
+    microphone_changed: Instant,
     selections: BTreeMap<String, Selection>,
     current_choices: Vec<(String, Session)>,
+    catalog: Vec<Application>,
+    catalog_selections: BTreeMap<String, CatalogSelection>,
+    catalog_choices: Vec<(String, Application)>,
+    routes: BTreeMap<String, RouteOperation>,
     worker: Option<Worker>,
     actions: crate::resident_actions::Actions,
 }
@@ -147,7 +203,7 @@ impl Registry {
         #[cfg(windows)]
         {
             if enabled {
-                state.worker = Worker::start().ok();
+                state.worker = Worker::start(state.revision).ok();
                 if state.worker.is_none() {
                     state.snapshot = unavailable("Observation worker could not start");
                 }
@@ -171,8 +227,14 @@ impl Registry {
             snapshot: unavailable("Waiting for native playback observation"),
             sessions: vec![],
             checked: None,
+            microphone_device: None,
+            microphone_changed: Instant::now(),
             selections: BTreeMap::new(),
             current_choices: vec![],
+            catalog: vec![],
+            catalog_selections: BTreeMap::new(),
+            catalog_choices: vec![],
+            routes: BTreeMap::new(),
             worker: None,
             actions: crate::resident_actions::Actions::default(),
         }
@@ -209,10 +271,37 @@ impl Registry {
         // Never coalesce action completions with best-effort observation frames.
         if let Some(worker) = &self.worker {
             for (id, observed_since, result) in worker.results.try_iter() {
-                self.actions.complete(&id, result, observed_since);
+                if let Some(operation) = self.routes.get_mut(&id) {
+                    operation.result = if app_route::valid_result(&result, &operation.job) {
+                        result
+                    } else {
+                        app_route::failure(&operation.job, true, "route_result_invalid")
+                    };
+                    if operation.revision != self.revision
+                        && operation.result["state"] == "verified"
+                    {
+                        operation.result = app_route::failure(
+                            &operation.job,
+                            operation.result["write_attempted"] == true,
+                            "route_configuration_changed",
+                        );
+                    }
+                    operation.completed = Some(observed_since);
+                } else {
+                    self.actions.complete(&id, result, observed_since);
+                }
             }
             if !worker.alive.load(std::sync::atomic::Ordering::Acquire) {
                 self.actions.owner_stopped();
+                for operation in self
+                    .routes
+                    .values_mut()
+                    .filter(|operation| operation.completed.is_none())
+                {
+                    operation.result =
+                        app_route::failure(&operation.job, true, "route_owner_stopped");
+                    operation.completed = Some(Instant::now());
+                }
             }
         }
         let next = self
@@ -223,10 +312,101 @@ impl Registry {
             self.observe(value, collected);
         }
     }
+    /// The service's committed configuration is authoritative, never a platform default.
+    #[cfg(any(windows, test))]
+    pub(crate) fn set_microphone_device(&mut self, device_id: Option<&str>) {
+        let device = device_id.map(str::to_owned);
+        if self.microphone_device.as_ref() == Some(&device) {
+            return;
+        }
+        self.microphone_device = Some(device.clone());
+        self.microphone_changed = Instant::now();
+        if let Some(worker) = &self.worker {
+            if let Ok(mut target) = worker.microphone.lock() {
+                *target = device;
+            }
+        }
+    }
+    fn microphone_view(&self) -> Value {
+        let Some(device) = &self.microphone_device else {
+            return audio_probe::unknown(None, "Microphone configuration is unavailable");
+        };
+        let Some(id) = device.as_deref() else {
+            let mut value = audio_probe::unknown(None, "");
+            value["state"] = json!("unconfigured");
+            value["error"] = Value::Null;
+            value["age_ms"] = json!(0);
+            return value;
+        };
+        let Some(checked) = self
+            .checked
+            .filter(|checked| *checked >= self.microphone_changed)
+        else {
+            return audio_probe::unknown(
+                Some(id),
+                "Waiting for the configured microphone observation",
+            );
+        };
+        if checked.elapsed() >= FRESH {
+            let mut value = audio_probe::unknown(Some(id), "Microphone observation expired");
+            value["age_ms"] = json!(checked.elapsed().as_millis().min(u64::MAX as u128) as u64);
+            return value;
+        }
+        let microphone = &self.snapshot["microphone"];
+        if !audio_probe::valid_microphone(microphone, id) {
+            return audio_probe::unknown(
+                Some(id),
+                "Microphone observation is unavailable or changed",
+            );
+        }
+        let mut value = microphone.clone();
+        value["age_ms"] = json!(checked.elapsed().as_millis().min(u64::MAX as u128) as u64);
+        value
+    }
     fn observe(&mut self, value: Value, now: Instant) {
         self.generation = self.generation.saturating_add(1);
         self.snapshot = value;
         self.checked = Some(now);
+        self.catalog = self.snapshot["catalog"]["applications"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(MAX_SESSIONS)
+            .filter_map(|v| Application::parse(v.clone()))
+            .collect();
+        if self.snapshot["catalog"]["applications"]
+            .as_array()
+            .map_or(0, Vec::len)
+            != self.catalog.len()
+        {
+            self.snapshot["catalog"]["complete"] = json!(false);
+        }
+        self.catalog_selections
+            .retain(|_, selection| now.saturating_duration_since(selection.issued) < SELECTION_TTL);
+        self.catalog_choices.clear();
+        for application in &self.catalog {
+            let existing = self
+                .catalog_selections
+                .iter()
+                .find(|(_, selection)| selection.application.key == application.key)
+                .map(|(id, _)| id.clone());
+            if let Some(id) = existing.or_else(|| crate::service::generate_token().ok()) {
+                self.catalog_selections
+                    .entry(id.clone())
+                    .or_insert_with(|| CatalogSelection {
+                        application: application.clone(),
+                        issued: now,
+                    });
+                self.catalog_choices.push((id, application.clone()));
+            }
+        }
+        if self.catalog_selections.len() > MAX_SESSIONS * 8 {
+            self.catalog_selections.retain(|id, _| {
+                self.catalog_choices
+                    .iter()
+                    .any(|(current, _)| id == current)
+            });
+        }
         self.sessions = self.snapshot["sessions"]
             .as_array()
             .into_iter()
@@ -273,26 +453,279 @@ impl Registry {
     fn fresh(&self) -> bool {
         self.checked.is_some_and(|t| t.elapsed() < FRESH) && self.snapshot["available"] == true
     }
+    fn catalog_fresh(&self) -> bool {
+        self.checked.is_some_and(|at| at.elapsed() < FRESH)
+            && self.snapshot["catalog"]["available"] == true
+    }
+    fn route_pending(&self) -> bool {
+        self.routes
+            .values()
+            .any(|operation| operation.completed.is_none())
+    }
+    fn routing_capabilities(&self) -> Value {
+        let value = &self.snapshot["routing_capabilities"];
+        let fresh = self.checked.is_some_and(|at| at.elapsed() < FRESH);
+        let consistent = value["stream_state"] == "unknown"
+            && value["app_microphone_mute"] == "unsupported"
+            && match value["state"].as_str() {
+                Some("available") => {
+                    value["preferred_input"] == "available"
+                        && value["preferred_output"] == "available"
+                        && value["error"].is_null()
+                }
+                Some("unknown" | "unsupported") => {
+                    value["preferred_input"] == "unknown"
+                        && value["preferred_output"] == "unknown"
+                        && string(value, "error", 2048).is_some()
+                }
+                _ => false,
+            };
+        if fresh && consistent {
+            json!({"state":value["state"],"preferred_input":value["preferred_input"],"preferred_output":value["preferred_output"],"stream_state":"unknown","app_microphone_mute":"unsupported","error":value["error"]})
+        } else {
+            json!({"state":"unknown","preferred_input":"unknown","preferred_output":"unknown","stream_state":"unknown","app_microphone_mute":"unsupported","error":"Preferred routing observation is unavailable or expired"})
+        }
+    }
+    fn route_target(&self, id: &str) -> Option<Value> {
+        if self.catalog_fresh() {
+            if let Some(selection) = self
+                .catalog_selections
+                .get(id)
+                .filter(|selection| selection.issued.elapsed() < SELECTION_TTL)
+            {
+                if let Some(application) = self
+                    .catalog
+                    .iter()
+                    .find(|application| application.key == selection.application.key)
+                {
+                    return Some(application.value.clone());
+                }
+            }
+        }
+        if self.fresh() {
+            if let Some(selection) = self
+                .selections
+                .get(id)
+                .filter(|selection| selection.issued.elapsed() < SELECTION_TTL)
+            {
+                if let Some(session) = self
+                    .sessions
+                    .iter()
+                    .find(|session| session.key == selection.session.key)
+                {
+                    return Some(session.value.clone());
+                }
+            }
+        }
+        None
+    }
+    fn entry_routing_selection(&self, entry: &Entry) -> Option<String> {
+        let identity = |value: &Value| {
+            json!([
+                value["process_id"],
+                value["process_started"],
+                value["executable_path"]
+            ])
+            .to_string()
+        };
+        let mut identities: BTreeMap<String, Option<String>> = BTreeMap::new();
+        // Consumed/expired capabilities cannot hide another observed process.
+        // A saved location alone never authorizes choosing one of several PIDs.
+        if self.catalog_fresh() {
+            for application in &self.catalog {
+                if application.value["executable_path"] == entry.executable {
+                    identities.insert(identity(&application.value), None);
+                }
+            }
+        }
+        if self.fresh() {
+            for session in &self.sessions {
+                if session.value["executable_path"] == entry.executable {
+                    identities.insert(identity(&session.value), None);
+                }
+            }
+        }
+        let mut add = |id: &str, value: &Value| {
+            if value["executable_path"] == entry.executable {
+                if let Some(token) = identities.get_mut(&identity(value)) {
+                    if token.is_none() {
+                        *token = Some(id.to_owned());
+                    }
+                }
+            }
+        };
+        if self.catalog_fresh() {
+            for (id, application) in &self.catalog_choices {
+                if self
+                    .catalog_selections
+                    .get(id)
+                    .is_some_and(|selection| selection.issued.elapsed() < SELECTION_TTL)
+                {
+                    add(id, &application.value);
+                }
+            }
+        }
+        if self.fresh() {
+            for (id, session) in &self.current_choices {
+                if self
+                    .selections
+                    .get(id)
+                    .is_some_and(|selection| selection.issued.elapsed() < SELECTION_TTL)
+                {
+                    add(id, &session.value);
+                }
+            }
+        }
+        if identities.len() == 1 {
+            identities.into_values().next().flatten()
+        } else {
+            None
+        }
+    }
+    pub(crate) fn route(
+        &mut self,
+        post: bool,
+        get: bool,
+        path: &str,
+        principal: &str,
+        body: &str,
+    ) -> Option<(u16, Value)> {
+        if path != "/api/apps/routes" && !path.starts_with("/api/apps/routes/") {
+            return None;
+        }
+        let fail = |code, error: &str| (code, json!({"error":error}));
+        if principal.is_empty() {
+            return Some(fail(401, "Authorization is required"));
+        }
+        self.poll();
+        self.routes.retain(|_, operation| {
+            operation
+                .completed
+                .is_none_or(|at| at.elapsed() < Duration::from_secs(120))
+        });
+        if get && path.starts_with("/api/apps/routes/") {
+            let id = path.trim_start_matches("/api/apps/routes/");
+            return Some(
+                match self
+                    .routes
+                    .get(id)
+                    .filter(|operation| token(id) && operation.principal == principal)
+                {
+                    Some(operation) => {
+                        let mut result = operation.result.clone();
+                        result["revision"] = json!(operation.revision);
+                        (200, result)
+                    }
+                    None => fail(404, "Route operation is unavailable"),
+                },
+            );
+        }
+        if !post || path != "/api/apps/routes" {
+            return Some(fail(404, "Unknown route operation"));
+        }
+        let request = match app_route::parse_request(body.as_bytes()) {
+            Ok(request) => request,
+            Err(error) => return Some(fail(400, error)),
+        };
+        if self.load_error.is_some() {
+            return Some(fail(
+                503,
+                "App storage is unavailable; original data is preserved",
+            ));
+        }
+        if request.revision != self.revision {
+            return Some(fail(409, "App entries changed; refresh before routing"));
+        }
+        if !cfg!(windows) {
+            return Some(fail(
+                501,
+                "Native preferred endpoint routing is unavailable on this platform",
+            ));
+        }
+        if self.routes.len() >= 16 || self.route_pending() || self.actions.pending() {
+            return Some(fail(
+                409,
+                "An operation is pending or the receipt limit was reached",
+            ));
+        }
+        if !self.checked.is_some_and(|at| at.elapsed() < FRESH)
+            || self.routing_capabilities()["state"] != "available"
+        {
+            return Some(fail(
+                503,
+                "Native preferred endpoint routing has not passed its read-only availability probe",
+            ));
+        }
+        let Some(target) = self.route_target(&request.selection_id) else {
+            return Some(fail(
+                409,
+                "Selected application expired or changed; refresh and select again",
+            ));
+        };
+        let Some(worker) = self
+            .worker
+            .as_ref()
+            .filter(|worker| worker.alive.load(std::sync::atomic::Ordering::Acquire))
+        else {
+            return Some(fail(503, "Native action worker is unavailable"));
+        };
+        let Ok(id) = crate::service::generate_token() else {
+            return Some(fail(503, "Secure route identifiers are unavailable"));
+        };
+        let mut runtime_target = serde_json::Map::new();
+        for field in ["process_id", "process_started", "executable_path"] {
+            runtime_target.insert(field.into(), target[field].clone());
+        }
+        let job = json!({"kind":"preferred_endpoint_route","operation_id":id,"target":runtime_target,"flow":request.flow,"device_id":request.device_id,"roles":request.roles});
+        let job = match app_route::parse_job(job.to_string().as_bytes()) {
+            Ok(job) => job,
+            Err(error) => return Some(fail(409, error)),
+        };
+        let mut queued = job.json();
+        queued["revision"] = json!(request.revision);
+        if worker.commands.try_send(queued).is_err() {
+            return Some(fail(409, "Native action queue is busy"));
+        }
+        let result = json!({"operation_id":id,"process_id":job.process_id,"flow":job.flow,"device_id":job.device_id,"roles":job.roles,"state":"pending","stream_state":"unknown","error":null});
+        self.routes.insert(
+            id,
+            RouteOperation {
+                principal: principal.into(),
+                revision: request.revision,
+                job,
+                result: result.clone(),
+                completed: None,
+            },
+        );
+        Some((202, result))
+    }
     pub(crate) fn view(&self, summary: bool) -> Value {
         let fresh = self.fresh();
         let entries=self.entries.iter().map(|e| {
-            let sessions:Vec<Value>=if fresh { self.sessions.iter().filter(|s|s.value["endpoint_id"]==e.endpoint && s.value["executable_path"].as_str().is_some_and(|p|same_location(p,&e.executable))).map(|session| {
+            let sessions:Vec<Value>=if fresh { self.sessions.iter().filter(|s|e.endpoint.as_deref().is_some_and(|endpoint|s.value["endpoint_id"]==endpoint) && s.value["executable_path"].as_str().is_some_and(|p|same_location(p,&e.executable))).map(|session| {
                 let mut v=session.public();
                 if let Some((id,_))=self.current_choices.iter().find(|(id,s)|s.key==session.key && self.selections.get(id).is_some_and(|selection|selection.issued.elapsed()<SELECTION_TTL)) {
                     v["session_reference"]=json!(id);
-                    v["actions_enabled"]=json!(self.worker.as_ref().is_some_and(|worker|worker.alive.load(std::sync::atomic::Ordering::Acquire)) && self.load_error.is_none() && !self.actions.pending() && self.unique_session(session));
+                    v["actions_enabled"]=json!(self.worker.as_ref().is_some_and(|worker|worker.alive.load(std::sync::atomic::Ordering::Acquire)) && self.load_error.is_none() && !self.actions.pending() && !self.route_pending() && self.unique_session(session));
                 }
                 // Creation stamps remain internal action identity, never a browser authority.
                 v.as_object_mut().unwrap().remove("process_started");
                 v
             }).collect() } else {vec![]};
-            let complete=fresh && self.snapshot["endpoints"].as_array().is_some_and(|endpoints|endpoints.iter().any(|v|v["id"]==e.endpoint && v["complete"]==true));
+            let complete=fresh && e.endpoint.as_deref().is_some_and(|endpoint|self.snapshot["endpoints"].as_array().is_some_and(|endpoints|endpoints.iter().any(|v|v["id"]==endpoint && v["complete"]==true)));
             let state=if !sessions.is_empty(){"connected"}else if complete{"not_connected"}else{"unknown"};
             let icon=sessions.iter().find_map(|s|s.get("icon_b64").and_then(Value::as_str)).map(str::to_owned);
             let playback=if !complete && !sessions.is_empty(){"Partial observation; aggregate playback state unknown"}else if sessions.is_empty(){"Playback state unknown"}else if sessions.iter().any(|s|s["active"]==true){"Playback session active"}else{"Playback session idle"};
             let muted=if !complete || sessions.is_empty(){""}else if sessions.iter().all(|s|s["muted"]==true){"all muted"}else if sessions.iter().all(|s|s["muted"]==false){"not muted"}else{"mixed mute states"};
             let enabled=sessions.iter().any(|s|s["actions_enabled"]==true);
             let mut row=json!({"playback_label":format!("{playback}; {muted}"),"id":e.id,"label":e.label,"device_id":e.device_id,"capabilities":{"start_voice":"not_implemented","end_voice":"not_implemented","input_routing":"not_implemented"},"state":state,"complete":complete,"sessions":sessions,"actions_enabled":enabled,"identity_kind":"saved_executable_location","icon_b64":icon});
+            let presence=self.catalog_fresh().then(||self.catalog.iter().find(|app|app.value["executable_path"]==e.executable)).flatten();
+            row["presence"]=json!(if presence.is_some(){"visible_window"}else if self.catalog_fresh() && self.snapshot["catalog"]["complete"]==true {"not_observed"}else{"unknown"});
+            if let Some(application)=presence {
+                row["window_title"]=application.value["window_title"].clone();
+                if row["icon_b64"].is_null() {row["icon_b64"]=application.value["icon_b64"].clone();}
+            }
+            if let Some(id)=self.entry_routing_selection(e){row["routing_selection_id"]=json!(id);}
             if summary {for session in row["sessions"].as_array_mut().unwrap() {session.as_object_mut().unwrap().remove("icon_b64");}}
             row
         }).collect::<Vec<_>>();
@@ -310,6 +743,52 @@ impl Registry {
         };
         let actions_enabled = entries.iter().any(|e| e["actions_enabled"] == true);
         let mut result = json!({"schema_version":1,"platform":if cfg!(windows){"windows"}else{"unsupported"},"revision":self.revision,"generation":self.generation,"age_ms":self.checked.map(|t|t.elapsed().as_millis().min(u64::MAX as u128) as u64),"skipped":self.snapshot["skipped"],"available":fresh,"complete":fresh&&self.snapshot["complete"]==true,"error":self.load_error.as_deref().or_else(||self.snapshot["error"].as_str()),"storage_writable":self.load_error.is_none(),"entries":entries,"choices":choices,"actions_enabled":actions_enabled});
+        result["microphone"] = self.microphone_view();
+        let route_fresh = self.checked.is_some_and(|at| at.elapsed() < FRESH)
+            && self.snapshot["routing_devices"]["available"] == true;
+        let mut routing_devices = json!({"capture":[],"render":[],"available":route_fresh,"complete":route_fresh&&self.snapshot["routing_devices"]["complete"]==true,"age_ms":self.checked.map(|at|at.elapsed().as_millis().min(u64::MAX as u128) as u64),"error":self.snapshot["routing_devices"]["error"]});
+        if route_fresh {
+            for direction in ["capture", "render"] {
+                let rows = self.snapshot["routing_devices"][direction]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(16)
+                    .filter_map(|row| {
+                        Some(json!({"id":string(row,"id",512)?,"name":string(row,"name",160)?}))
+                    })
+                    .collect::<Vec<_>>();
+                if self.snapshot["routing_devices"][direction]
+                    .as_array()
+                    .map_or(0, Vec::len)
+                    != rows.len()
+                {
+                    routing_devices["complete"] = json!(false);
+                }
+                routing_devices[direction] = json!(rows);
+            }
+        }
+        result["routing_devices"] = routing_devices;
+        result["routing_capabilities"] = self.routing_capabilities();
+        let catalog_fresh = self.catalog_fresh();
+        let catalog_rows = if catalog_fresh && !summary {
+            self.catalog_choices
+                .iter()
+                .filter(|(id, _)| {
+                    self.catalog_selections
+                        .get(id)
+                        .is_some_and(|selection| selection.issued.elapsed() < SELECTION_TTL)
+                })
+                .map(|(id, application)| {
+                    let mut row = application.public();
+                    row["selection_id"] = json!(id);
+                    row
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+        result["catalog"] = json!({"available":catalog_fresh,"complete":catalog_fresh&&self.snapshot["catalog"]["complete"]==true,"age_ms":self.checked.map(|at|at.elapsed().as_millis().min(u64::MAX as u128) as u64),"applications":catalog_rows,"skipped":self.snapshot["catalog"]["skipped"],"error":self.snapshot["catalog"]["error"]});
         // Preserve every exact session reference under the native transport budget.
         // Duplicate saved locations can expand rows; dropping optional images is
         // safer than silently dropping sessions or letting a large response stall.
@@ -367,7 +846,10 @@ impl Registry {
         let entry = self.entries.iter().find(|e| e.id == entry_id)?;
         let mut matched = self.sessions.iter().filter(|s| {
             s.key == key
-                && s.value["endpoint_id"] == entry.endpoint
+                && entry
+                    .endpoint
+                    .as_deref()
+                    .is_some_and(|endpoint| s.value["endpoint_id"] == endpoint)
                 && s.value["executable_path"] == entry.executable
         });
         let session = matched.next()?;
@@ -375,6 +857,9 @@ impl Registry {
     }
     fn prepare_action(&mut self, principal: &str, body: &str) -> (u16, Value) {
         let fail = |code, error: &str| (code, json!({"error":error}));
+        if self.route_pending() {
+            return fail(409, "A preferred endpoint operation is pending");
+        }
         let Ok(value) = serde_json::from_str::<Value>(body) else {
             return fail(400, "Expected a JSON object");
         };
@@ -451,6 +936,12 @@ impl Registry {
         )
     }
     fn execute_action(&mut self, principal: &str, body: &str) -> (u16, Value) {
+        if self.route_pending() {
+            return (
+                409,
+                json!({"error":"A preferred endpoint operation is pending"}),
+            );
+        }
         let (id, entry, key, job) = match self.actions.consume(principal, body) {
             Ok(v) => v,
             Err(error) => return error,
@@ -528,36 +1019,52 @@ impl Registry {
         let mut used = None;
         match operation {
             "pin" => {
-                if !self.fresh() {
-                    return fail(
-                        409,
-                        "Playback observation expired; refresh and select again",
-                    );
-                }
                 if entries.len() >= MAX_ENTRIES {
                     return fail(409, "At most eight software entries can be pinned");
                 }
                 let Some(id) = v["selection_id"].as_str() else {
                     return fail(400, "A fresh selection_id is required");
                 };
-                let Some(selection) = self
-                    .selections
-                    .get(id)
-                    .filter(|s| s.issued.elapsed() < SELECTION_TTL)
-                else {
-                    return fail(409, "Selection expired or already used");
+                let selected = if self.fresh() {
+                    self.selections
+                        .get(id)
+                        .filter(|s| s.issued.elapsed() < SELECTION_TTL)
+                        .and_then(|selection| {
+                            self.sessions
+                                .iter()
+                                .find(|s| s.key == selection.session.key)
+                        })
+                        .map(|session| {
+                            (
+                                Some(session.value["endpoint_id"].as_str().unwrap().to_owned()),
+                                session.value.clone(),
+                            )
+                        })
+                } else {
+                    None
                 };
-                let Some(current) = self
-                    .sessions
-                    .iter()
-                    .find(|s| s.key == selection.session.key)
-                else {
-                    return fail(409, "Selected session changed; select again");
+                let selected = selected.or_else(|| {
+                    if self.catalog_fresh() {
+                        self.catalog_selections
+                            .get(id)
+                            .filter(|s| s.issued.elapsed() < SELECTION_TTL)
+                            .and_then(|selection| {
+                                self.catalog
+                                    .iter()
+                                    .find(|app| app.key == selection.application.key)
+                            })
+                            .map(|app| (None, app.value.clone()))
+                    } else {
+                        None
+                    }
+                });
+                let Some((endpoint, current)) = selected else {
+                    return fail(
+                        409,
+                        "Selection expired or changed; refresh and select again",
+                    );
                 };
-                let Some(exe) = current.value["executable_path"].as_str() else {
-                    return fail(409, "Selected process cannot be resolved");
-                };
-                let endpoint = current.value["endpoint_id"].as_str().unwrap();
+                let exe = current["executable_path"].as_str().unwrap();
                 if entries
                     .iter()
                     .any(|e| e.endpoint == endpoint && same_location(&e.executable, exe))
@@ -568,7 +1075,7 @@ impl Registry {
                     );
                 }
                 let label = match v.get("label") {
-                    None => bounded_label(current.value["display_name"].as_str().unwrap()),
+                    None => bounded_label(current["display_name"].as_str().unwrap()),
                     Some(_) => match string(&v, "label", 80) {
                         Some(s) => s,
                         None => return fail(400, "Label must be plain text under 80 bytes"),
@@ -580,7 +1087,7 @@ impl Registry {
                 entries.push(Entry {
                     id: entry_id,
                     label,
-                    endpoint: endpoint.into(),
+                    endpoint,
                     executable: exe.into(),
                     device_id: None,
                 });
@@ -637,9 +1144,16 @@ impl Registry {
         }
         self.entries = entries;
         self.revision = revision;
+        if let Some(worker) = &self.worker {
+            worker
+                .revision
+                .store(revision, std::sync::atomic::Ordering::Release);
+        }
         if let Some(id) = used {
             self.selections.remove(&id);
             self.current_choices.retain(|(choice, _)| choice != &id);
+            self.catalog_selections.remove(&id);
+            self.catalog_choices.retain(|(choice, _)| choice != &id);
         }
         (200, self.view(false))
     }
@@ -655,6 +1169,9 @@ struct Worker {
     alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg(any(windows, test))]
+    microphone: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 impl Drop for Worker {
     fn drop(&mut self) {
@@ -675,7 +1192,7 @@ impl Drop for Worker {
 }
 #[cfg(windows)]
 impl Worker {
-    fn start() -> std::io::Result<Self> {
+    fn start(revision: u64) -> std::io::Result<Self> {
         use std::sync::{
             atomic::{AtomicBool, Ordering},
             mpsc, Arc,
@@ -688,6 +1205,10 @@ impl Worker {
         let alive = Arc::new(AtomicBool::new(true));
         let alive_flag = alive.clone();
         let executable = std::env::current_exe()?;
+        let microphone = Arc::new(std::sync::Mutex::new(None::<String>));
+        let target = microphone.clone();
+        let revision = Arc::new(std::sync::atomic::AtomicU64::new(revision));
+        let route_revision = revision.clone();
         let thread = std::thread::Builder::new()
             .name("app-observer-owner".into())
             .spawn(move || {
@@ -696,8 +1217,9 @@ impl Worker {
                 let _alive=Alive(alive_flag);
                 while !flag.load(Ordering::Relaxed) {
                     let collected = Instant::now();
+                    let device_id = target.lock().ok().and_then(|id| id.clone());
                     let (value, cleanup_confirmed) =
-                        crate::resident_worker::collect(&executable, &flag);
+                        crate::resident_worker::collect(&executable, &flag, device_id.as_deref());
                     if !cleanup_confirmed {
                         // All child/job/file resources have been released. Do
                         // not drop this terminal diagnostic behind an older
@@ -713,10 +1235,14 @@ impl Worker {
                     while Instant::now()<next_scan {
                         if flag.load(Ordering::Relaxed) {return;}
                         match requests.recv_timeout(Duration::from_millis(50)) {
-                            Ok(job) => {
+                            Ok(mut job) => {
                                 let id=job["operation_id"].as_str().unwrap_or("").to_owned();
                                 let observed_since=Instant::now();
-                                let (result,cleaned)=crate::resident_worker::execute(&executable,&flag,&job);
+                                let (result,cleaned)=if job["kind"]=="preferred_endpoint_route" {
+                                    let expected=job["revision"].as_u64().unwrap_or(u64::MAX);
+                                    job.as_object_mut().unwrap().remove("revision");
+                                    crate::resident_worker::preferred_route(&executable,&flag,&job,&route_revision,expected)
+                                }else{crate::resident_worker::execute(&executable,&flag,&job)};
                                 if completions.send((id,observed_since,result)).is_err() {return;}
                                 if !cleaned {
                                     let _=sender.send((Instant::now(),unavailable("Native helper cleanup is unconfirmed; observation stopped")));
@@ -737,6 +1263,8 @@ impl Worker {
             alive,
             stop,
             thread: Some(thread),
+            microphone,
+            revision,
         })
     }
 }
@@ -748,9 +1276,39 @@ pub fn print_snapshot() {
         // The parent sends this one-byte gate only after assigning the helper
         // to its private kill-on-close job. No COM/file scanning before then.
         use std::io::Read;
+        let mut input = std::io::stdin().lock();
         let mut gate = [0u8];
-        if std::io::stdin().read_exact(&mut gate).is_ok() && gate == [0x56] {
-            crate::resident_windows::snapshot()
+        let mut bytes = Vec::new();
+        if input.read_exact(&mut gate).is_ok()
+            && gate == [0x56]
+            && input
+                .take(app_route::MAX_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .is_ok()
+        {
+            if serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .is_some_and(|value| value["kind"] == "preferred_endpoint_route")
+            {
+                match app_route::parse_job(&bytes) {
+                    Ok(job) => crate::resident_windows::preferred_route(&job),
+                    Err(_) => unavailable("Routing helper request was invalid"),
+                }
+            } else {
+                match audio_probe::decode_request(&bytes) {
+                    Ok(request) if request.operation.is_some() => {
+                        crate::resident_windows::microphone_action(
+                            request.device_id.as_deref().unwrap(),
+                            request.operation.as_deref().unwrap(),
+                        )
+                    }
+                    Ok(request) if request.test => crate::resident_windows::microphone_test(
+                        request.device_id.as_deref().unwrap(),
+                    ),
+                    Ok(request) => crate::resident_windows::snapshot(request.device_id.as_deref()),
+                    Err(_) => unavailable("Observation helper request was invalid"),
+                }
+            }
         } else {
             unavailable("Observation helper was not activated")
         }
@@ -758,6 +1316,26 @@ pub fn print_snapshot() {
     #[cfg(not(windows))]
     let value = unavailable("Native playback observation is unavailable on this platform");
     println!("{value}");
+}
+
+/// Call only on an owned background job; native capture is contained and bounded.
+#[cfg(windows)]
+pub(crate) fn run_microphone_test(
+    executable: &std::path::Path,
+    stop: &std::sync::atomic::AtomicBool,
+    device_id: &str,
+) -> (Value, bool) {
+    crate::resident_worker::probe_microphone(executable, stop, device_id)
+}
+
+#[cfg(windows)]
+pub(crate) fn run_microphone_action(
+    executable: &std::path::Path,
+    stop: &std::sync::atomic::AtomicBool,
+    device_id: &str,
+    operation: &str,
+) -> (Value, bool) {
+    crate::resident_worker::microphone_action(executable, stop, device_id, operation)
 }
 
 /// Owned contained helper, activated only after the parent assigns its job.
@@ -852,6 +1430,305 @@ mod tests {
     fn select(registry: &mut Registry) -> String {
         registry.observe(snapshot(123, "session-a"), Instant::now());
         registry.current_choices[0].0.clone()
+    }
+    fn catalog_snapshot(pid: u32, started: &str) -> Value {
+        let mut value = unavailable("Playback is unavailable independently");
+        value["catalog"] = json!({"available":true,"complete":true,"applications":[{"process_id":pid,"process_started":started,"executable_path":"C:\\Fixture\\Visible.exe","display_name":"Visible app","window_title":"Unrelated document title","icon_b64":null}],"skipped":0,"error":null});
+        value["routing_capabilities"] = json!({"state":"available","preferred_input":"available","preferred_output":"available","stream_state":"unknown","app_microphone_mute":"unsupported","error":null});
+        value["routing_devices"] = json!({"available":true,"complete":true,"capture":[{"id":"chosen","name":"Desk microphone"}],"render":[{"id":"speaker","name":"Speakers"}],"error":null});
+        value
+    }
+    #[test]
+    fn catalog_presence_pin_roundtrips_without_inventing_an_audio_endpoint() {
+        let path = temp();
+        let mut r = Registry::load(path.clone());
+        r.observe(catalog_snapshot(42, "123"), Instant::now());
+        let view = r.view(false);
+        assert_eq!(view["available"], false);
+        assert_eq!(view["catalog"]["available"], true);
+        assert!(view["choices"].as_array().unwrap().is_empty());
+        let selection = view["catalog"]["applications"][0]["selection_id"].clone();
+        assert!(!view.to_string().contains("executable_path"));
+        assert!(!view.to_string().contains("process_started"));
+        assert_eq!(
+            r.mutate(
+                "pin",
+                &json!({"revision":0,"selection_id":selection}).to_string()
+            )
+            .0,
+            200
+        );
+        let disk: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(disk["entries"][0]["endpoint_id"].is_null());
+        let entry = &r.view(false)["entries"][0];
+        assert_eq!(entry["presence"], "visible_window");
+        assert_eq!(entry["state"], "unknown");
+        assert_eq!(entry["actions_enabled"], false);
+        assert!(entry["sessions"].as_array().unwrap().is_empty());
+        let loaded = Registry::load(path.clone());
+        assert_eq!(loaded.entries, r.entries);
+        assert!(loaded.load_error.is_none());
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(
+            r.mutate(
+                "pin",
+                &json!({"revision":0,"selection_id":selection}).to_string()
+            )
+            .0,
+            409
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        clean_fixture(r);
+    }
+    #[test]
+    fn catalog_changed_expired_and_delayed_selection_cannot_pin_or_route() {
+        let path = temp();
+        let mut r = Registry::load(path);
+        r.observe(catalog_snapshot(42, "123"), Instant::now());
+        let id = r.catalog_choices[0].0.clone();
+        r.observe(catalog_snapshot(42, "124"), Instant::now());
+        assert_eq!(
+            r.mutate("pin", &json!({"revision":0,"selection_id":id}).to_string())
+                .0,
+            409
+        );
+        assert!(r.route_target(&id).is_none());
+        let id = r.catalog_choices[0].0.clone();
+        r.catalog_selections.get_mut(&id).unwrap().issued =
+            Instant::now() - Duration::from_secs(16);
+        assert!(r.route_target(&id).is_none());
+        assert_eq!(
+            r.mutate("pin", &json!({"revision":0,"selection_id":id}).to_string())
+                .0,
+            409
+        );
+        r.observe(
+            catalog_snapshot(42, "124"),
+            Instant::now() - Duration::from_secs(7),
+        );
+        let view = r.view(false);
+        assert_eq!(view["catalog"]["available"], false);
+        assert!(view["catalog"]["applications"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(view["routing_devices"]["capture"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(view["routing_capabilities"]["state"], "unknown");
+        clean_fixture(r);
+    }
+    #[test]
+    fn catalog_bad_rows_preserve_partial_uncertainty_and_do_not_expose_paths() {
+        let mut r = Registry::empty(PathBuf::new(), None);
+        let mut snapshot = catalog_snapshot(42, "123");
+        let mut invalid = snapshot["catalog"]["applications"][0].clone();
+        invalid["executable_path"] = json!("https://invalid/app.exe");
+        snapshot["catalog"]["applications"]
+            .as_array_mut()
+            .unwrap()
+            .push(invalid);
+        r.observe(snapshot, Instant::now());
+        let view = r.view(false);
+        assert_eq!(view["catalog"]["complete"], false);
+        assert_eq!(view["catalog"]["applications"].as_array().unwrap().len(), 1);
+        assert!(!view.to_string().contains("Fixture"));
+    }
+    #[test]
+    fn saved_routing_selection_requires_one_exact_live_process_across_sources() {
+        let path = temp();
+        let mut r = Registry::load(path);
+        let id = select(&mut r);
+        assert_eq!(
+            r.mutate("pin", &json!({"revision":0,"selection_id":id}).to_string())
+                .0,
+            200
+        );
+        r.observe(snapshot(123, "session-a"), Instant::now());
+        assert!(r.view(false)["entries"][0]["routing_selection_id"]
+            .as_str()
+            .is_some());
+        let mut observed = snapshot(123, "session-a");
+        let mut catalog = catalog_snapshot(123, "123");
+        catalog["catalog"]["applications"][0]["executable_path"] =
+            json!("C:\\Fixture\\Example.exe");
+        observed["catalog"] = catalog["catalog"].clone();
+        r.observe(observed.clone(), Instant::now());
+        assert!(r.view(false)["entries"][0]["routing_selection_id"]
+            .as_str()
+            .is_some());
+        observed["catalog"]["applications"][0]["process_id"] = json!(124);
+        r.observe(observed, Instant::now());
+        assert!(r.view(false)["entries"][0]
+            .get("routing_selection_id")
+            .is_none());
+        clean_fixture(r);
+    }
+    #[test]
+    fn consumed_catalog_token_cannot_hide_an_ambiguous_saved_process() {
+        let path = temp();
+        let mut r = Registry::load(path);
+        let mut observed = catalog_snapshot(42, "123");
+        let mut second = observed["catalog"]["applications"][0].clone();
+        second["process_id"] = json!(43);
+        observed["catalog"]["applications"]
+            .as_array_mut()
+            .unwrap()
+            .push(second);
+        r.observe(observed, Instant::now());
+        let id = r.catalog_choices[0].0.clone();
+        assert_eq!(
+            r.mutate("pin", &json!({"revision":0,"selection_id":id}).to_string())
+                .0,
+            200
+        );
+        assert_eq!(r.catalog_choices.len(), 1);
+        assert!(r.view(false)["entries"][0]
+            .get("routing_selection_id")
+            .is_none());
+        clean_fixture(r);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn route_receipts_scope_principal_revision_and_never_dispatch_browser_paths() {
+        let (mut r, requests, completions) = control_fixture();
+        r.observe(catalog_snapshot(42, "123"), Instant::now());
+        let selection = r.catalog_choices[0].0.clone();
+        let body = json!({"revision":r.revision,"selection_id":selection,"flow":"capture","device_id":"chosen","roles":[0,1,2]});
+        assert_eq!(
+            r.route(true, false, "/api/apps/routes", "", &body.to_string())
+                .unwrap()
+                .0,
+            401
+        );
+        let mut bad = body.clone();
+        bad["executable_path"] = json!("C:\\Forged.exe");
+        assert_eq!(
+            r.route(true, false, "/api/apps/routes", "first", &bad.to_string())
+                .unwrap()
+                .0,
+            400
+        );
+        assert!(requests.try_recv().is_err());
+        bad = body.clone();
+        bad["revision"] = json!(99);
+        assert_eq!(
+            r.route(true, false, "/api/apps/routes", "first", &bad.to_string())
+                .unwrap()
+                .0,
+            409
+        );
+        let (status, receipt) = r
+            .route(true, false, "/api/apps/routes", "first", &body.to_string())
+            .unwrap();
+        assert_eq!(status, 202);
+        let id = receipt["operation_id"].as_str().unwrap().to_owned();
+        let path = format!("/api/apps/routes/{id}");
+        let mut queued = requests.try_recv().unwrap();
+        assert_eq!(queued["revision"], r.revision);
+        queued.as_object_mut().unwrap().remove("revision");
+        let job = app_route::parse_job(queued.to_string().as_bytes()).unwrap();
+        assert_eq!(job.executable_path, "C:\\Fixture\\Visible.exe");
+        assert_eq!(r.route(false, true, &path, "second", "").unwrap().0, 404);
+        assert_eq!(
+            r.route(true, false, "/api/apps/routes", "first", &body.to_string())
+                .unwrap()
+                .0,
+            409
+        );
+        let result = json!({"operation_id":id,"process_id":42,"flow":"capture","device_id":"chosen","state":"verified","write_attempted":true,"rollback_attempted":false,"rollback_verified":false,"roles":[{"role":0,"device_id":"chosen","verified":true},{"role":1,"device_id":"chosen","verified":true},{"role":2,"device_id":"chosen","verified":true}],"stream_state":"unknown","error":null});
+        assert!(app_route::valid_result(&result, &job));
+        let entry = r.entries[0].id.clone();
+        let old = r.revision;
+        assert_eq!(
+            r.mutate("remove", &json!({"revision":old,"id":entry}).to_string())
+                .0,
+            200
+        );
+        assert_eq!(
+            r.worker
+                .as_ref()
+                .unwrap()
+                .revision
+                .load(std::sync::atomic::Ordering::Acquire),
+            r.revision
+        );
+        completions.send((id, Instant::now(), result)).unwrap();
+        let result = r.route(false, true, &path, "first", "").unwrap().1;
+        assert_eq!(result["state"], "outcome_unconfirmed");
+        assert_eq!(result["error"], "route_configuration_changed");
+        assert_eq!(result["stream_state"], "unknown");
+        clean_fixture(r);
+    }
+    fn microphone_snapshot(id: &str, muted: bool) -> Value {
+        let mut value = snapshot(123, "session-a");
+        value["microphone"] = json!({"device_id":id,"name":"Desk microphone","state":if muted {"muted"} else {"unmuted"},"muted":muted,"age_ms":0,"error":null,"peak":null,"meter_source":"software","level_state":"unknown"});
+        value
+    }
+    #[test]
+    fn microphone_summary_exists_without_pins_and_is_independent_of_playback_failure() {
+        let mut r = Registry::empty(PathBuf::new(), None);
+        assert_eq!(r.view(true)["microphone"]["state"], "unknown");
+        r.set_microphone_device(None);
+        assert_eq!(r.view(true)["microphone"]["state"], "unconfigured");
+        r.set_microphone_device(Some("chosen"));
+        let mut observed = microphone_snapshot("chosen", true);
+        observed["available"] = json!(false);
+        observed["error"] = json!("Playback backend unavailable");
+        r.observe(observed, Instant::now());
+        let view = r.view(true);
+        assert!(view["entries"].as_array().unwrap().is_empty());
+        assert_eq!(view["available"], false);
+        assert_eq!(view["microphone"]["device_id"], "chosen");
+        assert_eq!(view["microphone"]["name"], "Desk microphone");
+        assert_eq!(view["microphone"]["state"], "muted");
+        assert!(view["microphone"]["age_ms"].as_u64().is_some());
+    }
+    #[test]
+    fn microphone_rebind_fences_old_scans_even_when_identity_returns_to_the_same_id() {
+        let mut r = Registry::empty(PathBuf::new(), None);
+        r.set_microphone_device(Some("chosen"));
+        r.observe(microphone_snapshot("chosen", false), Instant::now());
+        assert_eq!(r.view(true)["microphone"]["state"], "unmuted");
+        let before_rebind = Instant::now() - Duration::from_secs(1);
+        r.set_microphone_device(Some("another"));
+        r.set_microphone_device(Some("chosen"));
+        r.observe(microphone_snapshot("chosen", true), before_rebind);
+        assert_eq!(r.view(true)["microphone"]["state"], "unknown");
+        r.observe(microphone_snapshot("another", true), Instant::now());
+        assert_eq!(r.view(true)["microphone"]["state"], "unknown");
+        assert_eq!(r.view(true)["microphone"]["device_id"], "chosen");
+        r.observe(microphone_snapshot("chosen", true), Instant::now());
+        assert_eq!(r.view(true)["microphone"]["state"], "muted");
+        r.set_microphone_device(None);
+        assert_eq!(r.view(true)["microphone"]["state"], "unconfigured");
+        assert_eq!(r.view(true)["microphone"]["device_id"], Value::Null);
+    }
+    #[test]
+    fn stale_malformed_and_failed_microphone_observations_stay_unknown_without_fallback() {
+        let mut r = Registry::empty(PathBuf::new(), None);
+        r.set_microphone_device(Some("chosen"));
+        let mut failed = microphone_snapshot("chosen", false);
+        failed["microphone"]["state"] = json!("disconnected");
+        failed["microphone"]["muted"] = Value::Null;
+        failed["microphone"]["error"] = json!("Selected device is disconnected");
+        r.observe(failed, Instant::now());
+        assert_eq!(r.view(true)["microphone"]["state"], "disconnected");
+        r.checked = Some(Instant::now() - Duration::from_secs(7));
+        // A scan may be old without a binding change; freshness remains required.
+        r.microphone_changed = r.checked.unwrap() - Duration::from_secs(1);
+        assert_eq!(r.view(true)["microphone"]["state"], "unknown");
+        assert_eq!(r.view(true)["microphone"]["device_id"], "chosen");
+        let mut malformed = microphone_snapshot("chosen", false);
+        malformed["microphone"]["muted"] = json!(true);
+        r.observe(malformed, Instant::now());
+        assert_eq!(r.view(true)["microphone"]["state"], "unknown");
+        let mut unavailable = unavailable("Helper failed");
+        unavailable["microphone"] = audio_probe::unknown(Some("chosen"), "Helper failed");
+        r.observe(unavailable, Instant::now());
+        assert_eq!(r.view(true)["microphone"]["state"], "unknown");
+        assert_eq!(r.view(true)["microphone"]["error"], "Helper failed");
     }
     fn legacy_registry() -> Registry {
         let path = temp();
@@ -1215,6 +2092,8 @@ mod tests {
             alive: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
+            microphone: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
         sender
             .send((
@@ -1260,6 +2139,8 @@ mod tests {
             alive: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
+            microphone: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
         (r, requests, completions)
     }

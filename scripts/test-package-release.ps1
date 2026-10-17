@@ -41,6 +41,8 @@ function New-Case([string]$Name, [string]$Target) {
     New-Item -ItemType Directory -Path $release -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $dir 'README.md') -Value 'VibDock' -NoNewline
     Set-Content -LiteralPath (Join-Path $dir 'LICENSE') -Value 'MIT fixture' -NoNewline
+    New-Item -ItemType Directory -Path (Join-Path $dir 'skills/vibdock-control') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $dir 'skills/vibdock-control/SKILL.md') -Value 'Fixture typed control instructions' -NoNewline
     foreach ($folder in @('assets', 'docs')) {
         $nested = Join-Path $dir $folder
         New-Item -ItemType Directory -Path $nested -Force | Out-Null
@@ -105,7 +107,7 @@ $winTarget = 'x86_64-pc-windows-msvc'
 $unixTarget = 'x86_64-unknown-linux-gnu'
 
 # 1. Windows complete: both entry points + README, correct subsystems, LF sidecar.
-Assert-Case 'windows complete archive includes entries, license, assets and docs' {
+Assert-Case 'windows complete archive includes entries, notices, resources and control skill' {
     $dir = New-Case 'win-complete' $winTarget
     $rel = Join-Path $dir "target/$winTarget/release"
     New-PeStub (Join-Path $rel 'vibdock.exe') 3
@@ -117,7 +119,7 @@ Assert-Case 'windows complete archive includes entries, license, assets and docs
     $extract = Join-Path $dir 'extract'
     Expand-Archive -LiteralPath $zip -DestinationPath $extract
     $entries = Get-ChildItem -LiteralPath $extract -Name | Sort-Object
-    $expected = @('README.md', 'LICENSE', 'assets', 'docs', 'vibdock-launcher.exe', 'vibdock.exe') | Sort-Object
+    $expected = @('README.md', 'LICENSE', 'assets', 'docs', 'skills', 'vibdock-launcher.exe', 'vibdock.exe') | Sort-Object
     if (($entries -join ',') -ne ($expected -join ',')) {
         return @{ Success = $false; Detail = "entries: $($entries -join ',')" }
     }
@@ -125,6 +127,9 @@ Assert-Case 'windows complete archive includes entries, license, assets and docs
         if (-not (Test-Path -LiteralPath (Join-Path $extract "$folder/fixture.txt") -PathType Leaf)) {
             return @{ Success = $false; Detail = "nested $folder content missing" }
         }
+    }
+    if ((Get-Content -LiteralPath (Join-Path $extract 'skills/vibdock-control/SKILL.md') -Raw) -cne 'Fixture typed control instructions') {
+        return @{ Success = $false; Detail = 'control skill bytes changed or missing' }
     }
     $bytes = [IO.File]::ReadAllBytes("$zip.sha256")
     if ($bytes[-1] -ne 0x0A -or $bytes[-2] -eq 0x0D) { return @{ Success = $false; Detail = 'sidecar not LF-terminated' } }
@@ -184,6 +189,14 @@ Assert-Case 'windows missing LICENSE is rejected' {
     return Assert-FailsWith $run 'LICENSE'
 }
 
+Assert-Case 'producer rejects missing control skill' {
+    $dir = New-Case 'missing-control-skill' $winTarget
+    New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock.exe") 3
+    New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock-launcher.exe") 2
+    Remove-Item -LiteralPath (Join-Path $dir 'skills/vibdock-control/SKILL.md')
+    return Assert-FailsWith (Invoke-Package $dir $winTarget 'vibdock.exe' 'vibdock-launcher.exe') 'control skill'
+}
+
 Assert-Case 'producer rejects altered original brand bytes' {
     $dir = New-Case 'brand-mismatch' $winTarget
     New-PeStub (Join-Path $dir "target/$winTarget/release/vibdock.exe") 3
@@ -217,6 +230,7 @@ Assert-Case 'unix archive includes CLI + README and excludes launcher' {
     $listing = (& tar -tzf $tgz) -join ' '
     if ($listing -notmatch 'vibdock') { return @{ Success = $false; Detail = "CLI missing: $listing" } }
     if ($listing -notmatch 'README') { return @{ Success = $false; Detail = "README missing: $listing" } }
+    if ($listing -notmatch 'skills/vibdock-control/SKILL.md') { return @{ Success = $false; Detail = "control skill missing: $listing" } }
     if ($listing -match 'launcher') { return @{ Success = $false; Detail = "launcher wrongly packaged: $listing" } }
     $bytes = [IO.File]::ReadAllBytes("$tgz.sha256")
     if ($bytes[-1] -ne 0x0A -or $bytes[-2] -eq 0x0D) { return @{ Success = $false; Detail = 'sidecar not LF-terminated' } }
@@ -285,7 +299,7 @@ Assert-Case 'producer rejects CliExecutable with path separator' {
 # ---- Verifier hardening: a reused evidence directory must not let stale files
 # from a prior good archive satisfy a later archive's checks.
 
-function New-WindowsArchive([string]$Out, [bool]$WithLauncher, [int]$LauncherSubsystem = 2, [bool]$WithReadme = $true) {
+function New-WindowsArchive([string]$Out, [bool]$WithLauncher, [int]$LauncherSubsystem = 2, [bool]$WithReadme = $true, [bool]$WithSkill = $true) {
     if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Force }
     $stage = Join-Path $root ('zipstage-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
@@ -293,7 +307,12 @@ function New-WindowsArchive([string]$Out, [bool]$WithLauncher, [int]$LauncherSub
     if ($WithLauncher) { New-PeStub (Join-Path $stage 'vibdock-launcher.exe') $LauncherSubsystem }
     Set-Content -LiteralPath (Join-Path $stage 'LICENSE') -Value 'MIT fixture' -NoNewline
     if ($WithReadme) { Set-Content -LiteralPath (Join-Path $stage 'README.md') -Value 'VibDock' -NoNewline }
+    if ($WithSkill) {
+        New-Item -ItemType Directory -Path (Join-Path $stage 'skills/vibdock-control') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $stage 'skills/vibdock-control/SKILL.md') -Value 'Fixture typed control instructions' -NoNewline
+    }
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $Out -Force
+    if (-not [IO.Path]::GetFullPath($stage).StartsWith([IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture staging escaped its own temporary root' }
     Remove-Item -Recurse -Force -LiteralPath $stage
 }
 
@@ -362,6 +381,18 @@ Assert-Case 'verifier rejects missing-README in reused evidence dir' {
     if ($bad.Code -eq 0) { return @{ Success = $false; Detail = 'missing-README FALSE-PASSED in reused evidence dir' } }
     if ((Get-FlattenedOutput $bad) -notmatch 'README') { return @{ Success = $false; Detail = "unexpected error: $((Get-FlattenedOutput $bad).Trim())" } }
     return @{ Success = $true }
+}
+
+Assert-Case 'verifier rejects missing control skill in reused evidence dir' {
+    $dir = New-Case 'verify-reuse-skill' $winTarget
+    $complete = Join-Path $dir 'complete.zip'
+    $missing = Join-Path $dir 'missing-skill.zip'
+    New-WindowsArchive $complete $true 2
+    New-WindowsArchive $missing $true 2 $true $false
+    $ev = Join-Path $dir 'reused-evidence'
+    $good = Invoke-Verify $complete $ev
+    if ($good.Code -ne 0) { return @{ Success = $false; Detail = "primer verify failed: $($good.Output.Trim())" } }
+    return Assert-FailsWith (Invoke-Verify $missing $ev) 'SKILL.md'
 }
 
 Write-Host ""
