@@ -357,10 +357,30 @@ fn action_result(selection: &PlaybackSelection, message: &str) -> WorkerEvent {
     ))
 }
 
+fn next_worker_command(
+    commands: &mpsc::Receiver<WorkerCommand>,
+    shutdown: &AtomicBool,
+) -> std::result::Result<WorkerCommand, mpsc::RecvTimeoutError> {
+    let command = if shutdown.load(Ordering::Relaxed) {
+        Err(mpsc::RecvTimeoutError::Timeout)
+    } else {
+        commands.recv_timeout(Duration::from_millis(50))
+    };
+    // Exit cannot be displaced by a queued Settings or startup request. Check
+    // again after receiving because Exit may arrive while this worker waits.
+    if shutdown.swap(false, Ordering::Relaxed) {
+        while commands.try_recv().is_ok() {}
+        Ok(WorkerCommand::Shutdown)
+    } else {
+        command
+    }
+}
+
 fn poll_worker(
     sender: mpsc::SyncSender<WorkerEvent>,
     commands: mpsc::Receiver<WorkerCommand>,
     stop: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 ) {
     let mut client: Option<service::ResidentControlClient> = None;
     let mut latest: Option<Observation> = None;
@@ -370,7 +390,7 @@ fn poll_worker(
     let mut startup_client: Option<service::ResidentControlClient> = None;
     let mut next_poll = Instant::now();
     while !stop.load(Ordering::Relaxed) {
-        match commands.recv_timeout(Duration::from_millis(50)) {
+        match next_worker_command(&commands, &shutdown) {
             Ok(WorkerCommand::Playback(selection)) => {
                 if pending.is_some()
                     || client.is_none()
@@ -458,7 +478,11 @@ fn poll_worker(
                 // request without implying that stopping restores its audio.
                 pending = None;
                 let result = service::request_shutdown();
+                let finished = result.is_ok();
                 if !send_worker_event(&sender, &stop, WorkerEvent::Shutdown(result)) {
+                    return;
+                }
+                if finished {
                     return;
                 }
                 client = None;
@@ -606,6 +630,7 @@ fn poll_worker(
 
 struct Poller {
     stop: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
     commands: mpsc::SyncSender<WorkerCommand>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -615,12 +640,15 @@ impl Poller {
         let (commands, requests) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown);
         let thread = std::thread::Builder::new()
             .name("desktop-status".into())
-            .spawn(move || poll_worker(sender, requests, worker_stop))?;
+            .spawn(move || poll_worker(sender, requests, worker_stop, worker_shutdown))?;
         Ok((
             Self {
                 stop,
+                shutdown,
                 commands,
                 thread: Some(thread),
             },
@@ -628,7 +656,14 @@ impl Poller {
         ))
     }
     fn request(&self, command: WorkerCommand) -> bool {
-        self.commands.try_send(command).is_ok()
+        if matches!(command, WorkerCommand::Shutdown) {
+            self.shutdown.store(true, Ordering::Relaxed);
+            true
+        } else if self.shutdown.load(Ordering::Relaxed) {
+            false
+        } else {
+            self.commands.try_send(command).is_ok()
+        }
     }
 }
 impl Drop for Poller {
@@ -1142,6 +1177,7 @@ fn message_loop(
                         }
                         WorkerEvent::Shutdown(Err(error)) => {
                             busy = false;
+                            startup_busy = false;
                             notify("VibDock could not exit", &format!("{error}\n\nPlayback outcome may be unconfirmed after cancelling its receipt check. The tray remains available. Retry Exit to stop the verified service."), MB_ICONWARNING);
                         }
                     }
@@ -1784,6 +1820,48 @@ impl Drop for AppIcons {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exit_keeps_legacy_id_and_preempts_a_full_settings_queue() {
+        assert_eq!(MENU_EXIT, 103);
+        assert_eq!(MENU_STARTUP, 104);
+        let ids = [MENU_OPEN, MENU_STATUS, MENU_EXIT, MENU_STARTUP];
+        for (index, id) in ids.iter().enumerate() {
+            assert!(!ids[index + 1..].contains(id));
+        }
+        let (commands, requests) = mpsc::sync_channel(1);
+        let poller = Poller {
+            stop: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            commands,
+            thread: None,
+        };
+        // A bare numeric startup command has no frozen selection and cannot act.
+        command(MENU_STARTUP, &poller, None);
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        command(MENU_OPEN, &poller, None);
+        assert!(!poller.request(WorkerCommand::Settings));
+        command(103, &poller, None);
+        assert!(poller.shutdown.load(Ordering::Relaxed));
+        assert!(!poller.request(WorkerCommand::Settings));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown),
+            Ok(WorkerCommand::Shutdown)
+        ));
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        // A failed shutdown can be retried; no stale queued command survives it.
+        assert!(poller.request(WorkerCommand::Shutdown));
+        assert!(matches!(
+            next_worker_command(&requests, &poller.shutdown),
+            Ok(WorkerCommand::Shutdown)
+        ));
+    }
+
     fn startup_fixture(enabled: bool, generation: u64) -> StartupObservation {
         StartupObservation::parse(
             &serde_json::json!({"platform":"windows","supported":true,"scope":"current_user","enabled":enabled,"state":if enabled{"enabled"}else{"disabled"},"readback_confirmed":true,"launcher_available":true,"error":null}),
