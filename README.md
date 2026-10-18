@@ -105,6 +105,32 @@ lists the live detections, shortcut dispatch checks and the remaining UI limits.
 Live foreground/focus and injected-input acceptance on a real desktop remains
 pending; see [the software contract](docs/resident-software.md).
 
+## Local speech-to-text (optional native build)
+
+An optional `stt` Cargo feature adds offline WAV transcription with a local
+SenseVoice ONNX model. The default preview binary does not include this
+dependency; build it explicitly:
+
+```powershell
+cargo build --release --features stt
+.\target\release\vibdock.exe transcribe --wav sample.wav --json
+```
+
+`transcribe` discovers a local model in this order: `--model-dir`,
+`VIBDOCK_STT_MODEL_DIR`, the existing DeepSeek Harness SenseVoice cache
+(read-only), then `%LOCALAPPDATA%\VibDock\models\sensevoice`. A missing model
+fails closed with the checked paths and the install route; the command never
+downloads at runtime. Building with `stt` downloads the pinned sherpa-onnx
+native archives at build time, so that build is not offline-friendly. The
+separate consent-gated model download lives in
+[scripts/stt](scripts/stt/README.md).
+
+This milestone is WAV-to-text only. It does not capture a microphone, register
+a hold-to-talk trigger, insert text into another window, or report voice-session
+state. The model is large and the native build is not part of the default CI
+artifact; packaging and model licensing remain open in
+[the local speech input design](docs/design/local-speech-input.md).
+
 ## Explore the design preview
 
 ```powershell

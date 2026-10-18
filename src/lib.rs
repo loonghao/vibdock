@@ -35,6 +35,8 @@ mod macos_worker;
 #[allow(dead_code)]
 #[path = "macos_worker.rs"]
 mod macos_worker_tests;
+#[cfg(feature = "stt")]
+mod stt;
 // The Windows helper protocol is compiled everywhere so the shortcut registry
 // can share its path validator; only Windows constructs the full job surface.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -83,6 +85,7 @@ pub enum Action {
     AppMute,
     AppUnmute,
     AppToggle,
+    Transcribe,
 }
 
 impl fmt::Display for Action {
@@ -107,6 +110,7 @@ impl fmt::Display for Action {
             Action::AppMute => "app-mute",
             Action::AppUnmute => "app-unmute",
             Action::AppToggle => "app-toggle",
+            Action::Transcribe => "transcribe",
         };
         f.write_str(name)
     }
@@ -150,7 +154,8 @@ pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|servic
        vibdock app-devices
        vibdock app-list --endpoint <endpoint-id>
        vibdock <app-status|app-mute|app-unmute|app-toggle> --endpoint <endpoint-id> \\
-               --session <session-instance-id>";
+               --session <session-instance-id>
+       vibdock transcribe --wav <path> [--model-dir <dir>] [--json]";
 
 /// Parses command-line arguments into an [`Action`].
 ///
@@ -184,6 +189,7 @@ pub fn parse(args: &[String]) -> Result<Action> {
         Some("toggle") => Action::Toggle,
         Some("listen") => Action::Listen,
         Some("capabilities") => Action::Capabilities,
+        Some("transcribe") => Action::Transcribe,
         _ => return Err(format!("{USAGE}\nRun `vibdock help` for details.").into()),
     };
     let rest = &args[1..];
@@ -239,6 +245,7 @@ pub fn help() {
     println!("  app-list         List application playback sessions on a render endpoint");
     println!("  app-status|app-mute|app-unmute|app-toggle");
     println!("                   Read or change one application's playback mute state");
+    println!("  transcribe       Transcribe a mono PCM WAV with a local SenseVoice model");
     println!("  help             Show this message");
     println!();
     println!("Exit codes are zero on success and nonzero on error. `service-start`");
@@ -437,6 +444,18 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
             {
                 let _ = args;
                 Err("The tray entry requires Windows.".into())
+            }
+        }
+        Action::Transcribe => {
+            #[cfg(feature = "stt")]
+            {
+                stt::run(&args[1..])
+            }
+            #[cfg(not(feature = "stt"))]
+            {
+                let _ = args;
+                Err("This build does not include local speech-to-text. Rebuild with `--features stt`."
+                    .into())
             }
         }
         Action::AppList
@@ -644,6 +663,33 @@ mod tests {
         assert_eq!(Action::ServiceStop.to_string(), "service-stop");
         assert_eq!(Action::Tray.to_string(), "tray");
         assert_eq!(Action::Toggle.to_string(), "toggle");
+        assert_eq!(Action::Transcribe.to_string(), "transcribe");
+    }
+
+    #[test]
+    fn transcribe_is_a_closed_command_family() {
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(parse(&args(&["transcribe"])).unwrap(), Action::Transcribe);
+        assert_eq!(
+            parse(&args(&["transcribe", "--wav", "sample.wav"])).unwrap(),
+            Action::Transcribe
+        );
+        assert!(!matches!(Action::Transcribe, Action::Mute));
+    }
+
+    #[cfg(not(feature = "stt"))]
+    #[test]
+    fn transcribe_without_the_feature_explains_the_build_flag() {
+        let args = vec!["transcribe".to_string()];
+        let error = run_action(Action::Transcribe, &args)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("--features stt"), "{error}");
     }
 
     /// Binds a free loopback port for tests that must not touch the real one.
