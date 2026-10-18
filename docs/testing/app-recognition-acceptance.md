@@ -34,6 +34,17 @@ Tencent Meeting's background process was recognised. A capped or unreadable
 scan reports `applications_complete=false`; pinned presence rows then show
 `unknown` rather than `not_running`.
 
+### UWP hosted applications
+
+Checked on 2026-10-18 after resolving the `Windows.UI.Core.CoreWindow` child of
+`ApplicationFrameHost` windows: launching the built-in Calculator produced a
+`计算器` row with `background=false` and a fresh application reference; the row
+was absent before this change because the host executable was skipped. The
+packaged executable was resolved through the hosted process, not the frame host.
+No shortcut binding or dispatch was attempted for the UWP app in this check, so
+foreground matching and injected-input acceptance for packaged applications
+remain unverified.
+
 ## Shortcut dispatch results
 
 1. **Foreground scope (Codex).** Saved `Ctrl + Alt + F19` as the trigger and

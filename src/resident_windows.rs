@@ -29,8 +29,9 @@ use windows::{
             TH32CS_SNAPPROCESS,
         },
         UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
-            GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+            EnumWindows, GetClassNameW, GetWindow, GetWindowLongW, GetWindowTextLengthW,
+            GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GW_CHILD,
+            GW_HWNDNEXT, WS_EX_TOOLWINDOW,
         },
     },
 };
@@ -431,6 +432,7 @@ unsafe fn observe_snapshot() -> Value {
 /// One visible top-level window, reduced to the process that owns it.
 struct ApplicationWindow {
     process_id: u32,
+    window_handle: isize,
     title: String,
 }
 
@@ -488,8 +490,45 @@ unsafe extern "system" fn collect_application_window(hwnd: HWND, lparam: LPARAM)
     if process_id == 0 || process_id == std::process::id() {
         return true.into();
     }
-    scan.windows.push(ApplicationWindow { process_id, title });
+    scan.windows.push(ApplicationWindow {
+        process_id,
+        window_handle: hwnd.0 as isize,
+        title,
+    });
     true.into()
+}
+
+/// Resolves the real UWP application process behind an `ApplicationFrameHost`
+/// window. The frame is owned by the host process, while its
+/// `Windows.UI.Core.CoreWindow` child belongs to the packaged application.
+/// `None` means there is no distinct hosted process; the window is left as the
+/// ordinary top-level process it already reports.
+unsafe fn hosted_application_process(hwnd: HWND, owner: u32) -> Option<u32> {
+    let Ok(mut child) = GetWindow(hwnd, GW_CHILD) else {
+        return None;
+    };
+    for _ in 0..16 {
+        if child.0.is_null() {
+            return None;
+        }
+        let mut class = [0u16; 128];
+        let length = GetClassNameW(child, &mut class);
+        if length > 0 {
+            let name = String::from_utf16_lossy(&class[..length as usize]);
+            if name == "Windows.UI.Core.CoreWindow" {
+                let mut process_id = 0u32;
+                GetWindowThreadProcessId(child, Some(&mut process_id));
+                if process_id != 0 && process_id != owner {
+                    return Some(process_id);
+                }
+            }
+        }
+        let Ok(next) = GetWindow(child, GW_HWNDNEXT) else {
+            return None;
+        };
+        child = next;
+    }
+    None
 }
 
 /// Enumerates running window applications and reduces them to one bounded,
@@ -527,7 +566,10 @@ unsafe fn observe_applications() -> (Vec<Value>, bool) {
             continue;
         }
         by_process
-            .entry(window.process_id)
+            .entry(
+                hosted_application_process(HWND(window.window_handle as *mut _), window.process_id)
+                    .unwrap_or(window.process_id),
+            )
             .and_modify(|existing| {
                 if title.len() > existing.len() {
                     existing.clone_from(&title);

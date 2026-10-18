@@ -54,10 +54,13 @@ change has unit coverage; native pointer, DPI and focus acceptance is pending.
 
 Window observation enumerates visible, non-cloaked, non-tool top-level windows,
 resolves each owner's executable through a read-only process handle, and keeps
-at most 32 applications. Explorer, ApplicationFrameHost, input hosts, VibDock
-itself and other shell-host processes are skipped because their executable is
-not the user-facing application identity. A capped scan, an unreadable window
-owner, or a changed process image makes the window list partial:
+at most 32 applications. A UWP window owned by `ApplicationFrameHost` is mapped
+to the packaged application through its `Windows.UI.Core.CoreWindow` child
+process, so the row names the real app rather than the host. Explorer, input
+hosts, VibDock itself and other shell-host processes without a distinct hosted
+application are skipped because their executable is not the user-facing
+identity. A capped scan, an unreadable window owner, or a changed process image
+makes the window list partial:
 `running`, `not_running` and `unknown` are then reported accordingly, and a
 partial list never claims that an application is absent.
 
