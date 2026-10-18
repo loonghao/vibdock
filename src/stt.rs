@@ -7,7 +7,10 @@
 //! side effect of this command.
 
 use serde_json::json;
-use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig, Wave};
+use sherpa_onnx::{
+    OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig, SileroVadModelConfig,
+    TenVadModelConfig, VadModelConfig, VoiceActivityDetector, Wave,
+};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -164,6 +167,101 @@ pub(crate) fn wav_seconds(wav: &Path) -> std::result::Result<f32, String> {
         return Err("The WAV has no usable sample rate.".into());
     }
     Ok(wave.samples().len() as f32 / wave.sample_rate() as f32)
+}
+
+/// Resolves the local Silero VAD model without network access.
+pub(crate) fn discover_vad_model(explicit: Option<&Path>) -> std::result::Result<PathBuf, String> {
+    if let Some(path) = explicit {
+        return valid_vad(path).ok_or_else(|| {
+            format!(
+                "{} is not a non-empty silero_vad.onnx file.",
+                path.display()
+            )
+        });
+    }
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("VIBDOCK_STT_VAD_MODEL") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(home) = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME")) {
+        candidates.push(
+            PathBuf::from(home)
+                .join(".dsh")
+                .join("speech-to-text")
+                .join("sensevoice")
+                .join("models")
+                .join("silero")
+                .join("silero_vad.onnx"),
+        );
+    }
+    if let Some(local) = env::var_os("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(local)
+                .join("VibDock")
+                .join("models")
+                .join("silero_vad.onnx"),
+        );
+    }
+    for candidate in &candidates {
+        if let Some(path) = valid_vad(candidate) {
+            return Ok(path);
+        }
+    }
+    Err(format!(
+        "No local Silero VAD model found. Checked: {}. Set VIBDOCK_STT_VAD_MODEL or pass --vad-model.",
+        candidates
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+fn valid_vad(path: &Path) -> Option<PathBuf> {
+    (path.is_file() && path.metadata().is_ok_and(|meta| meta.len() > 0)).then(|| path.to_path_buf())
+}
+
+/// Trims a 16 kHz mono clip to Silero-detected speech. An empty result is a
+/// distinct "no speech" failure, never an empty transcript.
+pub(crate) fn vad_speech(samples: &[f32], model: &Path) -> std::result::Result<Vec<f32>, String> {
+    if samples.is_empty() {
+        return Err("There is no audio to segment.".into());
+    }
+    let config = VadModelConfig {
+        silero_vad: SileroVadModelConfig {
+            model: Some(model.to_string_lossy().into_owned()),
+            threshold: 0.5,
+            min_silence_duration: 0.5,
+            min_speech_duration: 0.25,
+            window_size: 512,
+            max_speech_duration: 30.0,
+        },
+        ten_vad: TenVadModelConfig {
+            model: None,
+            threshold: 0.5,
+            min_silence_duration: 0.5,
+            min_speech_duration: 0.25,
+            window_size: 256,
+            max_speech_duration: 30.0,
+        },
+        sample_rate: 16_000,
+        num_threads: 1,
+        provider: Some("cpu".into()),
+        debug: false,
+    };
+    let detector = VoiceActivityDetector::create(&config, 30.0)
+        .ok_or_else(|| "Silero VAD failed to load.".to_string())?;
+    detector.accept_waveform(samples);
+    detector.flush();
+    let mut speech = Vec::new();
+    while let Some(segment) = detector.front() {
+        speech.extend_from_slice(segment.samples());
+        detector.pop();
+    }
+    if speech.is_empty() {
+        return Err("Silero VAD detected no speech.".into());
+    }
+    Ok(speech)
 }
 
 /// Transcribes an in-memory mono signal. Used by dictation capture and tests;

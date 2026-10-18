@@ -32,6 +32,8 @@ struct Cli {
     trigger: Option<String>,
     insert: bool,
     target: Option<String>,
+    vad: bool,
+    vad_model: Option<PathBuf>,
     model_dir: Option<PathBuf>,
     json: bool,
 }
@@ -44,6 +46,8 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
     let mut trigger = None;
     let mut insert = false;
     let mut target = None;
+    let mut vad = false;
+    let mut vad_model = None;
     let mut model_dir = None;
     let mut json = false;
     let mut index = 0;
@@ -110,6 +114,21 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
                 }
                 index += 2;
             }
+            "--vad" => {
+                vad = true;
+                index += 1;
+            }
+            "--vad-model" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.is_empty() && !value.contains('\0'))
+                    .ok_or_else(|| "--vad-model requires a file path.".to_string())?;
+                if vad_model.replace(PathBuf::from(value)).is_some() {
+                    return Err("--vad-model may be specified only once.".into());
+                }
+                vad = true;
+                index += 2;
+            }
             "--json" => {
                 json = true;
                 index += 1;
@@ -137,6 +156,9 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
     if target.is_some() && !insert {
         return Err("--target requires --insert.".into());
     }
+    if vad && wav.is_some() {
+        return Err("--vad is available only for live capture, not --wav.".into());
+    }
     Ok(Cli {
         seconds,
         wav,
@@ -144,6 +166,8 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
         trigger,
         insert,
         target,
+        vad,
+        vad_model,
         model_dir,
         json,
     })
@@ -271,6 +295,14 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
+fn apply_vad(cli: &Cli, samples: Vec<f32>) -> std::result::Result<Vec<f32>, String> {
+    if !cli.vad {
+        return Ok(samples);
+    }
+    let model = stt::discover_vad_model(cli.vad_model.as_deref())?;
+    stt::vad_speech(&samples, &model)
+}
+
 fn hold(cli: &Cli, model: &stt::ModelPaths) -> std::result::Result<(String, f32, f32), String> {
     let trigger = cli
         .trigger
@@ -291,6 +323,7 @@ fn hold(cli: &Cli, model: &stt::ModelPaths) -> std::result::Result<(String, f32,
     if escape_is_down() {
         return Err("Cancelled; the captured audio was discarded.".into());
     }
+    let samples = apply_vad(cli, samples)?;
     let audio_seconds = samples.len() as f32 / TARGET_RATE as f32;
     let (text, seconds) = stt::transcribe_samples(&samples, TARGET_RATE as i32, model)?;
     Ok((text, audio_seconds, seconds))
@@ -307,6 +340,7 @@ pub(crate) fn run(args: &[String]) -> crate::Result<()> {
         (text, stt::wav_seconds(wav)?, seconds)
     } else {
         let (samples, _sample_rate) = record(cli.seconds)?;
+        let samples = apply_vad(&cli, samples)?;
         let audio_seconds = samples.len() as f32 / TARGET_RATE as f32;
         let (text, seconds) = stt::transcribe_samples(&samples, TARGET_RATE as i32, &model)?;
         (text, audio_seconds, seconds)
@@ -328,6 +362,7 @@ pub(crate) fn run(args: &[String]) -> crate::Result<()> {
                 "audio_seconds": audio_seconds,
                 "seconds": seconds,
                 "inserted": inserted,
+                "vad": cli.vad,
                 "model": model.model.display().to_string(),
             })
         );
@@ -365,6 +400,15 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(targeted.target.as_deref(), Some("Notepad"));
+        assert!(parse_args(&args(&["--wav", "a.wav", "--vad"])).is_err());
+        let vad = parse_args(&args(&["--seconds", "2", "--vad"])).unwrap();
+        assert!(vad.vad);
+        let vad_model = parse_args(&args(&["--seconds", "2", "--vad-model", "vad.onnx"])).unwrap();
+        assert!(vad_model.vad);
+        assert_eq!(
+            vad_model.vad_model.as_deref(),
+            Some(std::path::Path::new("vad.onnx"))
+        );
     }
 
     #[test]
