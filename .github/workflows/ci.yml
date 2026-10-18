@@ -38,6 +38,9 @@ jobs:
       - name: Verify binding UI contracts
         run: node scripts/test-binding-ui.cjs
       - run: cargo build --locked --release
+      - name: Check optional native speech-to-text build
+        if: runner.os == 'Windows'
+        run: cargo test --locked --features stt --lib stt::tests
       - name: Verify macOS package contracts
         run: python3 scripts/test-macos-package.py
       - name: Package native macOS candidate

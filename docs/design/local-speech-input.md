@@ -1,9 +1,9 @@
 # Local speech input
 
-Status: design for [#44](https://github.com/loonghao/vibdock/issues/44). Only a
-dev-only Python prototype exists at `scripts/stt/`; nothing in this document is
-part of the vibdock.exe runtime, and no VibDock command, tray action, hotkey or
-Web control captures a microphone or inserts text yet.
+Status: milestone 1 is implemented behind the optional `stt` Cargo feature as
+`vibdock transcribe`. The default preview binary does not include it; microphone
+capture, hold-to-talk and text insertion remain M2/M3. The dev-only Python
+prototype in `scripts/stt/` remains for model discovery/install checks.
 
 ## Goal
 
@@ -26,19 +26,23 @@ prototype transcribed a Windows SAPI zh-CN WAV locally on 2026-10-18:
   much slower, roughly 1.6 s in the same prototype run).
 
 This proves the cached model is reusable and CPU decoding is fast for short
-utterances. It does **not** prove microphone capture, VAD segmentation,
-hold-to-talk timing, text insertion, focus behaviour, packaging, or resident
-memory cost. One synthetic zh-CN sample is not accuracy evidence for other
-languages, noise conditions, or speakers.
+utterances. The native Rust implementation (`sherpa-onnx` 1.13.8, optional `stt`
+feature) produced the same transcript in 0.2007 s on the same WAV, including
+automatic 22.05 kHz → 16 kHz resampling. It does **not** prove microphone capture,
+VAD segmentation, hold-to-talk timing, text insertion, focus behaviour,
+packaging, or resident memory cost. One synthetic zh-CN sample is not accuracy
+evidence for other languages, noise conditions, or speakers.
 
 ## Model discovery
 
-The native helper and any transitional script must use the same order:
+The native command and the transitional script use the same order, with
+`--model-dir` and `VIBDOCK_STT_MODEL_DIR` as explicit overrides:
 
-1. the existing DSH SenseVoice cache, read-only:
+1. an explicit `--model-dir` or `VIBDOCK_STT_MODEL_DIR`;
+2. the existing DSH SenseVoice cache, read-only:
    `%USERPROFILE%\.dsh\speech-to-text\sensevoice\models\sensevoice-onnx`
    (`$DSH_HOME` replaces `%USERPROFILE%\.dsh` when set);
-2. the VibDock-owned directory: `%LOCALAPPDATA%\VibDock\models\sensevoice`.
+3. the VibDock-owned directory: `%LOCALAPPDATA%\VibDock\models\sensevoice`.
 
 A directory counts as a model only when it contains both `tokens.txt` and
 either `model.int8.onnx` or `model.onnx`, with non-zero sizes. VibDock must not
@@ -85,35 +89,42 @@ The prototype implements this pinned download behind `--download` plus
 `--consent-download`. It is not wired into the product; the runtime must not
 expose a generic "download this URL" action.
 
-## Future native helper
+## Native helper
 
-The planned shape is a VibDock-owned helper, `vibdock-stt`, using `sherpa-onnx`
-(Rust binding or a bundled native helper). It is not a shell, not a user-supplied
-executable path, and not a plugin system:
+The shape is a VibDock-owned command using the `sherpa-onnx` Rust binding, not a
+shell, not a user-supplied executable path, and not a plugin system:
 
-- fixed command vocabulary owned by VibDock, with no arbitrary argv pass-through;
-- model directory selected only by discovery or the validated install path;
-- one bounded WAV/utterance in, one JSON object out, errors on stderr, timeouts
-  and output size limits;
-- no network access for transcription; no download path inside the helper;
-- no shell, no `cmd /c`, no Python runtime requirement, no PATH lookup;
-- if the Web service ever exposes it, the existing authenticated loopback and
-  origin rules apply, with a closed allowlist rather than a command endpoint.
+- fixed command vocabulary owned by VibDock (`transcribe --wav ...`), with no
+  arbitrary argv pass-through;
+- model directory selected only by explicit `--model-dir`, `VIBDOCK_STT_MODEL_DIR`,
+  or local discovery; no network access for transcription;
+- one bounded WAV in, one JSON object out, errors on stderr;
+- no `cmd /c`, no Python runtime requirement, no PATH lookup at runtime;
+- the optional dependency is feature-gated so the default preview binary remains
+  small; a release that ships STT must build with `--features stt`.
 
-Python remains a prototype-only dependency. `vibdock.exe` must not require
-Python, Node, or a downloaded executable, and this slice adds no Rust
-dependencies and does not change `Cargo.toml`.
+The Python prototype is not required at runtime. It remains a developer path for
+the consent-gated model install and for cross-checking the native result.
 
 ## Milestones
 
-### M1 · Transcribe one WAV (prototype complete, not integrated)
+### M1 · Transcribe one WAV (native, behind `stt`)
 
-`vibdock transcribe <wav>` prints `{text, lang, emotion, event, audio_seconds,
-seconds}` as JSON. No microphone, no injection, no hardware binding. Acceptance
-needs a real installed-model run, a missing-model run that fails closed with an
-actionable install path, and a checksum-verified install run. The dev prototype
-meets these on the host recorded above; it is not the native helper and is not
-shipped.
+`cargo build --features stt`, then:
+
+```powershell
+.\vibdock.exe transcribe --wav sample.wav --json
+```
+
+The command discovers an existing local model, emits one JSON object
+(`text`, `seconds`, `model`), and exits non-zero with an actionable message when
+the model or WAV is missing. No microphone, injection, hardware binding or
+network access. Acceptance on the host recorded above transcribed the same
+synthetic zh-CN sentence in 0.2007 s; missing-model and malformed-argument
+paths are covered by unit tests.
+
+The default `vibdock.exe` build does not include this dependency or command; it
+reports that the build lacks local STT instead of downloading anything.
 
 ### M2 · Hold-to-talk from the selected microphone
 
@@ -160,8 +171,9 @@ application. Unit tests and prototype events are not device evidence.
 - Transcription output is **not** verified voice-session state. It does not say
   whether an application's voice mode is active, whether a shortcut started or
   stopped anything, or whether inserted text reached the target.
-- There is no VibDock runtime STT support in this slice, and `vibdock.exe` does
-  not invoke the prototype.
+- There is no default-runtime STT support in this slice: `vibdock.exe` only
+  includes transcription when built with `--features stt`, and it never captures
+  a microphone or inserts text.
 - No microphone capture, VAD capture, hotkey, tray control, Web UI, or text
   insertion is implemented here.
 - The prototype's `--download` is an explicit developer action, not automatic
