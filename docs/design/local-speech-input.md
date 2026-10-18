@@ -1,9 +1,9 @@
 # Local speech input
 
-Status: M1 (`transcribe`), bounded M2 capture and M3 focused-window insertion
-are implemented behind the optional `stt` Cargo feature as `vibdock transcribe`
-and `vibdock dictate`. The default preview binary does not include them. A global
-hold-to-talk trigger, Silero VAD segmentation, a target picker, clipboard
+Status: M1 (`transcribe`), bounded M2 capture including hold-to-talk, and M3
+focused-window insertion are implemented behind the optional `stt` Cargo feature
+as `vibdock transcribe` and `vibdock dictate`. The default preview binary does not
+include them. Silero VAD, configured-device selection, a target picker, clipboard
 fallback and verified content/voice state remain open. The dev-only Python
 prototype in `scripts/stt/` remains for model discovery/install checks.
 
@@ -36,14 +36,17 @@ On 2026-10-18 the same build also:
 
 - captured 2.013 s from the default microphone through CPAL and transcribed it
   locally (the ambient clip produced `I.`, not a meaningful accuracy check);
+- registered `Ctrl + Alt + F12` for `--hold`, captured 1.407 s between key down
+  and release, and transcribed on release; Escape during a second hold exited
+  non-zero with `Cancelled; the captured audio was discarded.`;
 - transcribed the 5.832 s WAV and inserted the exact Chinese sentence into a
   focused Notepad document with Unicode `SendInput`; UI Automation read back
   `项目速记整理本周的工作要点，记录接下来的安排。`;
 - rejected a missing model, conflicting `--wav`/`--seconds`, and an out-of-range
   duration before recording.
 
-It does **not** prove VAD segmentation, hold-to-talk timing, configured-device
-selection, insertion into arbitrary applications, clipboard behaviour, or
+It does **not** prove VAD segmentation, configured-device selection, continuous
+listening, insertion into arbitrary applications, clipboard behaviour, or
 resident memory cost. One synthetic zh-CN sample is not accuracy evidence for
 other languages, noise conditions, or speakers.
 
@@ -140,17 +143,20 @@ paths are covered by unit tests.
 The default `vibdock.exe` build does not include this dependency or command; it
 reports that the build lacks local STT instead of downloading anything.
 
-### M2 · Bounded capture from the default microphone (implemented)
+### M2 · Bounded capture and hold-to-talk (implemented)
 
 `vibdock dictate --seconds N` opens the default input device through CPAL, records
 for 1–30 seconds, downmixes to mono, resamples to 16 kHz in memory, and
-transcribes. Empty or silent captures fail closed; the command never falls back
-to another microphone and does not write audio to disk. A 2.013 s live capture
-and a 5.832 s WAV both transcribe on the host recorded below.
+transcribes. `vibdock dictate --hold --trigger <chord>` registers a VibDock-owned
+global chord and captures until that key is released; Escape cancels and discards
+the clip. Empty or silent captures fail closed; the command never falls back to
+another microphone and does not write audio to disk. A 2.013 s live capture, a
+1.407 s hold-trigger capture and a 5.832 s WAV all transcribe on the host
+recorded below.
 
-Still open: a global hold-to-talk trigger, Silero VAD segmentation, use of the
-configured microphone identity rather than the OS default, cancellation during
-recording, and resident memory/latency measurements.
+Still open: Silero VAD segmentation, use of the configured microphone identity
+rather than the OS default, a long-running listener instead of one-shot hold, and
+resident memory/latency measurements.
 
 ### M3 · Insertion into the explicitly focused window (implemented)
 

@@ -131,17 +131,20 @@ cargo build --release --features stt
 .\target\release\vibdock.exe transcribe --wav sample.wav --json
 .\target\release\vibdock.exe dictate --seconds 5 --json
 .\target\release\vibdock.exe dictate --wav sample.wav --insert
+.\target\release\vibdock.exe dictate --hold --trigger "Ctrl+Alt+Space" --insert
 ```
 
-`transcribe` handles one WAV. `dictate` is Windows-only and captures a bounded
-clip from the default microphone (1–30 seconds), transcribes it, and with
-`--insert` types the result into the window that is focused at insertion time
-using Unicode `SendInput`. It never presses Enter, clicks Send, or submits a
-form, and it re-checks the foreground window before and after insertion. A
-detected focus change is an error; success means input was sent, not that the
-target accepted or displayed it. Running `--insert` from a terminal can target
-that terminal, so focus the intended window before the capture finishes. The
-transcript and audio stay local.
+`transcribe` handles one WAV. `dictate` is Windows-only and captures from the
+default microphone (1–30 seconds), transcribes it, and with `--insert` types the
+result into the window that is focused at insertion time using Unicode
+`SendInput`. `--hold --trigger <chord>` registers that chord globally and
+captures until the key is released; Escape cancels and discards the clip. It
+never presses Enter, clicks Send, or submits a form, and it re-checks the
+foreground window before and after insertion. A detected focus change is an
+error; success means input was sent, not that the target accepted or displayed
+it. Running `--insert` from a terminal can target that terminal, so focus the
+intended window before pressing the hold trigger. The transcript and audio stay
+local.
 
 The model is discovered in this order: `--model-dir`, `VIBDOCK_STT_MODEL_DIR`,
 the existing DeepSeek Harness SenseVoice cache (read-only), then
@@ -151,13 +154,13 @@ Building with `stt` downloads the pinned sherpa-onnx native archives at build
 time, so that build is not offline-friendly. The separate consent-gated model
 download lives in [scripts/stt](scripts/stt/README.md).
 
-Still not implemented: a global hold-to-talk trigger, Silero VAD segmentation,
+Still not implemented: Silero VAD segmentation, configured-device selection,
 a per-application insertion target picker, clipboard fallback, and any claim of
 verified voice-session or content state. The native build is not part of the
 default CI artifact; packaging and model licensing remain open in
 [the local speech input design](docs/design/local-speech-input.md). The dated
 [local dictation acceptance record](docs/testing/local-dictation-acceptance.md)
-lists the live WAV, microphone and Notepad insertion results.
+lists the live WAV, microphone, hold-trigger and Notepad insertion results.
 
 ## Explore the design preview
 

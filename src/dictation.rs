@@ -5,7 +5,11 @@
 //! an explicit command, stops after a bounded duration, and never sends Enter.
 //! The transcript and audio stay local.
 
-use crate::stt;
+use crate::{
+    hotkey::Hotkey,
+    stt,
+    windows::{escape_is_down, poll_hotkeys, trigger_is_down, RegisteredHotkey},
+};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     FromSample, Sample, SampleFormat, StreamConfig,
@@ -14,15 +18,18 @@ use serde_json::json;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const TARGET_RATE: u32 = 16_000;
 const MAX_SECONDS: u32 = 30;
+const HOLD_HOTKEY_ID: i32 = 9001;
 
 struct Cli {
     seconds: u32,
     wav: Option<PathBuf>,
+    hold: bool,
+    trigger: Option<String>,
     insert: bool,
     model_dir: Option<PathBuf>,
     json: bool,
@@ -32,6 +39,8 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
     let mut seconds = 5u32;
     let mut seconds_set = false;
     let mut wav = None;
+    let mut hold = false;
+    let mut trigger = None;
     let mut insert = false;
     let mut model_dir = None;
     let mut json = false;
@@ -49,6 +58,20 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
                 }
                 seconds = value;
                 seconds_set = true;
+                index += 2;
+            }
+            "--hold" => {
+                hold = true;
+                index += 1;
+            }
+            "--trigger" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.is_empty() && !value.contains('\0'))
+                    .ok_or_else(|| "--trigger requires a shortcut.".to_string())?;
+                if trigger.replace(value.clone()).is_some() {
+                    return Err("--trigger may be specified only once.".into());
+                }
                 index += 2;
             }
             "--wav" => {
@@ -85,9 +108,25 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
     if wav.is_some() && seconds_set {
         return Err("Use either --wav or --seconds, not both.".into());
     }
+    if hold {
+        if wav.is_some() {
+            return Err("--hold cannot be combined with --wav.".into());
+        }
+        let Some(trigger) = trigger.as_deref() else {
+            return Err("--hold requires --trigger <chord>.".into());
+        };
+        Hotkey::parse(trigger).map_err(|error| error.to_string())?;
+        if !seconds_set {
+            seconds = MAX_SECONDS;
+        }
+    } else if trigger.is_some() {
+        return Err("--trigger requires --hold.".into());
+    }
     Ok(Cli {
         seconds,
         wav,
+        hold,
+        trigger,
         insert,
         model_dir,
         json,
@@ -104,6 +143,13 @@ where
 }
 
 fn record(seconds: u32) -> std::result::Result<(Vec<f32>, u32), String> {
+    record_until(seconds, || false)
+}
+
+fn record_until<F>(max_seconds: u32, stop: F) -> std::result::Result<(Vec<f32>, u32), String>
+where
+    F: Fn() -> bool,
+{
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -156,7 +202,10 @@ fn record(seconds: u32) -> std::result::Result<(Vec<f32>, u32), String> {
     stream
         .play()
         .map_err(|error| format!("The microphone could not be started: {error}"))?;
-    std::thread::sleep(Duration::from_secs(seconds as u64));
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(max_seconds as u64) && !stop() {
+        std::thread::sleep(Duration::from_millis(40));
+    }
     drop(stream);
     if let Ok(slot) = error_slot.lock() {
         if let Some(error) = slot.as_ref() {
@@ -206,11 +255,38 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
+fn hold(cli: &Cli, model: &stt::ModelPaths) -> std::result::Result<(String, f32, f32), String> {
+    let trigger = cli
+        .trigger
+        .as_deref()
+        .ok_or_else(|| "--hold requires --trigger <chord>.".to_string())?;
+    let hotkey = Hotkey::parse(trigger).map_err(|error| error.to_string())?;
+    let _registration = RegisteredHotkey::register(&hotkey, HOLD_HOTKEY_ID)?;
+    eprintln!("Hold {trigger} and speak; release to stop, Esc to cancel.");
+    loop {
+        if poll_hotkeys().contains(&HOLD_HOTKEY_ID) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    let (samples, _sample_rate) = record_until(cli.seconds, || {
+        !trigger_is_down(&hotkey).unwrap_or(false) || escape_is_down()
+    })?;
+    if escape_is_down() {
+        return Err("Cancelled; the captured audio was discarded.".into());
+    }
+    let audio_seconds = samples.len() as f32 / TARGET_RATE as f32;
+    let (text, seconds) = stt::transcribe_samples(&samples, TARGET_RATE as i32, model)?;
+    Ok((text, audio_seconds, seconds))
+}
+
 /// Runs `vibdock dictate`.
 pub(crate) fn run(args: &[String]) -> crate::Result<()> {
     let cli = parse_args(args)?;
     let model = stt::discover_model(cli.model_dir.as_deref())?;
-    let (text, audio_seconds, seconds) = if let Some(wav) = &cli.wav {
+    let (text, audio_seconds, seconds) = if cli.hold {
+        hold(&cli, &model)?
+    } else if let Some(wav) = &cli.wav {
         let (text, seconds) = stt::transcribe_wav(wav, &model)?;
         (text, stt::wav_seconds(wav)?, seconds)
     } else {
@@ -267,6 +343,25 @@ mod tests {
         let cli = parse_args(&args(&["--seconds", "2", "--insert", "--json"])).unwrap();
         assert_eq!(cli.seconds, 2);
         assert!(cli.insert && cli.json);
+    }
+
+    #[test]
+    fn hold_requires_a_valid_trigger_and_rejects_wav() {
+        assert!(parse_args(&args(&["--hold"])).is_err());
+        assert!(parse_args(&args(&[
+            "--hold",
+            "--trigger",
+            "Ctrl+Alt+Space",
+            "--wav",
+            "a.wav"
+        ]))
+        .is_err());
+        assert!(parse_args(&args(&["--trigger", "Ctrl+Alt+Space"])).is_err());
+        assert!(parse_args(&args(&["--hold", "--trigger", "not a chord"])).is_err());
+        let cli = parse_args(&args(&["--hold", "--trigger", "Ctrl+Alt+Space"])).unwrap();
+        assert!(cli.hold);
+        assert_eq!(cli.seconds, MAX_SECONDS);
+        assert_eq!(cli.trigger.as_deref(), Some("Ctrl+Alt+Space"));
     }
 
     #[test]
