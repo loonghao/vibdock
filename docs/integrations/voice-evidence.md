@@ -20,25 +20,45 @@ Full host inspection, source status, and the prerequisite contract are in [WeCha
 
 ## Installed-client inspection (2026-10-18)
 
-Read-only observation on one Windows 11 x64 host. No client settings were
-changed, no shortcut was sent, no voice session was started, and no microphone
-was recorded.
+Bounded checks on one Windows 11 x64 host. Settings were opened read-only, and
+the only input was each client's own visible control or configured trigger. No
+VibDock shortcut was dispatched.
 
 | Client | Installed identity | Observed surface | Still unknown |
 | --- | --- | --- | --- |
-| WeChat Input | registry `微信输入法 3.0.0.34`, `C:\Program Files\Tencent\WeType`; running `wetype_server.exe`, `wetype_renderer.exe`, `wetype_service.exe`, `wetype_update.exe` | background helpers and install assets only | configured voice trigger, focus rule, start/dictation/stop result, queryable state |
-| Codex/ChatGPT desktop | MSIX `OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0`, `...\app\ChatGPT.exe`; multiple running processes | packaged desktop app and a foreground window | configured voice trigger, voice/PTT controls, start/stop result, queryable state |
+| WeChat Input | registry `微信输入法 3.0.0.34`, `C:\Program Files\Tencent\WeType`; running `wetype_server.exe`, `wetype_renderer.exe`, `wetype_service.exe`, `wetype_update.exe` | settings UI; configured `Ctrl Win Shift` start/stop and `Ctrl Win` hold-to-talk bindings; a `语音输入` window appeared on start and disappeared on the same trigger | microphone/audio route, account state, transcription result, queryable voice state |
+| Codex/ChatGPT desktop | MSIX `OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0`, `...\app\ChatGPT.exe`; multiple running processes | in-composer microphone button; clicking it changed to a stop control and the accessible tooltip changed from `听写` to `停止听写`; clicking stop restored the microphone | keyboard trigger, account state, transcript result, queryable voice state |
 
-The WeChat Input settings store is an MMKV binary held by the running client and
-was not parsed; the Codex `settings.dat` was not decoded. No documented public
-API or state query was found for either client. A configured trigger is therefore
-**unknown and must be read from the client by the user**, not guessed from a
-tutorial or hard-coded.
+WeChat Input detail, from its own **语音输入** settings page:
 
-This inspection upgrades the installed-version/provenance evidence only. It does
-not establish `start_voice`/`end_voice`, dictation, focus requirements, or any
-voice-active state, and it does not justify changing a capability from `unknown`
-to `unverified` or verified.
+- **启动语音输入** is enabled with `Ctrl Win Shift`; the page says pressing it starts
+  voice input and pressing it again or Enter ends it.
+- **按住说话** is enabled with `Ctrl Win`; the page says holding it dictates and
+  releasing ends.
+- With a Notepad document focused, sending the displayed `Ctrl Win Shift` chord
+  created a `语音输入` window owned by `wetype_update.exe`; sending the same chord
+  removed it. This is observed start/stop UI behaviour, not a transcript test:
+  the machine was not spoken to and no text appeared in Notepad.
+- The settings store is an MMKV binary held by the running client and was not
+  parsed; the trigger above is read from the rendered settings page.
+
+Codex/ChatGPT detail:
+
+- The composer exposes a microphone control; there was no visible configured
+  keyboard trigger for it.
+- One click started dictation: the control became a stop square and the tooltip
+  read `停止听写`. A second click stopped it and restored the `听写` microphone.
+- The test did not speak, so no transcript, send, or account-dependent behaviour
+  was observed. Focus was already on the client window.
+
+No documented public API or state query was found for either client. A configured
+trigger must be read from the client by the user, not guessed from a tutorial or
+hard-coded.
+
+This establishes start/stop through each client's own visible control on one
+host. It does **not** establish microphone capture, audio routing, dictation
+accuracy, account state, or queryable voice state, and it does not justify
+changing a VibDock runtime capability from `unknown` to verified.
 
 ## Shortcut ownership
 

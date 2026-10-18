@@ -3,10 +3,13 @@
 This is integration evidence and a prerequisite contract, not installed-client acceptance.
 No capability here is reported as verified. VibDock is independent of this vendor.
 
-A read-only check on 2026-10-18 found `微信输入法 3.0.0.34` installed under
+A bounded check on 2026-10-18 found `微信输入法 3.0.0.34` installed under
 `C:\Program Files\Tencent\WeType`, with `wetype_server.exe`, `wetype_renderer.exe`,
-`wetype_service.exe` and `wetype_update.exe` running. Its settings store was not
-parsed and no voice trigger, start/stop result or state query was verified; see
+`wetype_service.exe` and `wetype_update.exe` running. Its **语音输入** settings page
+showed `Ctrl Win Shift` for start/stop and `Ctrl Win` for hold-to-talk; sending the
+displayed start/stop chord created a `语音输入` window and sending it again removed
+it. Microphone capture, audio route, dictation, account state and any queryable
+voice state were **not** verified; see
 [voice integration evidence](voice-evidence.md#installed-client-inspection-2026-10-18).
 The historical 2.1.4.6 snapshot below is retained as a dated sample only.
 
