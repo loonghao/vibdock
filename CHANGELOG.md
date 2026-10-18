@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0](https://github.com/loonghao/vibdock/compare/v0.3.0...v0.4.0) (2026-10-18)
+
+
+### Features
+
+* **cli:** expose per-application shortcut management ([#50](https://github.com/loonghao/vibdock/issues/50)) ([6a25334](https://github.com/loonghao/vibdock/commit/6a2533458ef6d6e25e9614561d8120be825b6909))
+* **stt:** add a global hold-to-talk dictate trigger ([#57](https://github.com/loonghao/vibdock/issues/57)) ([1d326ae](https://github.com/loonghao/vibdock/commit/1d326aec521bfed7a41f92d96dd22c9ca2b739fd))
+* **stt:** add bounded local dictation and focused-window insertion ([#53](https://github.com/loonghao/vibdock/issues/53)) ([6580c3c](https://github.com/loonghao/vibdock/commit/6580c3c2cc3fc573bcb28ff498c2d034be80f1c5))
+* **stt:** add dev-only SenseVoice transcription prototype ([#47](https://github.com/loonghao/vibdock/issues/47)) ([540c61c](https://github.com/loonghao/vibdock/commit/540c61c0fb4f455e96bbca1fb63d636adcbb0540)), closes [#44](https://github.com/loonghao/vibdock/issues/44)
+* **stt:** add optional native SenseVoice WAV transcription ([#49](https://github.com/loonghao/vibdock/issues/49)) ([26a31d2](https://github.com/loonghao/vibdock/commit/26a31d2910ab4f5e6ad9f47769998f6eafa032f6))
+* **stt:** require a title match before dictation insertion ([#58](https://github.com/loonghao/vibdock/issues/58)) ([f5b9a33](https://github.com/loonghao/vibdock/commit/f5b9a3344e445ad46e15fd8e1ebd9f5140c9b2ab))
+* **stt:** trim dictation with local Silero VAD ([#59](https://github.com/loonghao/vibdock/issues/59)) ([e4e3d76](https://github.com/loonghao/vibdock/commit/e4e3d767f70abe30eb14acc3e1e1acb729095793))
+* **windows:** add tray microphone and pinned-software quick menu ([#45](https://github.com/loonghao/vibdock/issues/45)) ([6112d1f](https://github.com/loonghao/vibdock/commit/6112d1f37df68ead4774b0f9528ca34d05707fde))
+* **windows:** recognize applications and dispatch per-application shortcuts ([#36](https://github.com/loonghao/vibdock/issues/36)) ([6fd196e](https://github.com/loonghao/vibdock/commit/6fd196e987709bac6682e58830efd710a6120cae))
+
+
+### Bug Fixes
+
+* **windows:** recognise UWP applications behind ApplicationFrameHost ([#51](https://github.com/loonghao/vibdock/issues/51)) ([8ebd320](https://github.com/loonghao/vibdock/commit/8ebd3207fbe567dfff9c219afd061060287e5e68))
+* **windows:** report a foreground change during dispatch ([#52](https://github.com/loonghao/vibdock/issues/52)) ([790d4ca](https://github.com/loonghao/vibdock/commit/790d4ca92cbacc5844fc1f8b6d7202680503950e))
+
 ## [0.3.0](https://github.com/loonghao/vibdock/compare/v0.2.0...v0.3.0) (2026-10-16)
 
 
