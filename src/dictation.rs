@@ -6,7 +6,7 @@
 //! The transcript and audio stay local.
 
 use crate::{
-    hotkey::Hotkey,
+    hotkey::{Hotkey, Key},
     stt,
     windows::{escape_is_down, poll_hotkeys, trigger_is_down, RegisteredHotkey},
 };
@@ -17,7 +17,10 @@ use cpal::{
 use serde_json::json;
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -146,7 +149,8 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
         let Some(trigger) = trigger.as_deref() else {
             return Err("--hold requires --trigger <chord>.".into());
         };
-        Hotkey::parse(trigger).map_err(|error| error.to_string())?;
+        let parsed = Hotkey::parse(trigger).map_err(|error| error.to_string())?;
+        ensure_hold_trigger_is_not_escape(&parsed)?;
         if !seconds_set {
             seconds = MAX_SECONDS;
         }
@@ -303,12 +307,66 @@ fn apply_vad(cli: &Cli, samples: Vec<f32>) -> std::result::Result<Vec<f32>, Stri
     stt::vad_speech(&samples, &model)
 }
 
+/// Rejects a hold-to-talk trigger whose key half is Escape.
+///
+/// Escape is reserved to cancel a live capture, so a chord such as
+/// `Ctrl + Escape` would both start recording and immediately satisfy the
+/// cancel condition, cancelling itself into an empty clip. Rejecting it up
+/// front avoids arming a global hotkey that can never yield a transcript.
+fn ensure_hold_trigger_is_not_escape(hotkey: &Hotkey) -> std::result::Result<(), String> {
+    if hotkey.key() == Key::Escape {
+        return Err(
+            "Escape cannot be the hold trigger; it is reserved to cancel dictation.".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Records why a hold-to-talk capture stopped so the cancel decision is made
+/// from a latched reason rather than a second live key read.
+///
+/// `record_until` tears down the microphone stream (WASAPI stop, buffer clone,
+/// resample) before it returns, which takes long enough that a user who taps
+/// Escape can release it in that window. Re-reading `escape_is_down()` after
+/// `record_until` returns would then see Escape up and transcribe — or, with
+/// `--insert`, type — a clip the user asked to discard. Latching the reason the
+/// moment Escape is observed makes cancellation depend on the deterministic
+/// stop cause instead of how fast the key is released.
+#[derive(Default)]
+struct HoldCancellation {
+    cancelled: AtomicBool,
+}
+
+impl HoldCancellation {
+    /// Stop predicate for `record_until`: stop when the trigger is released or
+    /// Escape is pressed, latching a cancel when Escape caused the stop.
+    ///
+    /// `trigger_down` is the live trigger state, defaulting to `false` when it
+    /// cannot be read, so an unreadable trigger fails closed and stops without
+    /// cancelling — preserving the prior `unwrap_or(false)` behaviour.
+    fn should_stop(&self, trigger_down: bool, escape_down: bool) -> bool {
+        if escape_down {
+            self.cancelled.store(true, Ordering::SeqCst);
+            true
+        } else {
+            !trigger_down
+        }
+    }
+
+    /// True when the capture was cancelled by Escape. Read once after
+    /// `record_until` returns; never derived from a fresh live key check.
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
 fn hold(cli: &Cli, model: &stt::ModelPaths) -> std::result::Result<(String, f32, f32), String> {
     let trigger = cli
         .trigger
         .as_deref()
         .ok_or_else(|| "--hold requires --trigger <chord>.".to_string())?;
     let hotkey = Hotkey::parse(trigger).map_err(|error| error.to_string())?;
+    ensure_hold_trigger_is_not_escape(&hotkey)?;
     let _registration = RegisteredHotkey::register(&hotkey, HOLD_HOTKEY_ID)?;
     eprintln!("Hold {trigger} and speak; release to stop, Esc to cancel.");
     loop {
@@ -317,10 +375,12 @@ fn hold(cli: &Cli, model: &stt::ModelPaths) -> std::result::Result<(String, f32,
         }
         std::thread::sleep(Duration::from_millis(40));
     }
+    let cancel = HoldCancellation::default();
     let (samples, _sample_rate) = record_until(cli.seconds, || {
-        !trigger_is_down(&hotkey).unwrap_or(false) || escape_is_down()
+        let trigger_down = trigger_is_down(&hotkey).unwrap_or(false);
+        cancel.should_stop(trigger_down, escape_is_down())
     })?;
-    if escape_is_down() {
+    if cancel.is_cancelled() {
         return Err("Cancelled; the captured audio was discarded.".into());
     }
     let samples = apply_vad(cli, samples)?;
@@ -428,6 +488,58 @@ mod tests {
         assert!(cli.hold);
         assert_eq!(cli.seconds, MAX_SECONDS);
         assert_eq!(cli.trigger.as_deref(), Some("Ctrl+Alt+Space"));
+    }
+
+    #[test]
+    fn hold_rejects_escape_as_the_trigger_key() {
+        // Escape is reserved to cancel a live capture, so a chord whose key
+        // half is Escape would cancel itself into an empty clip. Both the
+        // `Escape` and `Esc` spellings parse to the same key and are rejected.
+        for chord in ["Ctrl+Escape", "Alt+Esc", "Ctrl+Shift+Escape"] {
+            let error = parse_args(&args(&["--hold", "--trigger", chord]))
+                .err()
+                .unwrap_or_else(|| panic!("{chord} must be rejected"));
+            assert!(
+                error.contains("Escape") && error.contains("cancel"),
+                "unexpected error for {chord}: {error}"
+            );
+        }
+        // A cancel-safe chord still parses.
+        assert!(parse_args(&args(&["--hold", "--trigger", "Ctrl+Alt+Space"])).is_ok());
+    }
+
+    #[test]
+    fn hold_escape_cancel_is_latched_and_ignores_later_key_state() {
+        let cancel = HoldCancellation::default();
+        // Trigger held, Escape not pressed: keep recording.
+        assert!(!cancel.should_stop(true, false));
+        assert!(!cancel.is_cancelled());
+        // Escape pressed: stop and record the cancel reason deterministically.
+        assert!(cancel.should_stop(true, true));
+        assert!(cancel.is_cancelled());
+        // A later poll where Escape is up — as happens after the mic stream is
+        // torn down and the key released — must not clear the recorded cancel.
+        // The post-capture decision reads this flag, never a fresh live key
+        // check, so it cannot resurrect a discarded clip as captured.
+        assert!(!cancel.should_stop(true, false));
+        assert!(cancel.is_cancelled());
+    }
+
+    #[test]
+    fn hold_trigger_release_stops_without_cancelling() {
+        let cancel = HoldCancellation::default();
+        // Releasing the trigger ends the capture and the clip is transcribed.
+        assert!(cancel.should_stop(false, false));
+        assert!(!cancel.is_cancelled());
+    }
+
+    #[test]
+    fn hold_escape_takes_priority_over_a_simultaneous_release() {
+        let cancel = HoldCancellation::default();
+        // Escape pressed in the same poll that reports the trigger released:
+        // the clip is discarded rather than transcribed.
+        assert!(cancel.should_stop(false, true));
+        assert!(cancel.is_cancelled());
     }
 
     #[test]
