@@ -299,6 +299,70 @@ pub(crate) fn dispatch_to_foreground_app(
     }
 }
 
+/// Inserts already-transcribed text into the current foreground window with
+/// Unicode `SendInput` events. It never appends Enter or triggers a send action.
+///
+/// The caller must have chosen insertion explicitly. A detected foreground
+/// change is an error: the text may have reached another window, and VibDock
+/// cannot retract it. Success means "input was sent", never "the target
+/// accepted or displayed the text".
+#[cfg(feature = "stt")]
+pub(crate) fn insert_text(text: &str) -> std::result::Result<usize, String> {
+    if text.is_empty() {
+        return Err("There is no transcript to insert.".into());
+    }
+    let units = text.encode_utf16().collect::<Vec<_>>();
+    if units.len() > 4096 {
+        return Err("The transcript is too long to insert (limit 4096 UTF-16 units).".into());
+    }
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return Err("No foreground window is available; nothing was inserted.".into());
+        }
+        let mut inputs = Vec::with_capacity(units.len() * 2);
+        for unit in &units {
+            inputs.push(unicode_input(*unit, false));
+            inputs.push(unicode_input(*unit, true));
+        }
+        let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != inputs.len() {
+            return Err(format!(
+                "Windows accepted {sent} of {} text events; the transcript may be incomplete.",
+                inputs.len()
+            ));
+        }
+        if GetForegroundWindow() != hwnd {
+            return Err(
+                "The foreground window changed during insertion; the transcript may have been sent to another application."
+                    .into(),
+            );
+        }
+    }
+    Ok(units.len())
+}
+
+#[cfg(feature = "stt")]
+unsafe fn unicode_input(unit: u16, up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: unit,
+                dwFlags: KEYEVENTF_UNICODE
+                    | if up {
+                        KEYEVENTF_KEYUP
+                    } else {
+                        KEYBD_EVENT_FLAGS::default()
+                    },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
 /// Builds and injects the key events for one parsed chord.
 ///
 /// A symbol such as `+` may require Shift on the active layout. The chord the

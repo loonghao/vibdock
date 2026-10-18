@@ -1,8 +1,10 @@
 # Local speech input
 
-Status: milestone 1 is implemented behind the optional `stt` Cargo feature as
-`vibdock transcribe`. The default preview binary does not include it; microphone
-capture, hold-to-talk and text insertion remain M2/M3. The dev-only Python
+Status: M1 (`transcribe`), bounded M2 capture and M3 focused-window insertion
+are implemented behind the optional `stt` Cargo feature as `vibdock transcribe`
+and `vibdock dictate`. The default preview binary does not include them. A global
+hold-to-talk trigger, Silero VAD segmentation, a target picker, clipboard
+fallback and verified content/voice state remain open. The dev-only Python
 prototype in `scripts/stt/` remains for model discovery/install checks.
 
 ## Goal
@@ -28,10 +30,22 @@ prototype transcribed a Windows SAPI zh-CN WAV locally on 2026-10-18:
 This proves the cached model is reusable and CPU decoding is fast for short
 utterances. The native Rust implementation (`sherpa-onnx` 1.13.8, optional `stt`
 feature) produced the same transcript in 0.2007 s on the same WAV, including
-automatic 22.05 kHz → 16 kHz resampling. It does **not** prove microphone capture,
-VAD segmentation, hold-to-talk timing, text insertion, focus behaviour,
-packaging, or resident memory cost. One synthetic zh-CN sample is not accuracy
-evidence for other languages, noise conditions, or speakers.
+automatic 22.05 kHz → 16 kHz resampling.
+
+On 2026-10-18 the same build also:
+
+- captured 2.013 s from the default microphone through CPAL and transcribed it
+  locally (the ambient clip produced `I.`, not a meaningful accuracy check);
+- transcribed the 5.832 s WAV and inserted the exact Chinese sentence into a
+  focused Notepad document with Unicode `SendInput`; UI Automation read back
+  `项目速记整理本周的工作要点，记录接下来的安排。`;
+- rejected a missing model, conflicting `--wav`/`--seconds`, and an out-of-range
+  duration before recording.
+
+It does **not** prove VAD segmentation, hold-to-talk timing, configured-device
+selection, insertion into arbitrary applications, clipboard behaviour, or
+resident memory cost. One synthetic zh-CN sample is not accuracy evidence for
+other languages, noise conditions, or speakers.
 
 ## Model discovery
 
@@ -126,28 +140,32 @@ paths are covered by unit tests.
 The default `vibdock.exe` build does not include this dependency or command; it
 reports that the build lacks local STT instead of downloading anything.
 
-### M2 · Hold-to-talk from the selected microphone
+### M2 · Bounded capture from the default microphone (implemented)
 
-The user holds a VibDock-owned trigger, speaks, and releases; Silero VAD bounds
-the utterance and a maximum duration caps it. The selected microphone identity
-is used exactly as configured, with no silent fallback to another endpoint.
-Recording is cancellable; failed or empty captures report a distinct state;
-temporary audio is deleted after transcription; no transcript is inserted and no
-application is changed while recording. Auto-send does not exist.
+`vibdock dictate --seconds N` opens the default input device through CPAL, records
+for 1–30 seconds, downmixes to mono, resamples to 16 kHz in memory, and
+transcribes. Empty or silent captures fail closed; the command never falls back
+to another microphone and does not write audio to disk. A 2.013 s live capture
+and a 5.832 s WAV both transcribe on the host recorded below.
 
-### M3 · Insertion into the explicitly focused window
+Still open: a global hold-to-talk trigger, Silero VAD segmentation, use of the
+configured microphone identity rather than the OS default, cancellation during
+recording, and resident memory/latency measurements.
 
-Insert only into the window that is focused when the user triggers insertion,
-show which target will receive text, and distinguish three states: transcribed,
-dispatched, and verified. Insertion is its own user action, never an implicit
-continuation of transcription. Never press Enter, never click a send button, and
-never submit a form. A clipboard-based fallback must be labelled as clipboard
-mutation and restore the previous clipboard or ask first. Focus can change
-between capture and insertion; the helper must re-check the target and abort
-rather than insert elsewhere.
+### M3 · Insertion into the explicitly focused window (implemented)
 
-Each milestone needs host acceptance with a real microphone and target
-application. Unit tests and prototype events are not device evidence.
+`vibdock dictate --wav ... --insert` (or captured audio with `--insert`) sends the
+transcript as Unicode `SendInput` events to the foreground window. It never
+presses Enter, clicks Send, or submits a form, and it checks the foreground
+window before and after insertion. A detected focus change is an error; success
+means input was sent, not that the target accepted, displayed, or submitted it.
+There is no clipboard fallback and no per-application target picker yet.
+
+A real Notepad check inserted the exact Chinese transcript and read it back
+through UI Automation. This is input-routing evidence, not proof of application
+semantics. The CLI is launched from a terminal, so `--insert` can target that
+terminal if focus is not moved to the intended window; a tray/hotkey flow with a
+target picker is still needed to make this safe for routine use.
 
 ## Privacy
 
@@ -171,30 +189,32 @@ application. Unit tests and prototype events are not device evidence.
 - Transcription output is **not** verified voice-session state. It does not say
   whether an application's voice mode is active, whether a shortcut started or
   stopped anything, or whether inserted text reached the target.
-- There is no default-runtime STT support in this slice: `vibdock.exe` only
-  includes transcription when built with `--features stt`, and it never captures
-  a microphone or inserts text.
-- No microphone capture, VAD capture, hotkey, tray control, Web UI, or text
-  insertion is implemented here.
+- There is no default-runtime STT support in this slice: `vibdock.exe` includes
+  transcription, bounded capture and insertion only when built with
+  `--features stt` and invoked explicitly with `transcribe` or `dictate`.
+- VAD segmentation, a global hold-to-talk trigger, tray/Web dictation controls,
+  a target picker and clipboard fallback are not implemented.
+- Insertion is explicit (`--insert`) and verified only as "input was sent"; it is
+  not verified content, submission, or application state.
 - The prototype's `--download` is an explicit developer action, not automatic
   installation. The product runtime still has no download path.
 - `lang`, `emotion`, and `event` are model output tags, not user intent or
   application state.
 - No claim about accuracy across languages, accents, noise, or meeting audio;
   the measured run is one synthetic zh-CN utterance.
-- This work is independent of the app-shortcut work in PR #36 and does not
-  describe or imply its behaviour.
+- The app-shortcut and STT paths are independent; local dictation does not
+  dispatch a shortcut or claim a voice-session state.
 
 ## Open questions
 
-- Whether the native helper links `sherpa-onnx` directly or bundles a small
-  prebuilt helper, and how that is packaged per platform and per CPU baseline.
+- How the feature-gated native build is packaged per platform and per CPU
+  baseline; the current preview build is not a release artifact.
 - Whether discovery should require a recorded hash when the DSH cache changes,
   without breaking the shared-cache use case.
-- Exact focus verification and insertion method per target application, and how
-  to report an unverified dispatch honestly.
+- Per-target insertion acceptance: Unicode `SendInput` works in Notepad, but
+  elevated, sandboxed or custom editors may reject it; no target picker exists.
 - Memory and latency of a resident model versus loading per utterance; the
-  prototype loads per process and has not been measured as a service.
+  current command loads per invocation and has not been measured as a service.
 - License review for redistributing weights versus download-on-demand, and the
   update/consent flow for a newer pinned model.
 

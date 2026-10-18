@@ -40,7 +40,7 @@ jobs:
       - run: cargo build --locked --release
       - name: Check optional native speech-to-text build
         if: runner.os == 'Windows'
-        run: cargo test --locked --features stt --lib stt::tests
+        run: cargo test --locked --features stt --lib
       - name: Verify macOS package contracts
         run: python3 scripts/test-macos-package.py
       - name: Package native macOS candidate
