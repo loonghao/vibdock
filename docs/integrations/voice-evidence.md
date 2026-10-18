@@ -18,6 +18,28 @@ Do not hard-code a shortcut from a third-party tutorial or claim voice-state rea
 
 Full host inspection, source status, and the prerequisite contract are in [WeChat Input integration evidence](wechat-input.md).
 
+## Installed-client inspection (2026-10-18)
+
+Read-only observation on one Windows 11 x64 host. No client settings were
+changed, no shortcut was sent, no voice session was started, and no microphone
+was recorded.
+
+| Client | Installed identity | Observed surface | Still unknown |
+| --- | --- | --- | --- |
+| WeChat Input | registry `微信输入法 3.0.0.34`, `C:\Program Files\Tencent\WeType`; running `wetype_server.exe`, `wetype_renderer.exe`, `wetype_service.exe`, `wetype_update.exe` | background helpers and install assets only | configured voice trigger, focus rule, start/dictation/stop result, queryable state |
+| Codex/ChatGPT desktop | MSIX `OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0`, `...\app\ChatGPT.exe`; multiple running processes | packaged desktop app and a foreground window | configured voice trigger, voice/PTT controls, start/stop result, queryable state |
+
+The WeChat Input settings store is an MMKV binary held by the running client and
+was not parsed; the Codex `settings.dat` was not decoded. No documented public
+API or state query was found for either client. A configured trigger is therefore
+**unknown and must be read from the client by the user**, not guessed from a
+tutorial or hard-coded.
+
+This inspection upgrades the installed-version/provenance evidence only. It does
+not establish `start_voice`/`end_voice`, dictation, focus requirements, or any
+voice-active state, and it does not justify changing a capability from `unknown`
+to `unverified` or verified.
+
 ## Shortcut ownership
 
 An application-owned voice shortcut and a VibDock-owned device-mute shortcut have different owners and effects. Assign distinct combinations. Windows can reject a registration already held by another process; silently taking the application's voice shortcut for microphone mute would change the user's intended action.
