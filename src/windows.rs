@@ -196,15 +196,30 @@ pub(crate) fn poll_hotkey(id: i32) -> usize {
         .count()
 }
 
+/// Result of one dispatch attempt. `FocusChanged` means `SendInput` was
+/// attempted, but the foreground window changed before the post-check, so the
+/// chord may have reached a different application. It is never reported as a
+/// verified application state.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DispatchDisposition {
+    Dispatched,
+    FocusChanged,
+}
+
 /// Sends one parsed shortcut to `path` only when that executable owns the
 /// current foreground window.
 ///
 /// The target is verified immediately before injection, but Windows offers no
 /// atomic "verify-and-inject" primitive: another window can take focus between
-/// the check and `SendInput`. Success therefore means "dispatched", never
+/// the check and `SendInput`. A second check after injection detects a change
+/// and returns [`DispatchDisposition::FocusChanged`] instead of claiming a
+/// verified dispatch. Success therefore means "dispatched", never
 /// "the application changed state". A different foreground application is a
 /// refusal, so a meeting or editor never receives an agent's voice shortcut.
-pub fn dispatch_to_foreground(path: &str, hotkey: &Hotkey) -> std::result::Result<(), String> {
+pub(crate) fn dispatch_to_foreground(
+    path: &str,
+    hotkey: &Hotkey,
+) -> std::result::Result<DispatchDisposition, String> {
     if !crate::resident_action_protocol::local_executable_path(path) {
         return Err("The saved application location is not a local executable.".into());
     }
@@ -249,8 +264,12 @@ pub fn dispatch_to_foreground(path: &str, hotkey: &Hotkey) -> std::result::Resul
             );
         }
         inject_dispatch(hotkey, code)?;
+        Ok(if GetForegroundWindow() == hwnd {
+            DispatchDisposition::Dispatched
+        } else {
+            DispatchDisposition::FocusChanged
+        })
     }
-    Ok(())
 }
 
 /// Sends a parsed shortcut to whichever application currently owns the
@@ -260,17 +279,24 @@ pub fn dispatch_to_foreground(path: &str, hotkey: &Hotkey) -> std::result::Resul
 /// handled by a background process and whose window is never foreground. It is
 /// inherently broader than [`dispatch_to_foreground`]: the caller must have
 /// chosen that scope explicitly. Success still means only "dispatched".
-pub fn dispatch_to_foreground_app(hotkey: &Hotkey) -> std::result::Result<(), String> {
+pub(crate) fn dispatch_to_foreground_app(
+    hotkey: &Hotkey,
+) -> std::result::Result<DispatchDisposition, String> {
     let code = HotkeyCode::from_hotkey(hotkey).ok_or_else(|| {
         "The dispatch key is unavailable on the active keyboard layout.".to_string()
     })?;
     unsafe {
-        if GetForegroundWindow().0.is_null() {
+        let before = GetForegroundWindow();
+        if before.0.is_null() {
             return Err("No foreground window is available; nothing was dispatched.".into());
         }
         inject_dispatch(hotkey, code)?;
+        Ok(if GetForegroundWindow() == before {
+            DispatchDisposition::Dispatched
+        } else {
+            DispatchDisposition::FocusChanged
+        })
     }
-    Ok(())
 }
 
 /// Builds and injects the key events for one parsed chord.
