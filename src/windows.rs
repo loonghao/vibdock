@@ -327,7 +327,10 @@ pub(crate) fn dispatch_to_foreground_app(
 /// cannot retract it. Success means "input was sent", never "the target
 /// accepted or displayed the text".
 #[cfg(feature = "stt")]
-pub(crate) fn insert_text(text: &str) -> std::result::Result<usize, String> {
+pub(crate) fn insert_text(
+    text: &str,
+    expected_title: Option<&str>,
+) -> std::result::Result<usize, String> {
     if text.is_empty() {
         return Err("There is no transcript to insert.".into());
     }
@@ -339,6 +342,14 @@ pub(crate) fn insert_text(text: &str) -> std::result::Result<usize, String> {
         let hwnd = GetForegroundWindow();
         if hwnd.0.is_null() {
             return Err("No foreground window is available; nothing was inserted.".into());
+        }
+        if let Some(expected) = expected_title {
+            let title = foreground_title(hwnd);
+            if !target_matches(&title, expected) {
+                return Err(format!(
+                    "The foreground window is not the requested target ({expected}); nothing was inserted."
+                ));
+            }
         }
         let mut inputs = Vec::with_capacity(units.len() * 2);
         for unit in &units {
@@ -360,6 +371,25 @@ pub(crate) fn insert_text(text: &str) -> std::result::Result<usize, String> {
         }
     }
     Ok(units.len())
+}
+
+#[cfg(feature = "stt")]
+unsafe fn foreground_title(hwnd: windows::Win32::Foundation::HWND) -> String {
+    let length = GetWindowTextLengthW(hwnd);
+    if length <= 0 {
+        return String::new();
+    }
+    let mut title = vec![0u16; length as usize + 1];
+    let written = GetWindowTextW(hwnd, &mut title);
+    String::from_utf16_lossy(&title[..written.max(0) as usize])
+}
+
+/// A target is matched against a case-insensitive substring of the foreground
+/// window title. An empty or whitespace-only expectation never matches.
+#[cfg(feature = "stt")]
+fn target_matches(title: &str, expected: &str) -> bool {
+    let expected = expected.trim();
+    !expected.is_empty() && title.to_lowercase().contains(&expected.to_lowercase())
 }
 
 #[cfg(feature = "stt")]
@@ -650,6 +680,16 @@ mod tests {
         // An existing Ulanzi Studio mapping must keep working: the legacy
         // chord is part of the documented behaviour, not an internal detail.
         assert_eq!(legacy_hotkey().as_string(), "Ctrl + Alt + Shift + F9");
+    }
+
+    #[cfg(feature = "stt")]
+    #[test]
+    fn insertion_target_matching_is_case_insensitive_and_nonempty() {
+        assert!(target_matches("Untitled - Notepad", "notepad"));
+        assert!(target_matches("ChatGPT", "ChatGPT"));
+        assert!(!target_matches("Windows PowerShell", "Notepad"));
+        assert!(!target_matches("Notepad", ""));
+        assert!(!target_matches("Notepad", "   "));
     }
 
     #[test]

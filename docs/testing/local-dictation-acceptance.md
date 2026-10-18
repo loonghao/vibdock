@@ -47,8 +47,12 @@ The default preview build remains free of them.
    Because this is a terminal command, `--insert` targets whatever is focused
    when transcription finishes. The check focused Notepad explicitly before the
    command completed; a terminal-focused invocation would type into the
-   terminal. The hold trigger can be used after focusing the target window, but a
-   dedicated target picker is still open.
+   terminal. `--target <title-substring>` adds a case-insensitive foreground
+   title guard; the unit test covers matching and an empty expectation, and a
+   live run with the wrong title exited 1 with
+   `The foreground window is not the requested target (...); nothing was inserted.`
+   A live positive `--target` insertion was not completed on this host because
+   the test could not keep Notepad foreground while the background process ran.
 
 5. **Fail-closed paths.** An out-of-range `--seconds`, a conflicting
    `--wav`/`--seconds`, `--hold` without `--trigger`, an unknown flag, an

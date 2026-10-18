@@ -31,6 +31,7 @@ struct Cli {
     hold: bool,
     trigger: Option<String>,
     insert: bool,
+    target: Option<String>,
     model_dir: Option<PathBuf>,
     json: bool,
 }
@@ -42,6 +43,7 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
     let mut hold = false;
     let mut trigger = None;
     let mut insert = false;
+    let mut target = None;
     let mut model_dir = None;
     let mut json = false;
     let mut index = 0;
@@ -98,6 +100,16 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
                 insert = true;
                 index += 1;
             }
+            "--target" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.trim().is_empty() && !value.contains('\0'))
+                    .ok_or_else(|| "--target requires a window-title substring.".to_string())?;
+                if target.replace(value.clone()).is_some() {
+                    return Err("--target may be specified only once.".into());
+                }
+                index += 2;
+            }
             "--json" => {
                 json = true;
                 index += 1;
@@ -122,12 +134,16 @@ fn parse_args(args: &[String]) -> std::result::Result<Cli, String> {
     } else if trigger.is_some() {
         return Err("--trigger requires --hold.".into());
     }
+    if target.is_some() && !insert {
+        return Err("--target requires --insert.".into());
+    }
     Ok(Cli {
         seconds,
         wav,
         hold,
         trigger,
         insert,
+        target,
         model_dir,
         json,
     })
@@ -299,7 +315,7 @@ pub(crate) fn run(args: &[String]) -> crate::Result<()> {
         return Err("The model returned an empty transcript.".into());
     }
     let inserted = if cli.insert {
-        crate::windows::insert_text(&text)?;
+        crate::windows::insert_text(&text, cli.target.as_deref())?;
         true
     } else {
         false
@@ -343,6 +359,12 @@ mod tests {
         let cli = parse_args(&args(&["--seconds", "2", "--insert", "--json"])).unwrap();
         assert_eq!(cli.seconds, 2);
         assert!(cli.insert && cli.json);
+        assert!(parse_args(&args(&["--target", "Notepad"])).is_err());
+        let targeted = parse_args(&args(&[
+            "--wav", "a.wav", "--insert", "--target", "Notepad",
+        ]))
+        .unwrap();
+        assert_eq!(targeted.target.as_deref(), Some("Notepad"));
     }
 
     #[test]

@@ -131,20 +131,21 @@ cargo build --release --features stt
 .\target\release\vibdock.exe transcribe --wav sample.wav --json
 .\target\release\vibdock.exe dictate --seconds 5 --json
 .\target\release\vibdock.exe dictate --wav sample.wav --insert
-.\target\release\vibdock.exe dictate --hold --trigger "Ctrl+Alt+Space" --insert
+.\target\release\vibdock.exe dictate --hold --trigger "Ctrl+Alt+Space" --insert --target "ChatGPT"
 ```
 
 `transcribe` handles one WAV. `dictate` is Windows-only and captures from the
 default microphone (1–30 seconds), transcribes it, and with `--insert` types the
 result into the window that is focused at insertion time using Unicode
 `SendInput`. `--hold --trigger <chord>` registers that chord globally and
-captures until the key is released; Escape cancels and discards the clip. It
-never presses Enter, clicks Send, or submits a form, and it re-checks the
-foreground window before and after insertion. A detected focus change is an
-error; success means input was sent, not that the target accepted or displayed
-it. Running `--insert` from a terminal can target that terminal, so focus the
-intended window before pressing the hold trigger. The transcript and audio stay
-local.
+captures until the key is released; Escape cancels and discards the clip.
+`--target <title-substring>` requires `--insert` and refuses to type unless the
+foreground window title contains that text (case-insensitive), so the launching
+terminal cannot receive the transcript by accident. It never presses Enter,
+clicks Send, or submits a form, and it re-checks the foreground window before and
+after insertion. A detected focus change is an error; success means input was
+sent, not that the target accepted or displayed it. The transcript and audio
+stay local.
 
 The model is discovered in this order: `--model-dir`, `VIBDOCK_STT_MODEL_DIR`,
 the existing DeepSeek Harness SenseVoice cache (read-only), then

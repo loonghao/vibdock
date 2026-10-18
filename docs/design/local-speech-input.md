@@ -161,11 +161,13 @@ resident memory/latency measurements.
 ### M3 · Insertion into the explicitly focused window (implemented)
 
 `vibdock dictate --wav ... --insert` (or captured audio with `--insert`) sends the
-transcript as Unicode `SendInput` events to the foreground window. It never
-presses Enter, clicks Send, or submits a form, and it checks the foreground
-window before and after insertion. A detected focus change is an error; success
-means input was sent, not that the target accepted, displayed, or submitted it.
-There is no clipboard fallback and no per-application target picker yet.
+transcript as Unicode `SendInput` events to the foreground window. `--target
+<title-substring>` requires `--insert` and refuses to type unless the foreground
+window title contains that text, case-insensitively. It never presses Enter,
+clicks Send, or submits a form, and it checks the foreground window before and
+after insertion. A detected focus change is an error; success means input was
+sent, not that the target accepted, displayed, or submitted it. There is no
+clipboard fallback and no interactive target picker.
 
 A real Notepad check inserted the exact Chinese transcript and read it back
 through UI Automation. This is input-routing evidence, not proof of application
