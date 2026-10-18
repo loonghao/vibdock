@@ -170,7 +170,8 @@ pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|servic
        vibdock <app-status|app-mute|app-unmute|app-toggle> --endpoint <endpoint-id> \\
                --session <session-instance-id>
        vibdock transcribe --wav <path> [--model-dir <dir>] [--json]
-       vibdock dictate [--seconds <1-30>] [--hold --trigger <chord>] [--insert] [--json]
+       vibdock dictate [--seconds <1-30>] [--hold --trigger <chord>] [--vad] \\
+               [--insert [--target <title>]] [--json]
        vibdock dictate --wav <path> [--insert] [--json]
        vibdock <shortcut-list|shortcut-apps> [--json]
        vibdock shortcut-add --application <reference>|--app <name> --trigger <chord> \\
@@ -275,6 +276,7 @@ pub fn help() {
         "  dictate          Record a bounded microphone clip, transcribe it, optionally insert"
     );
     println!("                   --hold --trigger <chord> captures until the chord is released");
+    println!("                   --vad trims silence before transcription");
     println!("  shortcut-list    List saved per-application shortcut bindings");
     println!("  shortcut-apps    List detected applications and opaque references");
     println!("  shortcut-add     Bind a trigger and dispatch chord to a detected application");

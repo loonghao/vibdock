@@ -54,15 +54,22 @@ The default preview build remains free of them.
    A live positive `--target` insertion was not completed on this host because
    the test could not keep Notepad foreground while the background process ran.
 
-5. **Fail-closed paths.** An out-of-range `--seconds`, a conflicting
-   `--wav`/`--seconds`, `--hold` without `--trigger`, an unknown flag, an
-   unusable `--model-dir`, and a silent capture all returned an error before
-   insertion.
+5. **Silero VAD.** `dictate --seconds 3 --vad --json` loaded the local
+   `silero_vad.onnx`, trimmed the 3 s ambient clip to 0.314 s of detected speech,
+   and transcribed only that segment. This proves the VAD path and trim, not VAD
+   accuracy: the clip was ambient noise, and no real-speech/no-speech matrix was
+   measured.
+
+6. **Fail-closed paths.** An out-of-range `--seconds`, a conflicting
+   `--wav`/`--seconds`, `--hold` without `--trigger`, `--vad` with `--wav`, an
+   unknown flag, an unusable `--model-dir`, and a silent capture all returned an
+   error before insertion.
 
 ## Limits
 
-- No Silero VAD segmentation, configured-device selection, continuous listener,
-  or target picker. Hold-to-talk is a one-shot command, not a resident listener.
+- No configured-device selection, continuous listener, or interactive target
+  picker. Hold-to-talk is a one-shot command, not a resident listener. VAD has
+  only been run on an ambient clip.
 - Only one real insertion target (Notepad) was checked. Elevated, sandboxed and
   custom editors may reject injected Unicode.
 - Success means input was sent, not that the application accepted, displayed or

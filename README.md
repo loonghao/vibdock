@@ -130,6 +130,7 @@ dependency; build it explicitly:
 cargo build --release --features stt
 .\target\release\vibdock.exe transcribe --wav sample.wav --json
 .\target\release\vibdock.exe dictate --seconds 5 --json
+.\target\release\vibdock.exe dictate --seconds 5 --vad --json
 .\target\release\vibdock.exe dictate --wav sample.wav --insert
 .\target\release\vibdock.exe dictate --hold --trigger "Ctrl+Alt+Space" --insert --target "ChatGPT"
 ```
@@ -137,7 +138,9 @@ cargo build --release --features stt
 `transcribe` handles one WAV. `dictate` is Windows-only and captures from the
 default microphone (1–30 seconds), transcribes it, and with `--insert` types the
 result into the window that is focused at insertion time using Unicode
-`SendInput`. `--hold --trigger <chord>` registers that chord globally and
+`SendInput`. `--vad` trims the captured clip to Silero-detected speech and fails
+with a distinct "no speech" error when nothing is detected. `--hold --trigger
+<chord>` registers that chord globally and
 captures until the key is released; Escape cancels and discards the clip.
 `--target <title-substring>` requires `--insert` and refuses to type unless the
 foreground window title contains that text (case-insensitive), so the launching
@@ -155,8 +158,8 @@ Building with `stt` downloads the pinned sherpa-onnx native archives at build
 time, so that build is not offline-friendly. The separate consent-gated model
 download lives in [scripts/stt](scripts/stt/README.md).
 
-Still not implemented: Silero VAD segmentation, configured-device selection,
-a per-application insertion target picker, clipboard fallback, and any claim of
+Still not implemented: configured-device selection, continuous listening, an
+interactive insertion target picker, clipboard fallback, and any claim of
 verified voice-session or content state. The native build is not part of the
 default CI artifact; packaging and model licensing remain open in
 [the local speech input design](docs/design/local-speech-input.md). The dated
