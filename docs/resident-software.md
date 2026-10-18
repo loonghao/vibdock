@@ -109,9 +109,11 @@ never inferred automatically. When either check passes, the parsed dispatch
 chord is injected with `SendInput` and the receipt is `DISPATCHED`. That is not
 a verified application state: no readback establishes that voice started, a
 message was sent, or the application acted on the chord. The foreground check
-and injection are separate OS calls, so focus can change in between; the second
-foreground check narrows but does not remove that race. Elevated foreground
-windows may refuse injected input.
+and injection are separate OS calls, so focus can change in between. A second
+check before injection narrows the race, and a post-injection check turns a
+detected focus change into an error receipt saying the chord may have reached
+another application, never a success. Elevated foreground windows may refuse
+injected input.
 
 ## Explicit action safety and receipts
 

@@ -161,6 +161,22 @@ pub(crate) struct Registry {
     errors: Vec<Option<String>>,
 }
 
+/// Converts a dispatch attempt into the receipt shown to the user. A detected
+/// focus change is never reported as a successful dispatch, even though input
+/// may already have been injected.
+#[cfg(windows)]
+fn dispatch_receipt(
+    result: std::result::Result<crate::windows::DispatchDisposition, String>,
+) -> std::result::Result<String, String> {
+    result.and_then(|disposition| match disposition {
+        crate::windows::DispatchDisposition::Dispatched => Ok("DISPATCHED".to_string()),
+        crate::windows::DispatchDisposition::FocusChanged => Err(
+            "The foreground window changed during dispatch; the shortcut may have been sent to another application. Nothing is verified."
+                .to_string(),
+        ),
+    })
+}
+
 impl Registry {
     pub(crate) fn start(enabled: bool) -> Self {
         let path = crate::service::state_dir().map(|dir| dir.join("shortcuts.json"));
@@ -366,7 +382,7 @@ impl Registry {
             return None;
         }
         let dispatch = Hotkey::parse(&entry.dispatch).ok()?;
-        let result = match entry.scope {
+        let result = dispatch_receipt(match entry.scope {
             Scope::Foreground => {
                 crate::windows::dispatch_to_foreground(&entry.executable, &dispatch)
             }
@@ -377,9 +393,7 @@ impl Registry {
                     Err("The bound application is not running; nothing was dispatched.".into())
                 }
             }
-        }
-        .map(|()| "DISPATCHED".to_string())
-        .map_err(|error| error.to_string());
+        });
         Some((result, Some(entry.label.clone())))
     }
 
@@ -897,5 +911,17 @@ mod tests {
                 .0,
             409
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_focus_change_during_dispatch_is_not_reported_as_success() {
+        assert_eq!(
+            dispatch_receipt(Ok(crate::windows::DispatchDisposition::Dispatched)).unwrap(),
+            "DISPATCHED"
+        );
+        let error =
+            dispatch_receipt(Ok(crate::windows::DispatchDisposition::FocusChanged)).unwrap_err();
+        assert!(error.contains("another application"), "{error}");
     }
 }

@@ -148,4 +148,7 @@ audio isolation test: no meeting was joined and audibility was not measured.
   `not_implemented` and no application API was claimed.
 - Elevated foreground windows may refuse injected input; the service reports a
   failure rather than success.
-- The foreground check and injection remain separate OS calls.
+- The foreground check and injection remain separate OS calls. A post-injection
+  foreground check now reports a detected change as an error receipt, but it
+  cannot undo a chord that was already injected; the race is narrowed, not
+  eliminated.
