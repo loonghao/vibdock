@@ -166,10 +166,13 @@ try {
         [void][VibDockNative]::GetMenuString($menu, $i, $label, $label.Capacity, 0x400)
         $labels += $label.ToString()
     }
-    if (@($labels).Count -ne 3 -or -not ($labels -contains 'Settings…') -or -not ($labels -contains 'Service status') -or -not ($labels -contains 'Exit VibDock')) { throw 'Context menu must contain only Settings, Service status, and Exit' }
+    $requiredPrimary = @('Settings…','Service status','Exit VibDock','Pinned software')
+    foreach ($required in $requiredPrimary) { if (-not ($labels -contains $required)) { throw "Primary context menu is missing $required" } }
+    if (-not ($labels -match 'Microphone')) { throw 'Primary context menu has no microphone state or unavailable label' }
     Save-Window $menuWindow 'resident-context-menu.png'
     [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CANCELMODE
-    Start-Sleep -Milliseconds 150
+    [void][VibDockNative]::PostMessage($menuWindow, 0x0100, [IntPtr]0x1B, [IntPtr]0) # VK_ESCAPE closes nested menus
+    Wait-Until { -not [VibDockNative]::IsWindowVisible($menuWindow) } 'Primary context menu did not close'
     # Use the real first software icon uID, not the primary icon's generic menu.
     [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]2, [IntPtr]0x0205)
     Wait-Until { $script:menuWindow = [VibDockNative]::FindWindow('#32768', $null); $script:menuWindow -ne [IntPtr]::Zero -and [VibDockNative]::IsWindowVisible($script:menuWindow) } 'Software icon context menu did not open'
@@ -186,7 +189,8 @@ try {
     if (-not ($softwareLabels -contains 'Offline saved fixture') -or -not ($softwareLabels -contains 'No fresh, controllable playback session') -or -not ($softwareLabels -contains 'Settings…')) { throw 'Software uID menu did not preserve its exact offline row and disabled controls' }
     Save-Window $menuWindow 'resident-software-menu.png'
     [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 150
+    [void][VibDockNative]::PostMessage($menuWindow, 0x0100, [IntPtr]0x1B, [IntPtr]0)
+    Wait-Until { -not [VibDockNative]::IsWindowVisible($menuWindow) } 'Software context menu did not close'
     [void][VibDockNative]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CLOSE
     if ([VibDockNative]::IsWindowVisible($window) -or $first.HasExited -or -not (Test-Path -LiteralPath $recordPath)) { throw 'Close changed the hidden tray/service lifecycle' }
     $second = Start-Entry 'vibdock-launcher.exe'
@@ -202,7 +206,7 @@ try {
     foreach ($servicePid in $serviceChildren) {
         Wait-Until { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$servicePid" | Where-Object { $_.Name -eq 'vibdock.exe' }).Count -eq 0 } 'Exit left a native observation helper running'
     }
-    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('hidden-tray-owner-without-panel-controls','saved-offline-software-fixture-unknown','original-icon-resource-built','real-context-menu-settings-status-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','playback-action-auth-origin-forged-selection-rejected','close-keeps-tray-service-running','second-launch-reuses-singleton','primary-click-keeps-owner-hidden','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native menus'; defaultBrowser='invoked by launch, relaunch and primary click; page rendering and handoff redemption unverified'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','authenticated default-browser page rendering and handoff redemption') }
+    $report = [ordered]@{ platform='Windows'; sourceRevision=$env:VIBDOCK_SOURCE_REVISION; launcherSHA256=(Get-FileHash -LiteralPath (Join-Path $bin 'vibdock-launcher.exe') -Algorithm SHA256).Hash; runtime=[Environment]::OSVersion.VersionString; launcherPid=$windowPid; windowHandle=$window.ToInt64(); port=$port; nativePlaybackProbe=$nativeProbe; livePlaybackControl='unverified: this acceptance does not produce or mutate representative real audio sessions'; checks=@('hidden-tray-owner-without-panel-controls','saved-offline-software-fixture-unknown','original-icon-resource-built','real-context-menu-microphone-pinned-software-settings-status-exit','software-icon-uid-menu-exact-offline-row','offline-session-controls-disabled','playback-action-auth-origin-forged-selection-rejected','close-keeps-tray-service-running','second-launch-reuses-singleton','primary-click-keeps-owner-hidden','service-record-unchanged','authenticated-exit-cleans-service','owned-native-observer-published','owned-observer-helpers-stopped'); input='Win32 messages (not physical mouse)'; captures='PrintWindow native menus'; defaultBrowser='invoked by launch, relaunch and primary click; page rendering and handoff redemption unverified'; exclusions=@('live application playback and third-party resource icons','microphone hardware','physical pointer/focus and multi-monitor DPI','macOS GUI','authenticated default-browser page rendering and handoff redemption') }
 } catch {
     $testFailure = $_
     throw
@@ -272,3 +276,4 @@ try {
     if ($cleanupFailure -and -not $testFailure) { throw $cleanupFailure }
     if (-not $testFailure) { Write-Output 'PASS: hidden tray owner, context menus, singleton reuse, and authenticated Exit. Default-browser invocation occurs; page and physical-device acceptance remain separate.' }
 }
+

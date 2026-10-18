@@ -187,6 +187,12 @@ The notification-area icon remains running; there is no Windows resident panel.
 
 - **Settings…**, the primary tray icon click, or another launch opens a fresh one-use handoff to the
   proved service’s actual address. A browser launch failure is visible.
+- **Mute microphone / Unmute microphone** targets the exact saved microphone
+  identity and reports the verified readback. A missing or unreadable device is
+  shown as unavailable; there is no default-device fallback.
+- **Pinned software** lists up to eight saved entries and exposes their exact
+  playback-session mute/unmute actions. It does not start or stop an
+  application’s voice session.
 - Closing the browser leaves the tray and service running.
 - **Service status** reports service ownership/liveness only. It does not claim an
   audio action, application voice session, or hardware input is working.

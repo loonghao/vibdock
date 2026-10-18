@@ -49,6 +49,7 @@ const FIRST_SESSION_COMMAND: u32 = 1000;
 const MENU_OPEN: u32 = 101;
 const MENU_STATUS: u32 = 102;
 const MENU_EXIT: u32 = 103;
+const MENU_MIC_TOGGLE: u32 = 104;
 const TIMER: usize = 1;
 const CLASS: &str = "VibDockTray";
 const TRAY_MUTEX: &str = "VibDockTraySingleton";
@@ -83,6 +84,12 @@ impl Drop for TraySingleton {
     }
 }
 
+#[derive(Clone)]
+struct MicState {
+    device_id: String,
+    muted: bool,
+}
+
 /// Only public observation data and a local generation reach the UI. Bearers
 /// and prepared capabilities remain on the worker, including during retries of
 /// receipt reads (execute itself is never retried).
@@ -90,6 +97,7 @@ impl Drop for TraySingleton {
 struct Observation {
     port: Option<u16>,
     apps: serde_json::Value,
+    mic: Option<MicState>,
     checked: Option<Instant>,
     generation: u64,
 }
@@ -104,6 +112,7 @@ impl Observation {
         Self {
             port: None,
             apps: serde_json::Value::Null,
+            mic: None,
             checked: None,
             generation,
         }
@@ -155,6 +164,7 @@ fn reference_is_current(observation: &Observation, selection: &PlaybackSelection
 
 enum WorkerCommand {
     Playback(PlaybackSelection),
+    Microphone { device_id: String, muted: bool },
     Settings,
     Shutdown,
 }
@@ -256,6 +266,64 @@ fn poll_worker(
                     }
                 }
             }
+            Ok(WorkerCommand::Microphone { device_id, muted }) => {
+                let Some(active) = client.as_ref() else {
+                    let _ = send_worker_event(
+                        &sender,
+                        &stop,
+                        WorkerEvent::ActionResult(
+                            "Microphone control is unavailable: no verified service instance."
+                                .to_owned(),
+                        ),
+                    );
+                    continue;
+                };
+                match active.set_microphone(&device_id, muted) {
+                    Ok(observed) => {
+                        // A verified readback is still a one-shot result, not a
+                        // live state. Do not let the old menu label survive it.
+                        if let Some(view) = latest.as_mut() {
+                            view.mic = Some(MicState {
+                                device_id: device_id.clone(),
+                                muted: observed,
+                            });
+                        }
+                        let message = if observed {
+                            "Microphone muted. Readback verified."
+                        } else {
+                            "Microphone live. Readback verified."
+                        };
+                        if !send_worker_event(
+                            &sender,
+                            &stop,
+                            WorkerEvent::ActionResult(message.to_owned()),
+                        ) {
+                            return;
+                        }
+                        next_poll = Instant::now();
+                    }
+                    Err(_) => {
+                        client = None;
+                        latest = None;
+                        let _ = send_worker_event(
+                            &sender,
+                            &stop,
+                            WorkerEvent::Observation(Observation::unavailable(generation)),
+                        );
+                        if !send_worker_event(
+                            &sender,
+                            &stop,
+                            WorkerEvent::ActionResult(
+                                "Microphone action was not confirmed. State is unknown; inspect the device before retrying."
+                                    .to_owned(),
+                            ),
+                        ) {
+                            return;
+                        }
+                        next_poll = Instant::now();
+                    }
+                }
+            }
             Ok(WorkerCommand::Settings) => {
                 if let Err(error) = open_configuration() {
                     if !send_worker_event(&sender, &stop, WorkerEvent::Notice(error)) {
@@ -353,10 +421,23 @@ fn poll_worker(
         let started = Instant::now();
         let result = service::ResidentControlClient::discover().and_then(|candidate| {
             let apps = candidate.summary()?;
-            Ok((candidate, apps))
+            // The quick toggle must use the saved device identity, never a
+            // platform default. A config/read failure leaves the control
+            // unavailable instead of guessing.
+            let mic = candidate.configuration().ok().and_then(|config| {
+                let device_id = config["device_id"]
+                    .as_str()
+                    .filter(|value| !value.trim().is_empty())?;
+                let muted = candidate.microphone_status(device_id).ok()?;
+                Some(MicState {
+                    device_id: device_id.to_owned(),
+                    muted,
+                })
+            });
+            Ok((candidate, apps, mic))
         });
         let observation = match result {
-            Ok((candidate, apps)) => {
+            Ok((candidate, apps, mic)) => {
                 if !client
                     .as_ref()
                     .is_some_and(|previous| previous.same_instance(&candidate))
@@ -367,6 +448,7 @@ fn poll_worker(
                     port: Some(candidate.port()),
                     checked: observation_time(started, &apps),
                     apps,
+                    mic,
                     generation,
                 };
                 client = Some(candidate);
@@ -674,6 +756,69 @@ enum MenuChoice {
     Playback(PlaybackSelection),
 }
 
+/// Appends the exact-session mute/unmute actions for one saved software row.
+/// The mapping is frozen for the lifetime of the menu.
+fn append_session_actions(
+    menu: HMENU,
+    row: &serde_json::Value,
+    observation: Option<&Observation>,
+    busy: bool,
+    actions: &mut Vec<PlaybackSelection>,
+) -> windows::core::Result<()> {
+    unsafe {
+        let sessions = if observation.is_some_and(Observation::fresh) && !busy {
+            session_menu_entries(row, observation.unwrap().generation)
+        } else {
+            vec![]
+        };
+        if sessions.is_empty() {
+            let label = wide(if busy {
+                "Playback request pending; controls disabled"
+            } else {
+                "No fresh, controllable playback session"
+            });
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+        }
+        for session in sessions {
+            let submenu = CreatePopupMenu()?;
+            let label = wide(&session.description.replace('&', "&&"));
+            if let Err(error) =
+                AppendMenuW(menu, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))
+            {
+                let _ = DestroyMenu(submenu);
+                return Err(error);
+            }
+            for (selection, label) in [
+                (session.mute, "Mute this playback session"),
+                (session.unmute, "Unmute this playback session"),
+            ] {
+                let id = FIRST_SESSION_COMMAND + actions.len() as u32;
+                let label = wide(label);
+                AppendMenuW(submenu, MF_STRING, id as usize, PCWSTR(label.as_ptr()))?;
+                actions.push(selection);
+            }
+        }
+        if row["sessions"]
+            .as_array()
+            .is_some_and(|sessions| sessions.len() > 32)
+        {
+            let label = wide("Showing the first 32 sessions; no other session will be changed");
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+        }
+        Ok(())
+    }
+}
+
+/// The primary icon's microphone action label and whether it can fire.
+/// A missing read is unavailable, never an assumed live/muted state.
+fn mic_menu_label(mic: Option<&MicState>) -> (&'static str, bool) {
+    match mic {
+        Some(state) if state.muted => ("Unmute microphone", true),
+        Some(_) => ("Mute microphone", true),
+        None => ("Microphone unavailable", false),
+    }
+}
+
 /// The row mapping and all command bindings are immutable for the entire
 /// TrackPopupMenu call. No periodic observation can retarget an open menu.
 fn show_menu(
@@ -695,47 +840,62 @@ fn show_menu(
                     &visible_text(row["label"].as_str().unwrap_or("Software")).replace('&', "&&"),
                 );
                 AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
-                let available = observation.is_some_and(Observation::fresh) && !busy;
-                let sessions = if available {
-                    session_menu_entries(row, observation.unwrap().generation)
-                } else {
-                    vec![]
-                };
-                if sessions.is_empty() {
-                    let label = wide(if busy {
-                        "Playback request pending; controls disabled"
-                    } else {
-                        "No fresh, controllable playback session"
-                    });
-                    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
-                }
-                for session in sessions {
-                    let submenu = CreatePopupMenu()?;
-                    // Attach first so DestroyMenu owns it on every later error.
-                    let label = wide(&session.description.replace('&', "&&"));
-                    if let Err(error) =
-                        AppendMenuW(menu, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))
-                    {
-                        let _ = DestroyMenu(submenu);
-                        return Err(error);
+                append_session_actions(menu, row, observation, busy, &mut actions)?;
+                AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+            } else {
+                // The saved microphone identity is the only target this quick
+                // toggle may use. A missing/failed read is unavailable, not a
+                // default device.
+                let mic = observation
+                    .filter(|view| view.fresh())
+                    .and_then(|view| view.mic.as_ref());
+                let (label, enabled) = mic_menu_label(mic);
+                let text = wide(label);
+                AppendMenuW(
+                    menu,
+                    MF_STRING | if enabled { MF_ENABLED } else { MF_GRAYED },
+                    MENU_MIC_TOGGLE as usize,
+                    PCWSTR(text.as_ptr()),
+                )?;
+                AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+
+                // Configured software is reachable from the primary icon too,
+                // not only from each separate strip icon.
+                let pinned = CreatePopupMenu()?;
+                let mut added = false;
+                if let Some(view) = observation.filter(|view| view.fresh()) {
+                    if let Some(rows) = view.apps["entries"].as_array() {
+                        for row in rows.iter().take(8) {
+                            let app_menu = CreatePopupMenu()?;
+                            let label = wide(
+                                &visible_text(row["label"].as_str().unwrap_or("Software"))
+                                    .replace('&', "&&"),
+                            );
+                            if let Err(error) = AppendMenuW(
+                                pinned,
+                                MF_POPUP,
+                                app_menu.0 as usize,
+                                PCWSTR(label.as_ptr()),
+                            ) {
+                                let _ = DestroyMenu(app_menu);
+                                let _ = DestroyMenu(pinned);
+                                return Err(error);
+                            }
+                            append_session_actions(app_menu, row, observation, busy, &mut actions)?;
+                            added = true;
+                        }
                     }
-                    for (selection, label) in [
-                        (session.mute, "Mute this playback session"),
-                        (session.unmute, "Unmute this playback session"),
-                    ] {
-                        let id = FIRST_SESSION_COMMAND + actions.len() as u32;
-                        let label = wide(label);
-                        AppendMenuW(submenu, MF_STRING, id as usize, PCWSTR(label.as_ptr()))?;
-                        actions.push(selection);
-                    }
                 }
-                if row["sessions"]
-                    .as_array()
-                    .is_some_and(|sessions| sessions.len() > 32)
+                if !added {
+                    let label = wide("No fresh pinned software");
+                    AppendMenuW(pinned, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+                }
+                let label = wide("Pinned software");
+                if let Err(error) =
+                    AppendMenuW(menu, MF_POPUP, pinned.0 as usize, PCWSTR(label.as_ptr()))
                 {
-                    let label =
-                        wide("Showing the first 32 sessions; no other session will be changed");
-                    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(label.as_ptr()))?;
+                    let _ = DestroyMenu(pinned);
+                    return Err(error);
                 }
                 AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             }
@@ -847,6 +1007,19 @@ fn command(id: u32, poller: &Poller, observation: Option<&Observation>) {
     let requested = match id {
         MENU_OPEN => Some(poller.request(WorkerCommand::Settings)),
         MENU_EXIT => Some(poller.request(WorkerCommand::Shutdown)),
+        MENU_MIC_TOGGLE => {
+            // The label and the requested state come from the same fresh
+            // observation; the worker still verifies the readback.
+            observation
+                .filter(|view| view.fresh())
+                .and_then(|view| view.mic.as_ref())
+                .map(|mic| {
+                    poller.request(WorkerCommand::Microphone {
+                        device_id: mic.device_id.clone(),
+                        muted: !mic.muted,
+                    })
+                })
+        }
         MENU_STATUS => {
             report_status(observation);
             None
@@ -1673,11 +1846,35 @@ mod tests {
         assert!((TOOLINFO_SIZE as usize) < std::mem::size_of::<TTTOOLINFOW>());
     }
 
+    #[test]
+    fn microphone_menu_never_assumes_a_state_without_a_readback() {
+        assert_eq!(
+            mic_menu_label(None),
+            ("Microphone unavailable", false),
+            "a missing readback must stay unavailable"
+        );
+        let muted = MicState {
+            device_id: "fixture-mic".into(),
+            muted: true,
+        };
+        let live = MicState {
+            device_id: "fixture-mic".into(),
+            muted: false,
+        };
+        assert_eq!(mic_menu_label(Some(&muted)), ("Unmute microphone", true));
+        assert_eq!(mic_menu_label(Some(&live)), ("Mute microphone", true));
+        // The label is a request for the opposite state, not a toggle based on
+        // a value captured later at click time.
+        assert!(muted.muted);
+        assert!(!live.muted);
+    }
+
     fn fixture_observation() -> Observation {
         Observation {
             port: Some(43128),
             checked: Some(Instant::now()),
             generation: 7,
+            mic: None,
             apps: json!({"age_ms":0,"entries":[{"id":"a".repeat(64),"label":"Synthetic fixture, not live audio","icon_b64":"old icon","actions_enabled":true,"sessions":[
                 {"session_reference":"b".repeat(64),"process_id":41,"display_name":"First fixture","muted":false,"active":true,"actions_enabled":true},
                 {"session_reference":"c".repeat(64),"process_id":42,"display_name":"Second fixture","muted":true,"active":false,"actions_enabled":true}
