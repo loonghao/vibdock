@@ -164,6 +164,26 @@ impl Drop for RegisteredHotkey {
     }
 }
 
+/// Reports whether the non-modifier key of a parsed chord is currently held.
+///
+/// `RegisterHotKey` only reports the press; hold-to-talk needs the release. The
+/// key half is checked by virtual key, so a chord such as `Ctrl + Alt + Space`
+/// stops when Space is released even while the modifiers are still down.
+#[cfg(feature = "stt")]
+pub(crate) fn trigger_is_down(hotkey: &Hotkey) -> Option<bool> {
+    let code = HotkeyCode::from_hotkey(hotkey)?;
+    let state = unsafe { GetAsyncKeyState(code.virtual_key as i32) };
+    Some((state as u16 & 0x8000) != 0)
+}
+
+/// Reports whether Escape is currently held, so hold-to-talk can be cancelled
+/// without transcribing whatever was captured.
+#[cfg(feature = "stt")]
+pub(crate) fn escape_is_down() -> bool {
+    let state = unsafe { GetAsyncKeyState(VK_ESCAPE.0 as i32) };
+    (state as u16 & 0x8000) != 0
+}
+
 /// Delivers every pending `WM_HOTKEY` and returns the ids that fired.
 ///
 /// One drain serves both the microphone binding and all application bindings.
