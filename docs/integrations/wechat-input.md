@@ -3,6 +3,14 @@
 This is integration evidence and a prerequisite contract, not installed-client acceptance.
 No capability here is reported as verified. VibDock is independent of this vendor.
 
+Current Windows source can recognise a running WeChat Input process by its exact
+`wetype*.exe` basename, including a background helper with no window. The user
+may save a per-application shortcut with the explicit `running` scope; VibDock
+then sends the user's configured chord to the current foreground application
+while the WeChat Input process is running. That is presence recognition plus
+user-supplied dispatch; it does not establish the trigger, a WeType control
+surface, or voice state, and it does not change the `unknown` grades below.
+
 ## Official source check: 2026-10-15 retrieval failed
 
 The official site at https://shurufa.weixin.qq.com/ could not be retrieved during the

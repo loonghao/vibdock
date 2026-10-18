@@ -24,6 +24,27 @@ An application-owned voice shortcut and a VibDock-owned device-mute shortcut hav
 
 For direct application mapping, configure the hardware utility to emit the application's own shortcut. This does not require VibDock to register that same chord. A future adapter may coordinate actions only through explicit user configuration and must distinguish dispatch from verified state.
 
+## Recognition versus control (Windows source)
+
+Current Windows source recognises running applications that own a visible
+top-level window, independently of playback sessions, and labels exact
+executable basenames for Tencent Meeting, WeChat Input, Codex/ChatGPT and
+WorkBuddy. This is **presence recognition only**. It does not inspect installed
+versions, settings, accounts, voice assets, network state, or whether a client
+accepts a shortcut.
+
+A user may save one per-application binding with both chords supplied from their
+own client configuration. The default scope requires the saved executable to own
+the foreground window. An explicit `running` scope exists for background input
+methods: it requires the executable to appear in the fresh application scan and
+sends the chord to whatever application is foreground. Either way VibDock
+records `DISPATCHED`; the result is not voice-active evidence. Background
+input-method services are recognised only for the closed `wetype*`, `wemeet*`,
+`codex` and `workbuddy` names; other tray-only helpers without a window are not
+listed, and a partial window scan reports unknown rather than "not running". Do
+not convert this recognition into a claim that Tencent Meeting, WeChat Input, or
+Codex is connected, controlled, or verified.
+
 ## Acceptance record
 
 For each adapter, retain source URL and check date, client version, installed detection, configured trigger, supported action, observed result, failure behavior, and hardware identity quality. Mark undocumented or untested facts unknown. Do not generalize Codex Micro behavior to Ulanzi, a synthetic keyboard event to physical device identity, or input mute to application playback mute.

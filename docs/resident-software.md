@@ -1,6 +1,9 @@
 # Resident software entries and exact Windows playback controls
 
-Settings > Software reads current Windows playback sessions. A user can pin up to
+Settings > Software reads current Windows playback sessions and, independently,
+running applications that own a visible top-level window. The two observations
+are separate: a window application has no implied audio session, and a playback
+session has no implied window. A user can pin up to
 eight observed software locations on their observed output endpoint, or remove a
 saved entry. Pins and their optional microphone associations survive service
 restarts in `apps.json`; the single global microphone/shortcut binding remains
@@ -46,6 +49,66 @@ change has unit coverage; native pointer, DPI and focus acceptance is pending.
   protected, unsupported or invalid resources use a generic placeholder. The app
   does not read an offline saved path, fetch icon URLs, run an executable, invoke
   shell handlers or load imports/DllMain to extract its icon.
+
+## Application presence and per-application shortcuts
+
+Window observation enumerates visible, non-cloaked, non-tool top-level windows,
+resolves each owner's executable through a read-only process handle, and keeps
+at most 32 applications. Explorer, ApplicationFrameHost, input hosts, VibDock
+itself and other shell-host processes are skipped because their executable is
+not the user-facing application identity. A capped scan, an unreadable window
+owner, or a changed process image makes the window list partial:
+`running`, `not_running` and `unknown` are then reported accordingly, and a
+partial list never claims that an application is absent.
+
+A closed set of known integration executables (`wetype*.exe`, `wemeet*.exe`,
+`codex.exe`/`chatgpt.exe`, `workbuddy.exe`) is additionally matched by exact
+process name so a background input method or tray agent can be recognised
+without a window. These rows are marked `background: true`. That pass is
+best-effort: an unreadable protected helper is skipped and does not make the
+window list partial, and it never establishes audio, voice, account, or control
+state. One row per integration is retained after deduplication against a
+windowed client.
+
+A recognised executable basename may carry an integration label
+(`tencent_meeting`, `wechat_input`, `codex`, `workbuddy`). The label is
+recognition metadata only. It does not prove installation, connection, account
+state, audio use, or that the client accepts any shortcut.
+
+`shortcuts.json` (schema 1, revision, at most eight entries) stores one random
+id, label, executable location, VibDock trigger and dispatch chord per entry.
+`POST /api/shortcuts/add` accepts exactly a revision, a fresh opaque
+`application_reference` from the current scan, `trigger`, `dispatch`, an
+optional label and an optional `scope` (`foreground` default, or `running` for
+a background integration). The service resolves the reference to the observed
+executable; the browser never supplies a path. `POST /api/shortcuts/remove`
+accepts a revision and saved id. Both require the existing authentication and same-origin
+checks. A stale reference, stale revision, duplicate application, duplicate
+trigger, or a chord conflict returns 409 and preserves the previous file.
+`GET /api/shortcuts` returns labels, trigger/dispatch chords, registration
+state and errors, but never an executable path.
+
+Both chords use the existing modifier-plus-key grammar. `Win` and bare keys are
+not supported. A dispatch chord equal to any VibDock trigger is rejected: an
+injected chord is delivered to the same global hotkey table, so allowing it
+would make VibDock re-trigger itself. Changing the microphone trigger to a saved
+dispatch chord is rejected for the same reason.
+
+Registration happens before the file is committed, and the previous set is
+restored on registration or persistence failure. At startup, a trigger that
+cannot be registered is reported per entry and never fires. A fired trigger
+reads the foreground window, resolves its executable and compares it with the
+saved location; on a mismatch nothing is injected. A `running` scope is an
+explicit opt-in for background input methods: the service instead requires the
+saved executable to appear in the fresh application scan, then injects the
+chord into whatever application is foreground. That is broader by design and is
+never inferred automatically. When either check passes, the parsed dispatch
+chord is injected with `SendInput` and the receipt is `DISPATCHED`. That is not
+a verified application state: no readback establishes that voice started, a
+message was sent, or the application acted on the chord. The foreground check
+and injection are separate OS calls, so focus can change in between; the second
+foreground check narrows but does not remove that race. Elevated foreground
+windows may refuse injected input.
 
 ## Explicit action safety and receipts
 
@@ -165,3 +228,6 @@ See [macOS native behavior and acceptance](macos-desktop.md) for helper lifecycl
 actual AppKit evidence and remaining physical-desktop/signing limitations. Formal
 release readiness still requires representative real Windows playback/control
 and software-state acceptance. Candidates are not a full voice-control release.
+The dated [application recognition acceptance record](testing/app-recognition-acceptance.md)
+covers the window/background detections and per-application dispatch checks made
+so far.
