@@ -35,6 +35,8 @@ mod macos_worker;
 #[allow(dead_code)]
 #[path = "macos_worker.rs"]
 mod macos_worker_tests;
+#[cfg(windows)]
+mod shortcut_cli;
 #[cfg(feature = "stt")]
 mod stt;
 // The Windows helper protocol is compiled everywhere so the shortcut registry
@@ -86,6 +88,10 @@ pub enum Action {
     AppUnmute,
     AppToggle,
     Transcribe,
+    ShortcutList,
+    ShortcutApps,
+    ShortcutAdd,
+    ShortcutRemove,
 }
 
 impl fmt::Display for Action {
@@ -111,6 +117,10 @@ impl fmt::Display for Action {
             Action::AppUnmute => "app-unmute",
             Action::AppToggle => "app-toggle",
             Action::Transcribe => "transcribe",
+            Action::ShortcutList => "shortcut-list",
+            Action::ShortcutApps => "shortcut-apps",
+            Action::ShortcutAdd => "shortcut-add",
+            Action::ShortcutRemove => "shortcut-remove",
         };
         f.write_str(name)
     }
@@ -155,7 +165,11 @@ pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|servic
        vibdock app-list --endpoint <endpoint-id>
        vibdock <app-status|app-mute|app-unmute|app-toggle> --endpoint <endpoint-id> \\
                --session <session-instance-id>
-       vibdock transcribe --wav <path> [--model-dir <dir>] [--json]";
+       vibdock transcribe --wav <path> [--model-dir <dir>] [--json]
+       vibdock <shortcut-list|shortcut-apps> [--json]
+       vibdock shortcut-add --application <reference>|--app <name> --trigger <chord> \\
+               --dispatch <chord> [--scope foreground|running] [--label <text>]
+       vibdock shortcut-remove --id <saved-id>";
 
 /// Parses command-line arguments into an [`Action`].
 ///
@@ -190,6 +204,10 @@ pub fn parse(args: &[String]) -> Result<Action> {
         Some("listen") => Action::Listen,
         Some("capabilities") => Action::Capabilities,
         Some("transcribe") => Action::Transcribe,
+        Some("shortcut-list") => Action::ShortcutList,
+        Some("shortcut-apps") => Action::ShortcutApps,
+        Some("shortcut-add") => Action::ShortcutAdd,
+        Some("shortcut-remove") => Action::ShortcutRemove,
         _ => return Err(format!("{USAGE}\nRun `vibdock help` for details.").into()),
     };
     let rest = &args[1..];
@@ -246,6 +264,10 @@ pub fn help() {
     println!("  app-status|app-mute|app-unmute|app-toggle");
     println!("                   Read or change one application's playback mute state");
     println!("  transcribe       Transcribe a mono PCM WAV with a local SenseVoice model");
+    println!("  shortcut-list    List saved per-application shortcut bindings");
+    println!("  shortcut-apps    List detected applications and opaque references");
+    println!("  shortcut-add     Bind a trigger and dispatch chord to a detected application");
+    println!("  shortcut-remove  Remove one saved per-application shortcut");
     println!("  help             Show this message");
     println!();
     println!("Exit codes are zero on success and nonzero on error. `service-start`");
@@ -456,6 +478,20 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
                 let _ = args;
                 Err("This build does not include local speech-to-text. Rebuild with `--features stt`."
                     .into())
+            }
+        }
+        Action::ShortcutList
+        | Action::ShortcutApps
+        | Action::ShortcutAdd
+        | Action::ShortcutRemove => {
+            #[cfg(windows)]
+            {
+                shortcut_cli::run(action, args)
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = args;
+                Err("Application shortcuts require the Windows service.".into())
             }
         }
         Action::AppList
@@ -680,6 +716,33 @@ mod tests {
             Action::Transcribe
         );
         assert!(!matches!(Action::Transcribe, Action::Mute));
+    }
+
+    #[test]
+    fn shortcut_commands_parse_without_their_flags() {
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            parse(&args(&["shortcut-list"])).unwrap(),
+            Action::ShortcutList
+        );
+        assert_eq!(
+            parse(&args(&["shortcut-apps"])).unwrap(),
+            Action::ShortcutApps
+        );
+        assert_eq!(
+            parse(&args(&["shortcut-add"])).unwrap(),
+            Action::ShortcutAdd
+        );
+        assert_eq!(
+            parse(&args(&["shortcut-remove"])).unwrap(),
+            Action::ShortcutRemove
+        );
+        assert_eq!(Action::ShortcutAdd.to_string(), "shortcut-add");
     }
 
     #[cfg(not(feature = "stt"))]

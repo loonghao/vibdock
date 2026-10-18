@@ -1076,6 +1076,27 @@ impl ResidentControlClient {
         expected_status: u16,
         limit: usize,
     ) -> Result<serde_json::Value> {
+        let (status, value) = self.request_status(method, path, body, limit)?;
+        if status != expected_status {
+            // Never include untrusted response contents, capabilities or bearer
+            // values in a diagnostic that may later reach window text or logs.
+            return Err(
+                format!("Playback service request was not accepted (HTTP {status})").into(),
+            );
+        }
+        Ok(value)
+    }
+
+    /// Same bounded exchange, but preserves the status and JSON body so a CLI
+    /// caller can show the server's own rejection reason instead of a bare
+    /// HTTP code.
+    fn request_status(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+        limit: usize,
+    ) -> Result<(u16, serde_json::Value)> {
         let body = body.map(|value| value.to_string()).unwrap_or_default();
         let mut connection =
             ControlConnection::connect(self.instance.port, std::time::Duration::from_secs(2))?;
@@ -1087,19 +1108,51 @@ impl ResidentControlClient {
             self.instance.port, self.instance.token, body.len()
         );
         let (status, response) = connection.exchange_limited(&request, limit)?;
-        if status != expected_status {
-            // Never include untrusted response contents, capabilities or bearer
-            // values in a diagnostic that may later reach window text or logs.
-            return Err(
-                format!("Playback service request was not accepted (HTTP {status})").into(),
-            );
-        }
-        Ok(serde_json::from_str(&response)?)
+        Ok((
+            status,
+            serde_json::from_str(&response).unwrap_or(serde_json::Value::Null),
+        ))
     }
 
     #[cfg(windows)]
     pub(crate) fn summary(&self) -> Result<serde_json::Value> {
         self.request("GET", "/api/apps/summary", None, 200, 128 * 1024)
+    }
+
+    /// Full software view, including the opaque application references the
+    /// CLI can use for a shortcut binding.
+    #[cfg(windows)]
+    pub(crate) fn applications(&self) -> Result<serde_json::Value> {
+        self.request("GET", "/api/apps", None, 200, 512 * 1024)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn shortcuts(&self) -> Result<serde_json::Value> {
+        self.request("GET", "/api/shortcuts", None, 200, 128 * 1024)
+    }
+
+    /// Creates or removes a shortcut. A 409 keeps the server's error text so the
+    /// CLI can explain a stale revision, duplicate trigger or dispatch loop.
+    #[cfg(windows)]
+    pub(crate) fn mutate_shortcut(
+        &self,
+        operation: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let (status, value) = self.request_status(
+            "POST",
+            &format!("/api/shortcuts/{operation}"),
+            Some(body),
+            256 * 1024,
+        )?;
+        if status == 200 {
+            return Ok(value);
+        }
+        Err(value["error"]
+            .as_str()
+            .unwrap_or("Shortcut request was rejected")
+            .to_string()
+            .into())
     }
 
     /// Reads the saved microphone identity. The tray uses the exact saved id

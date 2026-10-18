@@ -59,6 +59,28 @@ scan reports `applications_complete=false`; pinned presence rows then show
 application. It does not establish that the target accepted the chord, that a
 voice session started, or that any content changed.
 
+## CLI projection
+
+Checked on 2026-10-18 with a debug build against a private service state
+directory and port, so the user's resident service was untouched:
+
+- `shortcut-list` returned revision 0 and `none` on a fresh store.
+- `shortcut-apps` listed the live desktop rows, including
+  `ChatGPT  [codex]  window  reference=<64 hex>`.
+- `shortcut-add --application <fresh reference> --trigger "Ctrl+Alt+F18"
+  --dispatch "Ctrl+Shift+F18" --label "CLI Codex"` saved
+  `CLI Codex [foreground] Ctrl + Alt + F18 -> Ctrl + Shift + F18`; the JSON view
+  reported `armed=true`, `revision=1`.
+- `shortcut-remove --id <saved id>` returned to an empty list at revision 2.
+- A second add without `--label` defaulted the label to `ChatGPT`, confirming
+  the CLI omits the optional field rather than sending `null`.
+- The CLI never dispatches a chord; it only reads the saved view and mutates the
+  authenticated registry.
+
+This is a dated single-host record. The command rejects executable paths, uses
+only opaque application references from a fresh scan, and requires the verified
+service to be running.
+
 ## Playback isolation check
 
 Two real PowerShell processes played different looping WAV tones (440 Hz and

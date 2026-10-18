@@ -93,6 +93,21 @@ the global registration). Bindings live in
 `%LOCALAPPDATA%\VibDock\shortcuts.json`; executable paths in that file are
 personal data.
 
+The same bindings are available without the browser:
+
+```powershell
+.\vibdock.exe shortcut-apps
+.\vibdock.exe shortcut-list --json
+.\vibdock.exe shortcut-add --app "ChatGPT" --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space"
+.\vibdock.exe shortcut-add --application <reference> --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space" --scope running
+.\vibdock.exe shortcut-remove --id <saved-id>
+```
+
+`shortcut-apps` prints the opaque reference from a fresh scan; the CLI never
+accepts an executable path. `--app` requires a unique case-insensitive name and
+defaults a background application to `running`. The service must already be
+running (`service-start`), and the command never dispatches the chord itself.
+
 Recognition is deliberately bounded: only visible, non-cloaked, non-tool
 windows are considered, shell/host processes are skipped, and a capped or
 partially unreadable window scan reports state as unknown rather than "not
