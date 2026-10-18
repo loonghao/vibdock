@@ -72,6 +72,21 @@ function Failure-Detail($Problem) {
     }
     return $detail
 }
+function Close-Menu([IntPtr]$Handle) {
+    # A top-level menu with nested submenus can need more than one cancellation
+    # before TrackPopupMenu returns control to the hidden owner.
+    [void][VibDockNative]::PostMessage($Handle, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero)
+    [void][VibDockNative]::PostMessage($Handle, 0x0100, [IntPtr]0x1B, [IntPtr]0)
+    Start-Sleep -Milliseconds 120
+    [void][VibDockNative]::PostMessage($Handle, 0x0100, [IntPtr]0x1B, [IntPtr]0)
+    Start-Sleep -Milliseconds 120
+    $remaining = [VibDockNative]::FindWindow('#32768', $null)
+    if ($remaining -ne [IntPtr]::Zero) {
+        [void][VibDockNative]::PostMessage($remaining, 0x0100, [IntPtr]0x1B, [IntPtr]0)
+        [void][VibDockNative]::PostMessage($remaining, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 120
+    }
+}
 function Save-Window([IntPtr]$Handle, [string]$Name) {
     # Menu handles/labels can exist before their opening animation has painted.
     # Retry capture readiness only, never an action or a semantic assertion.
@@ -170,9 +185,8 @@ try {
     foreach ($required in $requiredPrimary) { if (-not ($labels -contains $required)) { throw "Primary context menu is missing $required" } }
     if (-not ($labels -match 'Microphone')) { throw 'Primary context menu has no microphone state or unavailable label' }
     Save-Window $menuWindow 'resident-context-menu.png'
-    [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CANCELMODE
-    [void][VibDockNative]::PostMessage($menuWindow, 0x0100, [IntPtr]0x1B, [IntPtr]0) # VK_ESCAPE closes nested menus
-    Wait-Until { -not [VibDockNative]::IsWindowVisible($menuWindow) } 'Primary context menu did not close'
+    Close-Menu $menuWindow
+    Wait-Until { $script:openMenu = [VibDockNative]::FindWindow('#32768', $null); $script:openMenu -eq [IntPtr]::Zero -or -not [VibDockNative]::IsWindowVisible($script:openMenu) } 'Primary context menu did not close'
     # Use the real first software icon uID, not the primary icon's generic menu.
     [void][VibDockNative]::PostMessage($window, 0x8001, [IntPtr]2, [IntPtr]0x0205)
     Wait-Until { $script:menuWindow = [VibDockNative]::FindWindow('#32768', $null); $script:menuWindow -ne [IntPtr]::Zero -and [VibDockNative]::IsWindowVisible($script:menuWindow) } 'Software icon context menu did not open'
@@ -188,9 +202,8 @@ try {
     }
     if (-not ($softwareLabels -contains 'Offline saved fixture') -or -not ($softwareLabels -contains 'No fresh, controllable playback session') -or -not ($softwareLabels -contains 'Settings…')) { throw 'Software uID menu did not preserve its exact offline row and disabled controls' }
     Save-Window $menuWindow 'resident-software-menu.png'
-    [void][VibDockNative]::PostMessage($window, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero)
-    [void][VibDockNative]::PostMessage($menuWindow, 0x0100, [IntPtr]0x1B, [IntPtr]0)
-    Wait-Until { -not [VibDockNative]::IsWindowVisible($menuWindow) } 'Software context menu did not close'
+    Close-Menu $menuWindow
+    Wait-Until { $script:openMenu = [VibDockNative]::FindWindow('#32768', $null); $script:openMenu -eq [IntPtr]::Zero -or -not [VibDockNative]::IsWindowVisible($script:openMenu) } 'Software context menu did not close'
     [void][VibDockNative]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) # WM_CLOSE
     if ([VibDockNative]::IsWindowVisible($window) -or $first.HasExited -or -not (Test-Path -LiteralPath $recordPath)) { throw 'Close changed the hidden tray/service lifecycle' }
     $second = Start-Entry 'vibdock-launcher.exe'
