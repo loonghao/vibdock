@@ -14,6 +14,8 @@ mod app_session_windows;
 mod app_shortcuts;
 mod browser_auth;
 mod capabilities;
+#[cfg(all(windows, feature = "stt"))]
+mod dictation;
 pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
@@ -88,6 +90,7 @@ pub enum Action {
     AppUnmute,
     AppToggle,
     Transcribe,
+    Dictate,
     ShortcutList,
     ShortcutApps,
     ShortcutAdd,
@@ -117,6 +120,7 @@ impl fmt::Display for Action {
             Action::AppUnmute => "app-unmute",
             Action::AppToggle => "app-toggle",
             Action::Transcribe => "transcribe",
+            Action::Dictate => "dictate",
             Action::ShortcutList => "shortcut-list",
             Action::ShortcutApps => "shortcut-apps",
             Action::ShortcutAdd => "shortcut-add",
@@ -166,6 +170,8 @@ pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|servic
        vibdock <app-status|app-mute|app-unmute|app-toggle> --endpoint <endpoint-id> \\
                --session <session-instance-id>
        vibdock transcribe --wav <path> [--model-dir <dir>] [--json]
+       vibdock dictate [--seconds <1-30>] [--insert] [--json]
+       vibdock dictate --wav <path> [--insert] [--json]
        vibdock <shortcut-list|shortcut-apps> [--json]
        vibdock shortcut-add --application <reference>|--app <name> --trigger <chord> \\
                --dispatch <chord> [--scope foreground|running] [--label <text>]
@@ -204,6 +210,7 @@ pub fn parse(args: &[String]) -> Result<Action> {
         Some("listen") => Action::Listen,
         Some("capabilities") => Action::Capabilities,
         Some("transcribe") => Action::Transcribe,
+        Some("dictate") => Action::Dictate,
         Some("shortcut-list") => Action::ShortcutList,
         Some("shortcut-apps") => Action::ShortcutApps,
         Some("shortcut-add") => Action::ShortcutAdd,
@@ -264,6 +271,9 @@ pub fn help() {
     println!("  app-status|app-mute|app-unmute|app-toggle");
     println!("                   Read or change one application's playback mute state");
     println!("  transcribe       Transcribe a mono PCM WAV with a local SenseVoice model");
+    println!(
+        "  dictate          Record a bounded microphone clip, transcribe it, optionally insert"
+    );
     println!("  shortcut-list    List saved per-application shortcut bindings");
     println!("  shortcut-apps    List detected applications and opaque references");
     println!("  shortcut-add     Bind a trigger and dispatch chord to a detected application");
@@ -466,6 +476,17 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
             {
                 let _ = args;
                 Err("The tray entry requires Windows.".into())
+            }
+        }
+        Action::Dictate => {
+            #[cfg(all(windows, feature = "stt"))]
+            {
+                dictation::run(&args[1..])
+            }
+            #[cfg(not(all(windows, feature = "stt")))]
+            {
+                let _ = args;
+                Err("Dictation requires Windows and a build with `--features stt`.".into())
             }
         }
         Action::Transcribe => {
@@ -716,6 +737,12 @@ mod tests {
             Action::Transcribe
         );
         assert!(!matches!(Action::Transcribe, Action::Mute));
+        assert_eq!(parse(&args(&["dictate"])).unwrap(), Action::Dictate);
+        assert_eq!(
+            parse(&args(&["dictate", "--seconds", "2", "--insert"])).unwrap(),
+            Action::Dictate
+        );
+        assert_eq!(Action::Dictate.to_string(), "dictate");
     }
 
     #[test]

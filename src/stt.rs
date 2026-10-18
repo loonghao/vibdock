@@ -150,8 +150,40 @@ fn load_wave(path: &Path) -> std::result::Result<Wave, String> {
     })
 }
 
-fn transcribe(wav: &Path, model: &ModelPaths) -> std::result::Result<(String, f32), String> {
+pub(crate) fn transcribe_wav(
+    wav: &Path,
+    model: &ModelPaths,
+) -> std::result::Result<(String, f32), String> {
     let wave = load_wave(wav)?;
+    recognize(wave.samples(), wave.sample_rate(), model)
+}
+
+pub(crate) fn wav_seconds(wav: &Path) -> std::result::Result<f32, String> {
+    let wave = load_wave(wav)?;
+    if wave.sample_rate() <= 0 {
+        return Err("The WAV has no usable sample rate.".into());
+    }
+    Ok(wave.samples().len() as f32 / wave.sample_rate() as f32)
+}
+
+/// Transcribes an in-memory mono signal. Used by dictation capture and tests;
+/// the sample rate may be any positive rate the model's frontend accepts.
+pub(crate) fn transcribe_samples(
+    samples: &[f32],
+    sample_rate: i32,
+    model: &ModelPaths,
+) -> std::result::Result<(String, f32), String> {
+    if samples.is_empty() {
+        return Err("No audio samples were captured.".into());
+    }
+    recognize(samples, sample_rate, model)
+}
+
+fn recognize(
+    samples: &[f32],
+    sample_rate: i32,
+    model: &ModelPaths,
+) -> std::result::Result<(String, f32), String> {
     let mut config = OfflineRecognizerConfig::default();
     config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
         model: Some(model.model.to_string_lossy().into_owned()),
@@ -162,7 +194,7 @@ fn transcribe(wav: &Path, model: &ModelPaths) -> std::result::Result<(String, f3
     let recognizer = OfflineRecognizer::create(&config)
         .ok_or_else(|| "SenseVoice model failed to load.".to_string())?;
     let stream = recognizer.create_stream();
-    stream.accept_waveform(wave.sample_rate(), wave.samples());
+    stream.accept_waveform(sample_rate, samples);
     let started = std::time::Instant::now();
     recognizer.decode(&stream);
     let result = stream
@@ -176,7 +208,7 @@ fn transcribe(wav: &Path, model: &ModelPaths) -> std::result::Result<(String, f3
 pub(crate) fn run(args: &[String]) -> crate::Result<()> {
     let cli = parse_args(args)?;
     let model = discover_model(cli.model_dir.as_deref())?;
-    let (text, seconds) = transcribe(&cli.wav, &model)?;
+    let (text, seconds) = transcribe_wav(&cli.wav, &model)?;
     if cli.json {
         println!(
             "{}",
