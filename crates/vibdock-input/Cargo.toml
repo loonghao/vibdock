@@ -10,3 +10,4 @@ description = "Platform-independent input contracts: hotkey parsing, gestures an
 name = "vibdock_input"
 path = "src/lib.rs"
 
+

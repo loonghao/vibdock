@@ -11,5 +11,6 @@ name = "vibdock_au05"
 path = "src/lib.rs"
 
 [dependencies]
-vibdock-input = { path = "../vibdock-input" }
+vibdock-input = { version = "0.1.0", path = "../vibdock-input" }
+
 
