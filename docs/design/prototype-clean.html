@@ -1,0 +1,382 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VibDock · Vibe Key 配置</title>
+<style>
+:root{
+  color-scheme:light;
+  --paper:#f6f4ef;
+  --surface:#fffdf9;
+  --ink:#1d1b18;
+  --muted:#78736a;
+  --faint:#a39d92;
+  --line:#e6e1d7;
+  --line-strong:#d7d0c3;
+  --accent:#b45f2a;
+  --accent-soft:#f4e8de;
+  --green:#3f7a5f;
+  --red:#a4493f;
+}
+*{box-sizing:border-box}
+html,body{min-height:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font:13.5px/1.55 "Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased;text-wrap:pretty;
+}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0;text-align:left}
+button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+h1,h2,h3,p{margin:0}
+h1{font-size:22px;line-height:1.2;letter-spacing:-.3px;font-weight:600}
+h2{font-size:15px;line-height:1.3;letter-spacing:-.1px;font-weight:600}
+small{font-size:12px;color:var(--muted)}
+.kicker{font-size:11px;color:var(--faint);letter-spacing:.04em}
+.row{display:flex;align-items:center;gap:12px}
+.grow{flex:1;min-width:0}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.dot.ok{background:var(--green)}
+.dot.warn{background:var(--accent)}
+.button{
+  display:inline-flex;align-items:center;gap:6px;
+  border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);
+  border-radius:7px;padding:7px 11px;font-size:12.5px;line-height:1;
+}
+.button:hover{border-color:#bdb5a8;background:#fff}
+.button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:550}
+.button.primary:hover{background:#a35424}
+.button.quiet{border-color:transparent;color:var(--muted);padding-left:7px;padding-right:7px}
+.button.quiet:hover{background:#eee9df;color:var(--ink)}
+.link{color:var(--accent);font-size:12.5px;display:inline-flex;align-items:center;gap:4px;padding:0}
+.link:hover{text-decoration:underline}
+.icon{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+/* shell */
+.topbar{height:56px;display:flex;align-items:center;gap:18px;padding:0 24px;background:var(--paper);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;letter-spacing:-.2px}
+.brand-name{display:inline-block}
+.brand-mark{width:22px;height:22px;border:1.5px solid var(--ink);border-radius:6px;display:grid;place-items:center;font-size:10px;font-weight:700;letter-spacing:-.4px;background:var(--surface)}
+.brand span{color:var(--accent)}
+.topbar .grow{flex:1}
+.connection{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+.topbar .proto{font-size:11px;color:var(--faint);border:1px solid var(--line-strong);border-radius:4px;padding:3px 6px;margin-left:6px;white-space:nowrap}
+.shell{display:grid;grid-template-columns:206px minmax(0,1fr);min-height:calc(100vh - 56px)}
+/* sidebar */
+.sidebar{border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:26px}
+.side-label{font-size:11px;color:var(--faint);padding:0 8px;margin-bottom:7px;letter-spacing:.04em}
+.side-item{width:100%;display:flex;align-items:center;gap:9px;padding:8px;border-radius:6px;font-size:13px;color:var(--muted);line-height:1.3}
+.side-item small{display:block;font-size:10.5px;color:var(--faint);margin-top:1px;font-weight:400}
+.side-item:hover{background:#eeeae2;color:var(--ink)}
+.side-item[aria-current=true]{background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:550;padding:7px}
+.side-item .dot{margin-left:auto}
+.side-item .count{margin-left:auto;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.device-mark{width:24px;height:32px;border-radius:4px;border:1.2px solid var(--line-strong);background:linear-gradient(180deg,#fffdf9,#f1ede5);position:relative;flex:none}
+.device-mark:before{content:"";position:absolute;left:7px;top:5px;width:8px;height:8px;border:1px solid #b8b0a4;border-radius:50%;background:#f4f0e8}
+.device-mark:after{content:"";position:absolute;left:6px;top:17px;width:10px;height:2px;background:#d6cec0;box-shadow:0 4px 0 #d6cec0,0 8px 0 #d6cec0}
+.pad-mark{width:24px;height:32px;border-radius:5px;border:1.2px solid var(--line-strong);position:relative;flex:none;background:#fffdf9}
+.pad-mark:before{content:"";position:absolute;left:5px;top:13px;width:14px;height:8px;border:1.2px solid #b8b0a4;border-radius:5px 5px 8px 8px;background:#f4f0e8}
+.sidebar .spacer{flex:1}
+.sidebar .foot{font-size:11px;color:var(--faint);padding:0 8px;line-height:1.6}
+/* main */
+.main{min-width:0;padding:26px 34px 40px}
+.page-head{display:flex;align-items:flex-start;gap:18px;max-width:1080px}
+.page-head .grow{flex:1}
+.page-head small{display:block;margin-top:4px}
+.page-actions{display:flex;align-items:center;gap:8px;flex:none}
+.workbench{display:grid;grid-template-columns:300px minmax(0,1fr);gap:52px;max-width:1080px;margin-top:26px;align-items:start}
+/* device */
+.device-pane{position:sticky;top:24px}
+.device-stage{border:1px solid var(--line);border-radius:10px;background:#f1eee7;display:flex;align-items:center;justify-content:center;padding:18px 14px 14px;min-height:400px}
+.vibe-key{width:244px;height:auto;display:block}
+.device-key{cursor:pointer;outline:none}
+.device-key .key-field{transition:stroke .12s,fill .12s}
+.device-key:hover .key-field{stroke:var(--accent)}
+.device-key.active .key-field{stroke:var(--accent);stroke-width:2.2}
+.device-key:focus-visible .key-field{stroke:var(--accent);stroke-width:2.2}
+.key-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.key-choice{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 6px;text-align:center;color:var(--muted);font-size:11.5px;line-height:1.25}
+.key-choice:hover{border-color:var(--line-strong)}
+.key-choice[aria-pressed=true]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.key-choice b{display:block;font-size:12px;font-weight:550;color:inherit}
+.key-choice small{display:block;font-size:10px;color:var(--faint);margin-top:1px}
+.device-note{font-size:11px;color:var(--faint);line-height:1.6;margin-top:10px}
+/* config */
+.config-pane{min-width:0}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.section-head .meta{font-size:11px;color:var(--faint)}
+.section-head h2{font-size:15px}
+.gesture-list{margin-top:2px}
+.gesture-row{width:100%;display:grid;grid-template-columns:38px 1fr minmax(120px,1.1fr) 18px;align-items:center;gap:10px;padding:13px 8px 13px 0;border-bottom:1px solid var(--line);color:var(--ink)}
+.gesture-row:hover{background:#faf8f3}
+.gesture-row[aria-selected=true]{background:var(--accent-soft)}
+.gesture-row .num{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums;padding-left:8px}
+.gesture-row b{display:block;font-size:13px;font-weight:550}
+.gesture-row small{display:block;font-size:11px;color:var(--faint);margin-top:1px}
+.gesture-row .target{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gesture-row .target.empty{color:var(--faint)}
+.gesture-row .chevron{color:var(--faint);font-size:16px;line-height:1;text-align:right}
+.combo-block{margin-top:28px}
+.combo-actions{display:flex;align-items:center;gap:12px}
+.combo-table{width:100%;border-collapse:collapse;margin-top:2px}
+.combo-table th{font-size:10.5px;font-weight:500;color:var(--faint);text-align:left;padding:8px 8px 7px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+.combo-table td{font-size:12.5px;padding:11px 8px 11px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+.combo-table tr:hover td{background:#faf8f3}
+.combo-table .keys{font-variant-numeric:tabular-nums;white-space:nowrap}
+.combo-table .keys i{font-style:normal;color:var(--faint);padding:0 4px}
+.combo-table .kind{color:var(--muted);font-size:11.5px}
+.combo-table .target{color:var(--ink)}
+.combo-table .go{text-align:right;color:var(--faint);font-size:15px;width:18px}
+.combo-table tr{cursor:pointer}
+.combo-note{font-size:11px;color:var(--faint);margin-top:9px;line-height:1.6}
+/* drawer */
+.drawer-backdrop{position:fixed;inset:0;background:rgba(29,27,24,.12);z-index:40}
+.drawer{position:fixed;right:0;top:0;bottom:0;width:min(390px,100%);background:var(--surface);border-left:1px solid var(--line);z-index:41;padding:22px 22px 18px;display:flex;flex-direction:column;box-shadow:-12px 0 32px rgba(40,32,22,.06)}
+.drawer-head{display:flex;align-items:flex-start;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.drawer-head .grow{flex:1}
+.drawer-head h2{font-size:17px;margin-top:2px}
+.drawer-head small{display:block;margin-top:3px}
+.drawer-close{width:26px;height:26px;border:1px solid var(--line);border-radius:5px;display:grid;place-items:center;color:var(--muted);background:transparent;font-size:15px;line-height:1}
+.drawer-close:hover{border-color:var(--line-strong);color:var(--ink)}
+.field{margin-top:18px}
+.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px}
+.select{width:100%;border:1px solid var(--line-strong);background:#fff;border-radius:6px;padding:8px 9px;font-size:13px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8d8578 50%),linear-gradient(135deg,#8d8578 50%,transparent 50%);background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+.steps{margin:0;padding:0;list-style:none;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.steps li{display:flex;align-items:center;gap:9px;padding:8px 10px;font-size:12px;border-bottom:1px solid var(--line);color:var(--ink)}
+.steps li:last-child{border-bottom:0}
+.steps .n{font-size:10px;color:var(--faint);width:16px;flex:none;font-variant-numeric:tabular-nums}
+.steps .what{color:var(--muted);font-size:11px;margin-left:auto}
+.timing{border-top:1px solid var(--line);margin-top:18px;padding-top:12px}
+.timing summary{cursor:pointer;font-size:12px;color:var(--muted);list-style:none;display:flex;justify-content:space-between;gap:10px}
+.timing summary::-webkit-details-marker{display:none}
+.timing summary:after{content:"›";color:var(--faint);transform:rotate(90deg)}
+.timing[open] summary:after{transform:rotate(-90deg)}
+.timing .timing-body{padding-top:10px;display:grid;gap:9px}
+.timing .line{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px;color:var(--muted)}
+.timing .line b{font-size:12px;font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
+.timing p{font-size:11px;color:var(--faint);line-height:1.6;margin-top:2px}
+.drawer-foot{margin-top:auto;padding-top:18px;display:flex;gap:8px}
+.drawer-foot .button{flex:1;justify-content:center}
+/* modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(29,27,24,.18);z-index:50;display:grid;place-items:center;padding:20px}
+.modal{width:min(520px,100%);max-height:84vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(40,32,22,.12);padding:20px}
+.modal-head{display:flex;align-items:flex-start;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.modal-head h2{font-size:16px}
+.modal-head small{display:block;margin-top:2px}
+.modal-close{margin-left:auto;width:26px;height:26px;border:1px solid var(--line);border-radius:5px;color:var(--muted);display:grid;place-items:center}
+.plugin-list{margin-top:6px}
+.plugin-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.plugin-row:last-child{border-bottom:0}
+.plugin-row b{display:block;font-size:12.5px;font-weight:550}
+.plugin-row small{display:block;font-size:11px;color:var(--faint);margin-top:1px}
+.plugin-row .status{font-size:11px;color:var(--muted);white-space:nowrap}
+.plugin-row .status.off{color:var(--faint)}
+.modal-note{font-size:11px;color:var(--faint);line-height:1.6;margin-top:12px}
+/* recent */
+.recent{max-width:1080px;margin-top:32px;padding-top:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--faint)}
+.recent b{font-weight:500;color:var(--muted)}
+.recent .link{margin-left:auto;font-size:11.5px}
+/* toast */
+.toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,8px);background:#2c2924;color:#fff;font-size:12px;border-radius:6px;padding:8px 12px;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.16)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(max-width:980px){.workbench{grid-template-columns:260px minmax(0,1fr);gap:30px}.main{padding:22px 22px 32px}}
+@media(max-width:760px){.shell{grid-template-columns:1fr}.sidebar{display:none}.workbench{grid-template-columns:1fr;gap:22px}.device-pane{position:static}.device-stage{min-height:320px}.vibe-key{width:210px}.page-head{flex-wrap:wrap}.page-actions{width:100%}.main{padding:20px 16px 28px}.gesture-row{grid-template-columns:30px 1fr minmax(90px,1fr) 16px}.combo-table th:nth-child(2),.combo-table td:nth-child(2){display:none}}
+</style>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">V</span><span class="brand-name">Vib<span>Dock</span></span></div>
+  <div class="grow"></div>
+  <div class="connection"><span class="dot ok"></span>服务已连接</div>
+  <span class="proto">设计原型</span>
+</header>
+<div class="shell">
+  <aside class="sidebar">
+    <div>
+      <div class="side-label">设备</div>
+      <button class="side-item" aria-current="true"><span class="device-mark"></span><span class="grow">Vibe Key<small>AU05 · 已连接</small></span><span class="dot ok"></span></button>
+      <button class="side-item"><span class="pad-mark"></span><span class="grow">Sony 手柄<small>未连接</small></span><span class="dot"></span></button>
+    </div>
+    <div>
+      <div class="side-label">管理</div>
+      <button class="side-item">Profiles<span class="count">5</span></button>
+      <button class="side-item" id="pluginsNav">插件<span class="count">6</span></button>
+      <button class="side-item">命令<span class="count">4</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="foot">关闭页面不影响后台服务。<br>配置保存在本机。</div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div class="grow"><h1>Vibe Key</h1><small>3 个按键 · 固件 4.4.0 · 配置自动保存到本机</small></div>
+      <div class="page-actions">
+        <button class="button quiet" id="autoConfig">自动生成配置</button>
+        <button class="button" id="deviceSettings">设备设置</button>
+      </div>
+    </div>
+    <div class="workbench">
+      <section class="device-pane">
+        <div class="device-stage" id="deviceStage"></div>
+        <div class="key-picker" id="keyPicker"></div>
+        <p class="device-note">点击按键查看配置。旋钮用于切换 Profile；长按与双击需要本机服务运行。</p>
+      </section>
+      <section class="config-pane">
+        <div class="section-head"><h2 id="keyTitle">语音键</h2><span class="meta" id="keyMeta">3 个手势</span></div>
+        <div class="gesture-list" id="gestureList"></div>
+        <div class="combo-block">
+          <div class="section-head"><h2>多键组合</h2><div class="combo-actions"><span class="meta">最多 3 键 · 快按 250ms · 长按 550ms</span><button class="link" id="newCombo">+ 新建组合</button></div></div>
+          <table class="combo-table" aria-label="多键组合">
+            <thead><tr><th>按键序列</th><th>方式</th><th>执行</th><th></th></tr></thead>
+            <tbody id="comboBody"></tbody>
+          </table>
+          <p class="combo-note">组合动作优先于单键：如果同时配置了 1+2 和 1+2+3，松开 1+2 后会短暂等待，确认是否继续按 3。</p>
+        </div>
+      </section>
+    </div>
+    <div class="recent"><span>最近触发</span><b id="recentText">暂无记录</b><button class="link" id="recentAll">查看全部</button></div>
+  </main>
+</div>
+<div id="drawerRoot"></div>
+<div id="modalRoot"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+const PROFILES={
+  wechat:{name:'微信语音',steps:[['发送','Ctrl + Win']]},
+  codex:{name:'Codex 语音',steps:[['打开','Codex'],['切换','麦克风'],['发送','Ctrl + Shift + Space']]},
+  dsh:{name:'DSH 工作台',steps:[['打开','DeepSeek Harness'],['聚焦','浏览器窗口']]},
+  media:{name:'媒体控制',steps:[['发送','播放 / 暂停']]},
+  workbuddy:{name:'WorkBuddy',steps:[['打开','WorkBuddy'],['切换','麦克风']]}
+};
+const KEYS=[
+  {id:'b1',num:'01',label:'语音键',gestures:{single:'wechat',double:'codex',long:'dsh'}},
+  {id:'b2',num:'02',label:'确认键',gestures:{single:'codex',double:'dsh',long:'media'}},
+  {id:'b3',num:'03',label:'取消键',gestures:{single:'dsh',double:'media',long:'wechat'}}
+];
+const GESTURES=[{id:'single',name:'单击',hint:'按下后松开'},{id:'double',name:'双击',hint:'300ms 内按两次'},{id:'long',name:'长按',hint:'按住 550ms'}];
+const COMBOS=[
+  {keys:[1,2],kind:'快按',profile:'codex'},
+  {keys:[1,2,3],kind:'快按',profile:'dsh'},
+  {keys:[2,3],kind:'快按',profile:'media'},
+  {keys:[1,2],kind:'长按',profile:'wechat'}
+];
+const state={key:'b1',drawer:new URL(location.href).searchParams.get('drawer')==='1'?{keyId:'b1',gesture:'single'}:null,modal:null,recent:'按钮 1 · 单击 · 微信语音 · 12:04:22'};
+let toastTimer=0;
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function keyById(id){return KEYS.find(k=>k.id===id)}
+function profileName(id){return PROFILES[id]?.name||'未配置'}
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
+function setKey(id){state.key=id;state.drawer=null;render()}
+function openDrawer(keyId,gesture){state.drawer={keyId,gesture};render()}
+function closeDrawer(){state.drawer=null;render()}
+function saveDrawer(){const d=state.drawer;if(!d)return;const select=document.getElementById('profileSelect');if(select){const key=keyById(d.keyId);if(key)key.gestures[d.gesture]=select.value}state.drawer=null;render();showToast('已保存（原型预览，不写入设备）')}
+function icon(name){const paths={
+  mic:'<path d="M8 12a2 2 0 0 0 2-2V5a2 2 0 1 0-4 0v5a2 2 0 0 0 2 2Z"/><path d="M4 10a4 4 0 0 0 8 0M8 14v2M5.5 16h5"/>',
+  check:'<path d="m3.5 8 3 3 6-6"/>',
+  x:'<path d="m4 4 8 8M12 4 4 12"/>',
+  chevron:'<path d="m7 4 4 4-4 4"/>',
+  plus:'<path d="M8 4v8M4 8h8"/>'
+};return `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">${paths[name]||''}</svg>`}
+function deviceSVG(){
+  const icons={
+    mic:'<path d="M8 12a2 2 0 0 0 2-2V5a2 2 0 1 0-4 0v5a2 2 0 0 0 2 2Z"/><path d="M4 10a4 4 0 0 0 8 0M8 14v2M5.5 16h5"/>',
+    check:'<path d="m3.5 8 3 3 6-6"/>',
+    x:'<path d="m4 4 8 8M12 4 4 12"/>'
+  };
+  const key=(id,y,label,ic)=>{
+    const active=state.key===id?' active':'';
+    return `<g class="device-key${active}" data-key="${id}" role="button" tabindex="0" aria-label="${label}">
+      <rect class="key-field" x="72" y="${y}" width="112" height="64" rx="12" fill="#fffdf9" stroke="#c9c2b5" stroke-width="1.2"/>
+      <g transform="translate(116 ${y+20}) scale(1.5)" fill="none" stroke="#5f5a51" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${icons[ic]}</g>
+    </g>`
+  };
+  return `<svg class="vibe-key" viewBox="0 0 260 520" role="img" aria-label="Ulanzi Vibe Key">
+    <rect x="52" y="10" width="156" height="500" rx="25" fill="#fffdf9" stroke="#28241f" stroke-width="1.4"/>
+    <rect x="60" y="18" width="140" height="484" rx="20" fill="none" stroke="#ece7dd" stroke-width="1"/>
+    ${[0,1,2,3,4,5].map(r=>[0,1,2,3,4,5,6].map(c=>`<circle cx="${92+c*13}" cy="${32+r*9}" r="1.8" fill="#c4bcae"/>`).join('')).join('')}
+    <text x="130" y="24" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="6.5" letter-spacing="1.6" fill="#8a8377">VIBEKEY</text>
+    <g aria-hidden="true">
+      <circle cx="130" cy="140" r="54" fill="#f3f0e8" stroke="#c9c2b5" stroke-width="1.2"/>
+      <circle cx="130" cy="140" r="43" fill="none" stroke="#d9d2c5" stroke-width="1"/>
+      <path d="M130 108v15" stroke="#7d766a" stroke-width="2" stroke-linecap="round"/>
+      <path d="M94 140h10M156 140h10M130 176v10" stroke="#b8b0a3" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    ${key('b1',238,'语音键','mic')}
+    ${key('b2',318,'确认键','check')}
+    ${key('b3',398,'取消键','x')}
+    <rect x="211" y="235" width="7" height="24" rx="3.5" fill="#e8e2d7" stroke="#c9c2b5" stroke-width=".8"/>
+    <circle cx="196" cy="482" r="2" fill="#3f7a5f"/>
+    <path d="M76 484h108" stroke="#ece7dd" stroke-width="1"/>
+  </svg>`
+}
+function render(){
+  document.getElementById('deviceStage').innerHTML=deviceSVG();
+  document.getElementById('keyPicker').innerHTML=KEYS.map(k=>`<button class="key-choice" data-key="${k.id}" aria-pressed="${state.key===k.id}"><b>${k.num}</b>${k.label}<small>${Object.keys(k.gestures).length} 个手势</small></button>`).join('');
+  const k=keyById(state.key);
+  document.getElementById('keyTitle').textContent=k.label;
+  document.getElementById('keyMeta').textContent='3 个手势 · 由插件提供动作';
+  document.getElementById('gestureList').innerHTML=GESTURES.map(g=>{
+    const target=k.gestures[g.id];
+    return `<button class="gesture-row" data-key="${k.id}" data-gesture="${g.id}" aria-selected="${state.drawer?.keyId===k.id&&state.drawer?.gesture===g.id}">
+      <span class="num">${g.id==='single'?'01':g.id==='double'?'02':'03'}</span>
+      <span><b>${g.name}</b><small>${g.hint}</small></span>
+      <span class="target ${target?'':'empty'}">${esc(profileName(target))}</span>
+      <span class="chevron">›</span>
+    </button>`
+  }).join('');
+  document.getElementById('comboBody').innerHTML=COMBOS.map(c=>`<tr data-combo="1">
+    <td class="keys">${c.keys.map((n,i)=>`${i?'<i>+</i>':''}0${n}`).join('')}</td>
+    <td class="kind">${c.kind}</td>
+    <td class="target">${esc(profileName(c.profile))}</td>
+    <td class="go">›</td>
+  </tr>`).join('');
+  document.getElementById('recentText').textContent=state.recent;
+  renderDrawer();
+  renderModal();
+}
+function renderDrawer(){
+  const root=document.getElementById('drawerRoot');
+  const d=state.drawer;
+  if(!d){root.innerHTML='';return}
+  const k=keyById(d.keyId);const g=GESTURES.find(x=>x.id===d.gesture);const current=k.gestures[d.gesture];
+  const p=PROFILES[current];
+  root.innerHTML=`<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" role="dialog" aria-modal="true" aria-label="编辑 ${k.label} ${g.name}">
+    <div class="drawer-head"><div class="grow"><div class="kicker">${k.num} · ${g.name}</div><h2>${k.label}</h2><small>${g.hint}</small></div><button class="drawer-close" data-action="close-drawer" aria-label="关闭">×</button></div>
+    <div class="field"><label for="profileSelect">执行 Profile</label><select class="select" id="profileSelect">${Object.entries(PROFILES).map(([id,x])=>`<option value="${id}" ${id===current?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>动作</label><ul class="steps">${p.steps.map(([what,value],i)=>`<li><span class="n">${String(i+1).padStart(2,'0')}</span><span>${esc(value)}</span><span class="what">${esc(what)}</span></li>`).join('')}</ul></div>
+    <details class="timing"><summary>手势判定</summary><div class="timing-body"><div class="line"><span>双击窗口</span><b>300ms</b></div><div class="line"><span>长按阈值</span><b>550ms</b></div><p>单击会等双击窗口结束。长按达到阈值立即执行，松开不再触发单击。判定由本机服务完成。</p></div></details>
+    <div class="drawer-foot"><button class="button" data-action="close-drawer">取消</button><button class="button primary" data-action="save-drawer">保存</button></div>
+  </aside>`
+}
+function renderModal(){
+  const root=document.getElementById('modalRoot');
+  if(!state.modal){root.innerHTML='';return}
+  const plugins=[['Ulanzi Vibe Key','设备插件','已连接',false],['Sony 手柄','设备插件','未连接',true],['Codex','应用插件','已安装',false],['DeepSeek Harness','应用插件','已安装',false],['微信输入法','应用插件','已安装',false],['WorkBuddy','应用插件','未安装',true]];
+  root.innerHTML=`<div class="modal-backdrop" data-action="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-label="插件">
+    <div class="modal-head"><div class="grow"><h2>插件</h2><small>安装后，插件提供的动作会出现在 Profile 与组合里。</small></div><button class="modal-close" data-action="close-modal" aria-label="关闭">×</button></div>
+    <div class="plugin-list">${plugins.map(([name,type,status,off])=>`<div class="plugin-row"><div class="grow"><b>${esc(name)}</b><small>${esc(type)}</small></div><span class="status ${off?'off':''}">${esc(status)}</span><button class="button quiet" data-action="noop">${off?'安装':'设置'}</button></div>`).join('')}</div>
+    <p class="modal-note">插件只声明能力，不直接执行 shell。配置与插件管理都需要本机服务授权。</p>
+  </div></div>`
+}
+document.addEventListener('click',e=>{
+  if(e.target.closest('.modal')&&!e.target.closest('[data-action]'))return;
+  const key=e.target.closest('[data-key]');
+  if(key&&!key.closest('.gesture-row')&&!key.closest('.key-choice')){setKey(key.dataset.key);return}
+  const choice=e.target.closest('.key-choice');
+  if(choice){setKey(choice.dataset.key);return}
+  const gesture=e.target.closest('.gesture-row');
+  if(gesture){openDrawer(gesture.dataset.key,gesture.dataset.gesture);return}
+  const action=e.target.closest('[data-action]');
+  if(action){
+    if(action.dataset.action==='close-drawer'){closeDrawer();return}
+    if(action.dataset.action==='save-drawer'){saveDrawer();return}
+    if(action.dataset.action==='close-modal'){state.modal=null;render();return}
+    if(action.dataset.action==='noop'){showToast('原型交互：接入服务后生效');return}
+  }
+  if(e.target.closest('#pluginsNav')){state.modal='plugins';render();return}
+  if(e.target.closest('#newCombo')){showToast('组合编辑器：原型中未展开');return}
+  if(e.target.closest('#autoConfig')){showToast('自动配置：将根据已安装插件生成 9 个手势和常用组合');return}
+  if(e.target.closest('#deviceSettings')){showToast('设备设置：固件、哨兵键与直发组合键');return}
+  if(e.target.closest('#recentAll')){showToast('最近触发：原型中只展示一条');return}
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){if(state.drawer)closeDrawer();else if(state.modal){state.modal=null;render()}return}
+  const t=e.target;
+  if((e.key==='Enter'||e.key===' ')&&t.matches&&t.matches('.device-key')){e.preventDefault();setKey(t.dataset.key)}
+});
+render();
+</script>
+</body></html>

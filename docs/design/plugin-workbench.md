@@ -361,30 +361,37 @@ about hierarchy:
 | **B · 信号链** | Key → plugin → action chain | explaining what a plugin contributes, composable actions |
 | **C · Profile 面板** | Profile cards | managing many profiles, switching context, seeing assignments at a glance |
 
-Recommendation: **A as the default**, with C's profile deck and B's chain as the
-inspector for a selected key. Concretely:
+The first three variants are intentionally exploratory; the dark instrument
+panel, coloured plugin badges and card decks read as over-designed. The
+**clean direction** strips those away and is the recommended visual target:
+[`prototype-clean.html`](prototype-clean.html).
 
-1. **Device-first home.** The AU05 is drawn to scale with three keys, knob and
-   mic grille. Clicking a key selects it; clicking the knob switches the active
-   profile. No separate "hardware" and "actions" cards.
-2. **Profile deck.** Under the device, a horizontal deck of profile cards. Click
-   a card to assign it to the selected key; the card shows the plugin vendor and
-   a compact step summary. This replaces the empty "new binding" form.
-3. **Inspector, not another page.** The right panel shows the selected control:
-   plugin, profile, ordered steps, test, save. Advanced settings (firmware
-   direct chord, raw HID config) are secondary tabs in the same inspector.
-4. **Auto-setup first.** On connect, detect running applications and installed
-   plugins and offer a one-click layout: "语音键 → 微信语音, 确认键 → Codex,
-   取消键 → DSH". The user confirms instead of starting from a blank form.
-5. **Plugin directory.** A drawer lists device and application plugins with
-   one-line capability summaries and install/disable. A plugin's detail page
-   shows exactly what it can read or do, plus its provided profiles.
-6. **One state language.** Connected / needs attention / not installed /
-   readback verified are consistent tags across devices, plugins and profiles.
-   Never show a green "done" for a write that was not read back.
+It uses a warm paper background, black type, one burnt-orange accent and no
+gradients or glows. The device is a line drawing, gestures are three plain rows,
+combos are a table, and the editor is a drawer that only appears when a row is
+clicked. Plugins are a modal, not a permanently visible card list. There are no
+fake vendor/version chips and no decoration that does not carry state.
 
-The prototype also covers the gamepad empty state ("Windows 当前未检测到设备"),
-so the layout does not pretend a plugin is working when no device is present.
+Concretely:
+
+1. **Device-first home, restrained.** A line-drawn AU05 with three clickable
+   keys, a knob and mic grille. No glowing stage and no oversized illustration.
+2. **Gesture rows, not cards.** Clicking 单击 / 双击 / 长按 opens the editor for
+   that assignment. The row shows only the profile name and a one-line hint.
+3. **Combo table.** `1+2`, `1+2+3`, `2+3`, `1+2 长按` are rows with sequence,
+   kind and profile. No per-combo card.
+4. **Drawer editor.** Profile select, the resulting steps, timing details and
+   save. Everything else stays out of the way.
+5. **Plugins as a modal.** Device and application plugins with connection state
+   and settings. The main page is not a plugin catalogue.
+6. **One accent, one state language.** Connected, unconfigured and unsupported
+   are plain text/green/grey; only the selected key and primary action use the
+   accent. A dispatched chord is never reported as verified.
+
+The earlier A/B/C explorations remain in
+[`prototype-workbench.html`](prototype-workbench.html) as information-architecture
+references, not as the visual target. The clean prototype also shows the Sony
+controller as an unconnected device instead of pretending it works.
 
 ## Implementation status
 
