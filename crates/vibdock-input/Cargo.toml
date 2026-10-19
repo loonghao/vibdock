@@ -1,0 +1,12 @@
+[package]
+name = "vibdock-input"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Platform-independent input contracts: hotkey parsing, gestures and multi-button combos."
+
+[lib]
+name = "vibdock_input"
+path = "src/lib.rs"
+

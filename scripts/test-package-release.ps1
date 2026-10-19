@@ -39,6 +39,8 @@ function New-Case([string]$Name, [string]$Target) {
     $dir = Join-Path $root $Name
     $release = Join-Path $dir "target/$Target/release"
     New-Item -ItemType Directory -Path $release -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $dir 'README.zh-CN.md') -Value 'VibDock' -NoNewline
+    Set-Content -LiteralPath (Join-Path $dir 'README.technical.md') -Value 'VibDock' -NoNewline
     Set-Content -LiteralPath (Join-Path $dir 'README.md') -Value 'VibDock' -NoNewline
     Set-Content -LiteralPath (Join-Path $dir 'LICENSE') -Value 'MIT fixture' -NoNewline
     foreach ($folder in @('assets', 'docs')) {
@@ -117,7 +119,7 @@ Assert-Case 'windows complete archive includes entries, license, assets and docs
     $extract = Join-Path $dir 'extract'
     Expand-Archive -LiteralPath $zip -DestinationPath $extract
     $entries = Get-ChildItem -LiteralPath $extract -Name | Sort-Object
-    $expected = @('README.md', 'LICENSE', 'assets', 'docs', 'vibdock-launcher.exe', 'vibdock.exe') | Sort-Object
+    $expected = @('README.md', 'README.zh-CN.md', 'README.technical.md', 'LICENSE', 'assets', 'docs', 'vibdock-launcher.exe', 'vibdock.exe') | Sort-Object
     if (($entries -join ',') -ne ($expected -join ',')) {
         return @{ Success = $false; Detail = "entries: $($entries -join ',')" }
     }
@@ -368,3 +370,4 @@ Write-Host ""
 Write-Host "package-release acceptance: $passed passed, $failed failed"
 if ($failed -gt 0) { exit 1 }
 exit 0
+

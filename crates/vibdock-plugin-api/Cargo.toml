@@ -1,0 +1,16 @@
+[package]
+name = "vibdock-plugin-api"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Stable manifest and host contracts for VibDock device and integration plugins."
+
+[lib]
+name = "vibdock_plugin_api"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+

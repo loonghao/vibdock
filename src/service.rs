@@ -1131,6 +1131,50 @@ impl ResidentControlClient {
         self.request("GET", "/api/shortcuts", None, 200, 128 * 1024)
     }
 
+    /// Reads the AU05 detection and per-button provisioning state.
+    #[cfg(windows)]
+    pub(crate) fn hardware(&self) -> Result<serde_json::Value> {
+        self.request("GET", "/api/hardware", None, 200, 128 * 1024)
+    }
+
+    /// Re-detects the AU05 and writes every saved button binding.
+    #[cfg(windows)]
+    pub(crate) fn sync_hardware(&self) -> Result<serde_json::Value> {
+        self.request(
+            "POST",
+            "/api/hardware/sync",
+            Some(serde_json::json!({})),
+            200,
+            128 * 1024,
+        )
+    }
+
+    /// Writes a direct chord into one button's firmware.
+    #[cfg(windows)]
+    pub(crate) fn bind_hardware(&self, body: serde_json::Value) -> Result<serde_json::Value> {
+        self.mutate_hardware("/api/hardware/direct", body)
+    }
+
+    /// Clears one button's direct chord.
+    #[cfg(windows)]
+    pub(crate) fn unbind_hardware(&self, body: serde_json::Value) -> Result<serde_json::Value> {
+        self.mutate_hardware("/api/hardware/direct/remove", body)
+    }
+
+    /// Preserves the server's rejection reason for hardware edits.
+    #[cfg(windows)]
+    fn mutate_hardware(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value> {
+        let (status, value) = self.request_status("POST", path, Some(body), 256 * 1024)?;
+        if status == 200 {
+            return Ok(value);
+        }
+        Err(value["error"]
+            .as_str()
+            .unwrap_or("Hardware request was rejected")
+            .to_string()
+            .into())
+    }
+
     /// Creates or removes a shortcut. A 409 keeps the server's error text so the
     /// CLI can explain a stale revision, duplicate trigger or dispatch loop.
     #[cfg(windows)]

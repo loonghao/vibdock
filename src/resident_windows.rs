@@ -619,6 +619,7 @@ fn background_integration(basename: &str) -> Option<&'static str> {
         "wetype.exe" | "wetype_renderer.exe" | "wetype_server.exe" => Some("微信输入法"),
         "wemeetapp.exe" | "wemeet.exe" => Some("腾讯会议"),
         "codex.exe" | "chatgpt.exe" => Some("Codex / ChatGPT"),
+        "deepseek harness.exe" => Some("DeepSeek Harness"),
         "workbuddy.exe" => Some("WorkBuddy"),
         _ => None,
     }
@@ -631,6 +632,7 @@ fn integration_id(basename: &str) -> Option<&'static str> {
         "wetype.exe" | "wetype_renderer.exe" | "wetype_server.exe" => Some("wechat_input"),
         "wemeetapp.exe" | "wemeet.exe" => Some("tencent_meeting"),
         "codex.exe" | "chatgpt.exe" => Some("codex"),
+        "deepseek harness.exe" => Some("dsh"),
         "workbuddy.exe" => Some("workbuddy"),
         _ => None,
     }
@@ -1533,6 +1535,43 @@ mod tests {
             r"\Device\HarddiskVolumeX",
         ] {
             assert!(!local_volume(volume));
+        }
+    }
+
+    #[test]
+    fn integration_names_are_case_insensitive_and_exact() {
+        for (basename, display, id) in [
+            ("codex.exe", Some("Codex / ChatGPT"), Some("codex")),
+            ("chatgpt.exe", Some("Codex / ChatGPT"), Some("codex")),
+            (
+                "DeepSeek Harness.exe",
+                Some("DeepSeek Harness"),
+                Some("dsh"),
+            ),
+            // Matching is case-insensitive, as on the Windows filesystem.
+            (
+                "DEEPSEEK HARNESS.EXE",
+                Some("DeepSeek Harness"),
+                Some("dsh"),
+            ),
+            ("workbuddy.exe", Some("WorkBuddy"), Some("workbuddy")),
+            ("wetype.exe", Some("微信输入法"), Some("wechat_input")),
+            ("wemeetapp.exe", Some("腾讯会议"), Some("tencent_meeting")),
+        ] {
+            assert_eq!(background_integration(basename), display, "{basename}");
+            assert_eq!(integration_id(basename), id, "{basename}");
+        }
+        // Similar executable names must never inherit the DeepSeek Harness id.
+        for basename in [
+            "deepseek.exe",
+            "deepseek-harness.exe",
+            "deepseek_harness.exe",
+            "DeepSeek Harness Helper.exe",
+            "deepseek harness",
+            "xdeepseek harness.exe",
+        ] {
+            assert_eq!(background_integration(basename), None, "{basename}");
+            assert_eq!(integration_id(basename), None, "{basename}");
         }
     }
 

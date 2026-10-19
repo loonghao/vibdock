@@ -1,0 +1,675 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VibDock · 插件工作台原型</title>
+<style>
+:root{
+  --canvas:#111315;--surface:#181b1e;--surface-2:#1e2225;--surface-3:#262b2f;
+  --line:rgba(255,255,255,.075);--line-strong:rgba(255,255,255,.14);
+  --ink:#f1eee7;--ink-2:#b7b5ae;--ink-3:#7f817c;
+  --amber:#e7b96f;--amber-soft:rgba(231,185,111,.13);--jade:#7fd3b6;--jade-soft:rgba(127,211,182,.12);
+  --blue:#9eb8d8;--violet:#b8a8e6;--red:#e79b8c;
+  --r-sm:8px;--r-md:14px;--r-lg:22px;
+  --mono:"Cascadia Mono","Consolas","SFMono-Regular",monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{min-height:100%}
+body{margin:0;background:
+  radial-gradient(1200px 700px at 78% -10%,rgba(231,185,111,.055),transparent 55%),
+  radial-gradient(900px 600px at 8% 105%,rgba(127,211,182,.045),transparent 60%),
+  var(--canvas);
+  color:var(--ink);font:14px/1.5 "Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased;text-wrap:pretty}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:6px}
+a{color:var(--amber);text-decoration:none}
+h1,h2,h3,p{margin:0}
+h1{font-size:26px;line-height:1.15;letter-spacing:-.7px;text-wrap:balance}
+h2{font-size:16px;letter-spacing:-.2px}
+h3{font-size:13px;letter-spacing:.01em}
+small{color:var(--ink-3);font-size:12px}
+.icon{width:18px;height:18px;flex:none}
+.mono{font-family:var(--mono);font-size:11px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none}
+.dot.live{background:var(--jade);box-shadow:0 0 0 4px var(--jade-soft)}
+.dot.warn{background:var(--amber);box-shadow:0 0 0 4px var(--amber-soft)}
+.dot.off{background:var(--ink-3)}
+.tag{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 9px;font-size:11px;color:var(--ink-2);white-space:nowrap}
+.tag.amber{color:var(--amber);border-color:rgba(231,185,111,.35);background:var(--amber-soft)}
+.tag.jade{color:var(--jade);border-color:rgba(127,211,182,.3);background:var(--jade-soft)}
+.btn{border:1px solid var(--line-strong);background:var(--surface-2);border-radius:9px;padding:9px 13px;font-size:13px;transition:border-color .16s,background .16s,transform .1s}
+.btn:hover{border-color:rgba(231,185,111,.55);background:var(--surface-3)}
+.btn:active{transform:scale(.98)}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#211b12;font-weight:650}
+.btn.primary:hover{background:#f0c987}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--ink)}
+.btn.sm{padding:6px 9px;font-size:12px;border-radius:7px}
+.btn.danger{color:var(--red);border-color:rgba(231,155,140,.28)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+/* shell */
+.app{min-height:100vh;display:flex;flex-direction:column;padding-bottom:86px}
+.topbar{height:64px;flex:none;display:flex;align-items:center;gap:18px;padding:0 22px;border-bottom:1px solid var(--line);background:rgba(17,19,21,.82);backdrop-filter:blur(14px);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center;gap:10px;min-width:190px}
+.brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#f1cf97,#c98f3f);display:grid;place-items:center;color:#211b12;font-size:11px;font-weight:800;letter-spacing:-.4px;box-shadow:inset 0 0 0 1px #fff5}
+.brand b{font-size:17px;letter-spacing:-.4px;font-weight:650}
+.brand b span{color:var(--amber)}
+.brand small{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-top:-2px}
+.crumbs{display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:12px;min-width:0}
+.crumbs b{color:var(--ink-2);font-weight:500}
+.crumbs .slash{color:var(--line-strong)}
+.top-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+.conn-pill{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--ink-2);background:var(--surface)}
+.avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(145deg,#3b4742,#222b28);border:1px solid var(--line-strong);display:grid;place-items:center;font-size:11px;color:var(--jade)}
+/* left rail */
+.workbench{display:grid;grid-template-columns:228px minmax(0,1fr) 386px;flex:1;min-height:0}
+.rail{border-right:1px solid var(--line);padding:18px 13px 28px;display:flex;flex-direction:column;gap:24px;background:linear-gradient(180deg,rgba(30,34,37,.32),transparent 28%)}
+.rail-head{display:flex;align-items:center;justify-content:space-between;color:var(--ink-3);font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:0 6px}
+.rail-head button{width:22px;height:22px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--ink-3);display:grid;place-items:center;padding:0}
+.rail-head button:hover{color:var(--amber);border-color:var(--amber)}
+.device-item{width:100%;display:flex;align-items:center;gap:10px;border:1px solid transparent;background:transparent;border-radius:11px;padding:9px 8px;text-align:left;margin-bottom:2px}
+.device-item:hover{background:var(--surface-2)}
+.device-item[aria-selected=true]{background:var(--surface-2);border-color:var(--line);box-shadow:inset 2px 0 0 var(--amber)}
+.device-thumb{width:32px;height:42px;border-radius:7px;background:linear-gradient(150deg,#e9e5db,#b9b5aa);border:1px solid #ffffff44;position:relative;flex:none;box-shadow:0 4px 8px #0005}
+.device-thumb:before{content:"";position:absolute;left:9px;top:5px;width:13px;height:13px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#bdb9ae);border:1px solid #9a968a}
+.device-thumb:after{content:"";position:absolute;left:8px;top:21px;width:15px;height:4px;border-radius:2px;background:#d4d0c6;box-shadow:0 6px 0 #d4d0c6,0 12px 0 #d4d0c6}
+.controller-thumb{width:34px;height:38px;flex:none;display:grid;place-items:center;border-radius:8px;background:#171b1c;border:1px solid var(--line)}
+.controller-thumb svg{width:30px;height:30px;display:block}
+.device-item b{display:block;font-size:13px;font-weight:550}
+.device-item small{display:block;font-size:11px}
+.device-item .dot{margin-left:auto}
+.plugin-mini{display:flex;align-items:center;gap:9px;width:100%;border:1px solid transparent;background:transparent;border-radius:9px;padding:7px;text-align:left}
+.plugin-mini:hover{background:var(--surface-2)}
+.plugin-mini b{display:block;font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plugin-mini small{font-size:10px}
+.plugin-glyph{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:9px;font-weight:700;letter-spacing:-.2px;flex:none;border:1px solid var(--line-strong);background:var(--surface-2)}
+.rail-note{font-size:11px;line-height:1.65;color:var(--ink-3);padding:10px;border:1px dashed var(--line);border-radius:10px;background:rgba(255,255,255,.012)}
+/* canvas */
+.canvas{padding:24px 28px 110px;overflow:auto;min-width:0}
+.canvas-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:16px}
+.canvas-head h1{font-size:22px}
+.canvas-head small{display:block;margin-top:4px;font-size:12px}
+.canvas-head .spacer{flex:1}
+.stage{position:relative;border:1px solid var(--line);border-radius:24px;background:
+  radial-gradient(600px 430px at 42% 44%,rgba(231,185,111,.10),transparent 62%),
+  radial-gradient(500px 380px at 70% 90%,rgba(127,211,182,.035),transparent 60%),
+  #15181a;min-height:582px;display:grid;grid-template-columns:minmax(300px,1fr) 282px;align-items:center;gap:6px;padding:22px 24px;overflow:hidden}
+.stage:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(circle at 42% 45%,black,transparent 70%);pointer-events:none}
+.stage-device{display:flex;justify-content:center;align-items:center;position:relative;z-index:1;min-height:530px}
+.vibe-key{width:330px;height:auto;display:block;filter:drop-shadow(0 30px 40px rgba(0,0,0,.45))}
+.vibe-key.compact{width:168px}
+.vibe-key.compact .vk-dongle{display:none}
+.device-key{cursor:pointer;outline:none}
+.device-key .key-face,.device-key .knob-face{transition:filter .16s,stroke .16s}
+.device-key:hover .key-face,.device-key:hover .knob-face{filter:brightness(1.07)}
+.device-key.active .key-face,.device-key.active .knob-face{stroke:var(--amber);stroke-width:3}
+.device-key:focus-visible .key-face,.device-key:focus-visible .knob-face{stroke:var(--amber);stroke-width:3}
+.device-key .key-halo{opacity:0;transition:opacity .16s}
+.device-key.active .key-halo,.device-key:hover .key-halo{opacity:.9}
+.callouts{display:flex;flex-direction:column;gap:9px;position:relative;z-index:2}
+.callout{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:10px;border:1px solid var(--line);background:rgba(24,27,30,.72);backdrop-filter:blur(10px);border-radius:12px;padding:10px 12px;text-align:left;transition:border-color .16s,background .16s,transform .16s}
+.callout:hover{border-color:var(--line-strong);background:var(--surface-2)}
+.callout[aria-pressed=true]{border-color:rgba(231,185,111,.6);background:linear-gradient(100deg,rgba(231,185,111,.12),rgba(24,27,30,.8))}
+.callout .idx{font-family:var(--mono);font-size:10px;color:var(--ink-3)}
+.callout b{display:block;font-size:12px;font-weight:600}
+.callout small{display:block;font-size:10.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.callout .dot{justify-self:end}
+.callout .gcount{font:9px var(--mono);color:var(--ink-3);border:1px solid var(--line);border-radius:4px;padding:1px 4px;margin-left:4px}
+.stage-hint{position:absolute;left:24px;bottom:18px;z-index:2;display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:11px}
+.stage-hint kbd{font:10px var(--mono);border:1px solid var(--line);border-bottom-color:var(--line-strong);padding:2px 5px;border-radius:4px;color:var(--ink-2);background:var(--surface)}
+/* profile deck */
+.deck-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:22px 2px 10px}
+.deck-head h2{font-size:14px}
+.deck-head small{font-size:11px}
+.profile-deck{display:grid;grid-auto-flow:column;grid-auto-columns:216px;gap:10px;overflow-x:auto;padding:2px 2px 12px;scrollbar-width:thin}
+.profile-card{border:1px solid var(--line);background:linear-gradient(180deg,var(--surface-2),rgba(24,27,30,.65));border-radius:14px;padding:13px;text-align:left;min-height:142px;display:flex;flex-direction:column;gap:8px;transition:border-color .16s,transform .16s,background .16s}
+.profile-card:hover{border-color:var(--line-strong);transform:translateY(-1px);background:var(--surface-3)}
+.profile-card[data-assigned=true]{border-color:rgba(231,185,111,.58);box-shadow:inset 0 0 0 1px rgba(231,185,111,.18)}
+.profile-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.profile-card b{font-size:13px;font-weight:600;letter-spacing:-.1px}
+.profile-card p{font-size:11px;color:var(--ink-3);line-height:1.55;min-height:34px}
+.profile-card .steps-mini{display:flex;gap:4px;margin-top:auto;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--ink-2);background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font-family:var(--mono);white-space:nowrap}
+.profile-card .assign-mark{font-size:10px;color:var(--amber);font-family:var(--mono)}
+.combo-section{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.combo-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.combo-head h2{font-size:14px}
+.combo-deck{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px}
+.combo-card{border:1px solid var(--line);background:linear-gradient(180deg,var(--surface-2),rgba(24,27,30,.7));border-radius:12px;padding:11px;text-align:left;display:flex;flex-direction:column;gap:7px}
+.combo-card:hover{border-color:var(--line-strong);background:var(--surface-3)}
+.combo-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.combo-card b{font-size:12px;font-weight:550}
+.combo-keys{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.combo-key{font:9.5px var(--mono);border:1px solid var(--line-strong);background:#141719;border-radius:5px;padding:2px 5px;color:var(--ink-2)}
+.combo-arrow{color:var(--ink-3);font-size:10px}
+.combo-card p{font-size:10.5px;color:var(--ink-3);line-height:1.5}
+.combo-kind{font:9px var(--mono);border:1px solid rgba(127,211,182,.3);color:var(--jade);background:var(--jade-soft);border-radius:4px;padding:2px 5px}
+.combo-kind.hold{border-color:rgba(231,185,111,.35);color:var(--amber);background:var(--amber-soft)}
+/* inspector */
+.inspector{border-left:1px solid var(--line);background:linear-gradient(180deg,rgba(30,34,37,.55),var(--surface));padding:20px 18px 30px;overflow:auto}
+.inspector-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-bottom:15px;border-bottom:1px solid var(--line)}
+.inspector-head .eyebrow{font:10px var(--mono);color:var(--ink-3);letter-spacing:.1em;text-transform:uppercase}
+.inspector-head h2{margin-top:5px;font-size:19px;letter-spacing:-.4px}
+.inspector-head small{display:block;margin-top:4px;font-size:11px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:3px;border:1px solid var(--line);border-radius:9px;background:#131619;margin:16px 0}
+.seg button{border:0;background:transparent;border-radius:6px;padding:7px 4px;font-size:11px;color:var(--ink-3)}
+.seg button[aria-selected=true]{background:var(--surface-3);color:var(--ink);box-shadow:0 1px 0 #ffffff08}
+.gesture-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:14px 0 2px;padding:3px;border:1px solid var(--line);border-radius:10px;background:#131619}
+.gesture-tab{border:0;background:transparent;border-radius:7px;padding:7px 5px;text-align:left;color:var(--ink-3);position:relative}
+.gesture-tab b{display:block;font-size:11.5px;font-weight:550;color:inherit}
+.gesture-tab small{display:block;font-size:9.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gesture-tab[aria-selected=true]{background:var(--surface-3);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-strong)}
+.gesture-tab .count{position:absolute;right:6px;top:6px;width:5px;height:5px;border-radius:50%;background:var(--jade)}
+.gesture-tab[aria-selected=true] .count{background:var(--amber)}
+.timing-card{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:12px;background:#141719}
+.timing-card h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500;display:flex;justify-content:space-between;gap:8px}
+.timing-row{display:grid;grid-template-columns:64px 1fr 52px;align-items:center;gap:8px;margin-top:10px;font-size:11px;color:var(--ink-2)}
+.timing-row input[type=range]{width:100%;accent-color:var(--amber);height:3px}
+.timing-row output{font-family:var(--mono);font-size:10px;color:var(--ink-3);text-align:right}
+.timing-card p{font-size:10.5px;color:var(--ink-3);line-height:1.55;margin-top:8px}
+.inspector label{display:block;font-size:10.5px;letter-spacing:.05em;color:var(--ink-3);margin:14px 0 6px;text-transform:uppercase}
+.select{width:100%;border:1px solid var(--line-strong);background:#131619;border-radius:9px;padding:10px 11px;font-size:12.5px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.field-note{font-size:11px;color:var(--ink-3);line-height:1.6;margin-top:6px}
+.sequence{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.sequence-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.sequence-head h3{font-size:12px;color:var(--ink-2);font-weight:550}
+.step-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.step{border:1px solid var(--line);background:#15181b;border-radius:10px;padding:9px 10px;display:grid;grid-template-columns:24px 1fr auto;align-items:center;gap:8px}
+.step .step-no{width:22px;height:22px;border-radius:6px;background:var(--surface-3);display:grid;place-items:center;font:10px var(--mono);color:var(--ink-3)}
+.step b{display:block;font-size:11.5px;font-weight:500;line-height:1.35}
+.step small{display:block;font-size:10px;margin-top:1px}
+.step .grip{color:var(--ink-3);font-size:13px;letter-spacing:-2px;padding:2px}
+.step-add{width:100%;border:1px dashed var(--line-strong);background:transparent;border-radius:9px;padding:8px;font-size:11.5px;color:var(--ink-3);margin-top:8px}
+.step-add:hover{color:var(--amber);border-color:rgba(231,185,111,.45)}
+.inspector-actions{display:flex;gap:8px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.inspector-actions .btn{flex:1}
+.auto-card{margin-top:16px;border:1px solid rgba(127,211,182,.18);background:linear-gradient(135deg,rgba(127,211,182,.08),transparent);border-radius:11px;padding:11px;display:flex;gap:9px}
+.auto-card .icon{color:var(--jade);margin-top:1px}
+.auto-card b{display:block;font-size:11.5px;color:var(--jade);font-weight:550}
+.auto-card p{font-size:11px;color:var(--ink-3);line-height:1.55;margin-top:3px}
+.auto-card button{margin-top:7px}
+/* variant B */
+.workbench-b{display:grid;grid-template-columns:84px minmax(0,1fr) 360px;flex:1;min-height:0}
+.plugin-rail{border-right:1px solid var(--line);padding:16px 8px;display:flex;flex-direction:column;align-items:center;gap:10px;background:rgba(24,27,30,.5)}
+.plugin-rail .rail-label{font-size:9px;letter-spacing:.12em;color:var(--ink-3);writing-mode:vertical-rl;margin:6px 0;text-transform:uppercase}
+.plugin-rail button{width:56px;border:1px solid transparent;background:transparent;border-radius:11px;padding:7px 4px;display:flex;flex-direction:column;align-items:center;gap:5px;color:var(--ink-3)}
+.plugin-rail button:hover{background:var(--surface-2);color:var(--ink-2)}
+.plugin-rail button[aria-pressed=true]{background:var(--surface-2);border-color:var(--line);color:var(--ink)}
+.plugin-rail button .plugin-glyph{width:30px;height:30px;border-radius:9px;font-size:9px}
+.plugin-rail button small{font-size:8.5px;line-height:1.1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:54px}
+.patch-main{padding:22px 24px 110px;overflow:auto;min-width:0}
+.patch-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:18px}
+.patch-head h1{font-size:22px}
+.profile-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.profile-tab{border:1px solid var(--line);background:transparent;border-radius:999px;padding:6px 10px;font-size:11.5px;color:var(--ink-3)}
+.profile-tab[aria-selected=true]{border-color:rgba(231,185,111,.5);background:var(--amber-soft);color:var(--amber)}
+.chain-wrap{border:1px solid var(--line);border-radius:22px;background:
+  radial-gradient(700px 300px at 50% 50%,rgba(231,185,111,.06),transparent 70%),#15181a;padding:24px;min-height:430px;display:flex;align-items:center;justify-content:center;gap:0;overflow:auto}
+.chain-node{border:1px solid var(--line-strong);background:linear-gradient(180deg,var(--surface-2),rgba(24,27,30,.9));border-radius:17px;padding:16px;min-width:180px;max-width:240px;position:relative}
+.chain-node.device-node{background:transparent;border-style:dashed;text-align:center;min-width:160px;padding:10px}
+.chain-node.device-node .vibe-key{width:142px;margin:0 auto}
+.chain-node.device-node h3{margin-top:4px;font-size:12px}
+.chain-node.device-node small{display:block;font-size:10.5px}
+.chain-node.plugin-node{min-width:230px}
+.chain-node .node-eyebrow{font:9px var(--mono);letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.chain-node h2{font-size:18px;letter-spacing:-.35px;margin-top:8px}
+.chain-node p{font-size:11.5px;color:var(--ink-3);line-height:1.55;margin-top:5px}
+.chain-node .cap-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:10px}
+.chain-node .node-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.wire{height:1px;min-width:38px;background:linear-gradient(90deg,rgba(231,185,111,.15),rgba(231,185,111,.65),rgba(231,185,111,.15));position:relative;flex:1;max-width:74px}
+.wire:before,.wire:after{content:"";position:absolute;top:-2px;width:5px;height:5px;border-radius:50%;background:var(--amber);opacity:.65}
+.wire:before{left:0}.wire:after{right:0}
+.wire span{position:absolute;top:8px;left:50%;transform:translateX(-50%);font:8px var(--mono);color:var(--ink-3);white-space:nowrap;letter-spacing:.08em}
+.action-node{min-width:250px}
+.action-node ol{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.action-node li{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--ink-2);padding:6px 7px;border-radius:6px;background:rgba(255,255,255,.025);border:1px solid var(--line)}
+.action-node li .n{font:9px var(--mono);color:var(--ink-3)}
+.chain-meta{display:grid;grid-template-columns:1.2fr .8fr;gap:12px;margin-top:16px}
+.meta-card{border:1px solid var(--line);border-radius:13px;padding:13px;background:var(--surface)}
+.meta-card h3{font-size:11px;color:var(--ink-3);font-weight:500;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.meta-row{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;padding:4px 0;color:var(--ink-2)}
+.meta-row span:last-child{color:var(--ink-3);font-family:var(--mono);font-size:10.5px}
+/* variant C */
+.profiles-wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;flex:1;min-height:0}
+.profiles-main{padding:26px 28px 110px;overflow:auto}
+.profiles-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:6px}
+.profiles-head h1{font-size:28px}
+.profiles-head p{font-size:12px;color:var(--ink-3);margin-top:6px}
+.profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:20px}
+.big-profile{border:1px solid var(--line);border-radius:16px;background:linear-gradient(155deg,var(--surface-2),rgba(24,27,30,.6));padding:17px;text-align:left;min-height:206px;display:flex;flex-direction:column;gap:12px;transition:border-color .16s,transform .16s}
+.big-profile:hover{border-color:var(--line-strong);transform:translateY(-2px)}
+.big-profile[data-selected=true]{border-color:rgba(231,185,111,.62);box-shadow:inset 0 0 0 1px rgba(231,185,111,.2)}
+.big-profile-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.big-profile h2{font-size:18px;letter-spacing:-.3px}
+.big-profile .profile-steps{display:flex;flex-direction:column;gap:5px}
+.big-profile .profile-steps span{font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:6px}
+.big-profile .profile-steps .n{font:9px var(--mono);color:var(--ink-3)}
+.big-profile .profile-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.key-badges{display:flex;gap:4px;flex-wrap:wrap}
+.key-badge{font:9px var(--mono);border:1px solid rgba(231,185,111,.3);color:var(--amber);background:var(--amber-soft);border-radius:4px;padding:2px 5px}
+.market{border-left:1px solid var(--line);background:var(--surface);padding:20px 16px 110px;overflow:auto}
+.market-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.market-head h2{font-size:14px}
+.plugin-row{border:1px solid var(--line);border-radius:11px;padding:10px;display:flex;align-items:center;gap:9px;margin-bottom:7px;background:rgba(255,255,255,.012)}
+.plugin-row b{display:block;font-size:12px;font-weight:500}
+.plugin-row small{display:block;font-size:10px}
+.plugin-row .grow{flex:1;min-width:0}
+.plugin-row .btn{flex:none}
+.device-dock{position:sticky;bottom:0;border-top:1px solid var(--line);background:rgba(17,19,21,.9);backdrop-filter:blur(16px);padding:12px 22px;display:flex;align-items:center;gap:18px;z-index:8}
+.dock-device{display:flex;align-items:center;gap:8px}
+.dock-device .vibe-key{width:56px;max-height:92px;filter:none}
+.dock-copy{min-width:0}
+.dock-copy b{font-size:12px;display:block}
+.dock-copy small{display:block;margin-top:2px;font-size:10.5px}
+.dock-keys{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.dock-key{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 9px;text-align:left;min-width:92px}
+.dock-key[aria-pressed=true]{border-color:rgba(231,185,111,.55);background:var(--amber-soft)}
+.dock-key b{display:block;font-size:10.5px}
+.dock-key small{display:block;font-size:9.5px;margin-top:1px}
+/* plugin modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(5,7,8,.68);backdrop-filter:blur(6px);z-index:60;display:grid;place-items:center;padding:22px}
+.modal{width:min(620px,100%);max-height:86vh;overflow:auto;border:1px solid var(--line-strong);border-radius:20px;background:linear-gradient(160deg,#202427,#15181a);box-shadow:0 30px 80px #000a;padding:22px}
+.modal-head{display:flex;align-items:flex-start;gap:12px}
+.modal-head h2{font-size:21px;letter-spacing:-.4px}
+.modal-close{margin-left:auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink-3)}
+.modal .plugin-glyph{width:44px;height:44px;border-radius:12px;font-size:13px}
+.modal p{font-size:12.5px;color:var(--ink-3);line-height:1.7;margin-top:8px}
+.modal-caps{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.modal-section{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.modal-section h3{font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.config-line{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:5px 0;color:var(--ink-2)}
+.config-line span:last-child{color:var(--ink-3);font-family:var(--mono);font-size:11px}
+.modal-actions{display:flex;gap:8px;margin-top:18px}
+/* toast + switcher */
+#toast{position:fixed;left:50%;bottom:96px;transform:translate(-50%,12px);background:#252b28;border:1px solid rgba(127,211,182,.45);color:var(--jade);border-radius:999px;padding:9px 16px;font-size:12px;z-index:80;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;box-shadow:0 12px 30px #0008;max-width:80vw;text-align:center}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+.proto-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:70;display:flex;align-items:center;gap:4px;border:1px solid var(--line-strong);border-radius:999px;background:rgba(9,11,12,.86);backdrop-filter:blur(16px);padding:5px;box-shadow:0 18px 50px #0009}
+.proto-bar .arrow{width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:var(--ink-2);display:grid;place-items:center;font-size:15px}
+.proto-bar .arrow:hover{background:var(--surface-3);color:var(--ink)}
+.proto-bar .label{min-width:196px;text-align:center;font-size:11.5px;color:var(--ink-2);padding:0 8px}
+.proto-bar .label b{color:var(--amber);font-weight:600}
+.proto-bar .label em{font-style:normal;color:var(--ink-3);font-size:10px;display:block;margin-top:1px}
+.proto-bar .proto-tag{font:9px var(--mono);color:var(--ink-3);border-left:1px solid var(--line);padding:0 10px;margin-left:4px;letter-spacing:.08em}
+/* responsive */
+@media(max-width:1280px){.workbench{grid-template-columns:206px minmax(0,1fr) 350px}.stage{grid-template-columns:minmax(280px,1fr) 248px}.vibe-key{width:300px}}
+@media(max-width:1100px){.workbench{grid-template-columns:1fr}.rail{display:none}.inspector{border-left:0;border-top:1px solid var(--line)}.workbench-b{grid-template-columns:1fr}.plugin-rail{display:none}.profiles-wrap{grid-template-columns:1fr}.market{border-left:0;border-top:1px solid var(--line)}.stage{grid-template-columns:1fr}.callouts{display:grid;grid-template-columns:1fr 1fr;padding:0 4px 10px}.stage-device{min-height:430px}.vibe-key{width:280px}.canvas{padding:20px 16px 110px}.inspector{padding:18px 16px}.profiles-main{padding:20px 16px 110px}}
+@media(max-width:720px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;padding:10px 14px;gap:10px}.brand{min-width:0}.crumbs{display:none}.stage{padding:14px}.callouts{grid-template-columns:1fr}.stage-device{min-height:350px}.vibe-key{width:230px}.inspector-head h2{font-size:17px}.profile-deck{grid-auto-columns:190px}.chain-wrap{padding:14px;flex-direction:column;gap:12px}.wire{width:1px;height:26px;max-width:none;background:linear-gradient(180deg,rgba(231,185,111,.15),rgba(231,185,111,.65),rgba(231,185,111,.15))}.wire:before,.wire:after{left:-2px;top:0}.wire:before{top:0}.wire:after{top:auto;bottom:0}.wire span{top:50%;left:10px;transform:translateY(-50%)}.chain-node{width:100%;max-width:none}.chain-meta{grid-template-columns:1fr}.profiles-head{align-items:flex-start;flex-direction:column}.device-dock{flex-wrap:wrap}.dock-keys{width:100%;margin-left:0}.proto-bar .label{min-width:160px}.proto-bar .proto-tag{display:none}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+<body>
+<div class="app" id="app"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modal-root"></div>
+<div class="proto-bar" role="navigation" aria-label="原型方向切换">
+  <button class="arrow" data-action="variant-prev" aria-label="上一个方向">‹</button>
+  <div class="label" id="protoLabel"></div>
+  <button class="arrow" data-action="variant-next" aria-label="下一个方向">›</button>
+  <span class="proto-tag">PROTOTYPE · 手势版 · 不写入配置</span>
+</div>
+<script>
+/* ── 原型数据（全部是演示数据，不访问网络、不写配置） ───────────────────── */
+const ICONS={
+  mic:'<path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/>',
+  check:'<path d="m5 12 4 4L19 6"/>',
+  x:'<path d="m6 6 12 12M18 6 6 18"/>',
+  knob:'<circle cx="12" cy="12" r="8"/><path d="M12 4v3M12 17v3"/>',
+  spark:'<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+  command:'<path d="M9 6V5a3 3 0 1 1 3 3v8a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3v-8a3 3 0 1 1 3 3"/>',
+  play:'<path d="M7 4v16l13-8Z"/>',
+  chevron:'<path d="m9 6 6 6-6 6"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  wand:'<path d="m15 4 5 5M13 6l1.5-1.5M4 20 17 7M5 15l4 4"/>'
+};
+function icon(name,cls=''){return `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]||''}</svg>`}
+
+const PLUGINS=[
+  {id:'au05',name:'Ulanzi Vibe Key',vendor:'Ulanzi',kind:'设备插件',version:'1.4.0',installed:true,status:'connected',glyph:'VK',accent:'#e7b96f',desc:'3 个按键、旋钮与全向麦克风。通过 2.4G 接收器连接，配置和固件写入都走本机服务，不需要 Ulanzi Studio。',caps:['按键映射','旋钮','固件直发','麦克风'],config:[['设备','AU05 · 4.4.0'],['连接','2.4G 接收器'],['按键','3 键 + 旋钮'],['默认配置','已写入并读回']]},
+  {id:'codex',name:'Codex',vendor:'OpenAI',kind:'应用插件',version:'1.2.0',installed:true,status:'ready',glyph:'CX',accent:'#9eb8d8',desc:'启动或聚焦 Codex，向当前会话发送语音与命令快捷键，并读取前台窗口状态。',caps:['启动应用','发送快捷键','语音会话'],config:[['应用','Codex.app'],['语音快捷键','Ctrl + Shift + Space'],['前台检测','已授权']]},
+  {id:'dsh',name:'DeepSeek Harness',vendor:'DeepSeek',kind:'应用插件',version:'1.0.3',installed:true,status:'ready',glyph:'DS',accent:'#b8a8e6',desc:'连接本机 DSH 工作台，聚焦浏览器窗口，切换语音输入或打开命令面板。',caps:['启动应用','浏览器工作台','语音'],config:[['工作台','127.0.0.1:50845'],['语音','在本机服务中配置'],['窗口','Chrome / Edge']]},
+  {id:'wechat',name:'微信输入法',vendor:'Tencent',kind:'应用插件',version:'1.1.0',installed:true,status:'ready',glyph:'微',accent:'#7fd3b6',desc:'唤起微信输入法语音面板，把快捷键发送到当前前台应用。',caps:['语音面板','发送快捷键'],config:[['语音快捷键','Ctrl + Win'],['目标','前台应用']]},
+  {id:'workbuddy',name:'WorkBuddy',vendor:'WorkBuddy',kind:'应用插件',version:'0.9.0',installed:false,status:'not-installed',glyph:'WB',accent:'#e7a97f',desc:'启动 WorkBuddy 并开始语音会话。安装后可把按键直接绑定到它的语音开关。',caps:['启动应用','语音会话'],config:[]},
+  {id:'gamepad',name:'Sony 白色手柄',vendor:'Sony',kind:'设备插件',version:'1.0.0',installed:true,status:'waiting',glyph:'PS',accent:'#9fc9c0',desc:'Sony DualSense / DualShock 白色手柄，通过 USB-C 或蓝牙 HID 连接。Windows 当前只枚举到 WH-1000XM5 耳机，还没有手柄；连接后会自动出现在设备列表。',caps:['按键学习','组合动作','蓝牙 / USB'],config:[['设备','未检测到'],['型号','Sony（白色）'],['连接','USB-C / 蓝牙'],['映射','触控板 / 按键 / 摇杆']]},
+  {id:'scripts',name:'脚本与命令',vendor:'VibDock',kind:'动作插件',version:'1.0.0',installed:true,status:'ready',glyph:'</>',accent:'#c9b98f',desc:'本机结构化命令、参数与等待步骤。可组合进任何 profile，不经过 shell 字符串。',caps:['命令','参数','等待'],config:[['命令文件','commands.json'],['命令数','4'],['执行','argv 参数']]}
+];
+const PROFILES=[
+  {id:'wechat',name:'微信语音',plugin:'wechat',color:'#7fd3b6',desc:'一键唤起微信输入法语音，再按结束。',steps:[{i:'send',t:'发送 Ctrl + Win 微信语音'}]},
+  {id:'codex',name:'Codex 语音',plugin:'codex',color:'#9eb8d8',desc:'打开 Codex，切换麦克风并进入语音会话。',steps:[{i:'launch',t:'启动 / 聚焦 Codex'},{i:'wait',t:'等待 400 ms'},{i:'mic',t:'麦克风切换'},{i:'send',t:'发送 Ctrl + Shift + Space'}]},
+  {id:'dsh',name:'DSH 工作台',plugin:'dsh',color:'#b8a8e6',desc:'聚焦 DeepSeek Harness，打开语音或命令面板。',steps:[{i:'launch',t:'打开 DSH 工作台'},{i:'focus',t:'聚焦浏览器窗口'},{i:'send',t:'发送语音快捷键'}]},
+  {id:'workbuddy',name:'WorkBuddy',plugin:'workbuddy',color:'#e7a97f',desc:'启动 WorkBuddy 并开始语音。需要先安装插件。',steps:[{i:'launch',t:'启动 WorkBuddy'},{i:'mic',t:'切换麦克风'},{i:'send',t:'开始语音'}]},
+  {id:'media',name:'媒体控制',plugin:'scripts',color:'#c9b98f',desc:'播放 / 暂停、上一首、下一首。',steps:[{i:'send',t:'发送媒体播放快捷键'},{i:'send',t:'发送上一首'}]}
+];
+const COMBOS=[
+  {id:'c12',kind:'quick',name:'1 + 2 快按',controls:[1,2],profile:'codex',desc:'语音键 → 确认键，250 ms 内'},
+  {id:'c123',kind:'quick',name:'1 + 2 + 3 快按',controls:[1,2,3],profile:'dsh',desc:'三键依次快按，触发完整工作流'},
+  {id:'c23',kind:'quick',name:'2 + 3 快按',controls:[2,3],profile:'media',desc:'确认键 → 取消键，媒体控制'},
+  {id:'c12hold',kind:'hold',name:'1 + 2 长按',controls:[1,2],profile:'wechat',desc:'两键同时按住 550 ms'}
+];
+const GESTURES=[{id:'single',name:'单击',hint:'按下后立即松开'},{id:'double',name:'双击',hint:'两次按下，300 ms 内'},{id:'long',name:'长按',hint:'按住超过 550 ms'}];
+const KEYS=[{id:'button1',label:'语音键',idx:'01',icon:'mic',hint:'按住说话 / 切换语音'},{id:'button2',label:'确认键',idx:'02',icon:'check',hint:'确认 / 发送'},{id:'button3',label:'取消键',idx:'03',icon:'x',hint:'取消 / 返回'},{id:'knob',label:'旋钮',idx:'04',icon:'knob',hint:'旋转切换 profile，按下确认'}];
+
+let state={
+  variant:new URL(location.href).searchParams.get('variant')||'A',
+  key:'button1',
+  gesture:'single',
+  focusPlugin:'wechat',
+  activeProfile:'codex',
+  assignments:{
+    button1:{single:'wechat',double:'codex',long:'dsh'},
+    button2:{single:'codex',double:'dsh',long:'media'},
+    button3:{single:'dsh',double:'media',long:'wechat'}
+  },
+  installed:new Set(PLUGINS.filter(p=>p.installed).map(p=>p.id)),
+  modal:null
+};
+const VARIANT_NAMES={A:'设备画布',B:'信号链',C:'Profile 面板'};
+const VARIANT_ORDER=['A','B','C'];
+let toastTimer=0;
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function plugin(id){return PLUGINS.find(p=>p.id===id)}
+function profile(id){return PROFILES.find(p=>p.id===id)}
+function gestureName(id){return (GESTURES.find(g=>g.id===id)||GESTURES[0]).name}
+function keyAssignments(keyId){return state.assignments[keyId]||{}}
+function assignedProfile(keyId,gesture=state.gesture){return profile(keyAssignments(keyId)[gesture])}
+function assignedName(keyId,gesture=state.gesture){const p=assignedProfile(keyId,gesture);return p?p.name:'未配置'}
+function gestureCount(keyId){return Object.values(keyAssignments(keyId)).filter(Boolean).length}
+function pluginOfProfile(p){return p?plugin(p.plugin):null}
+function isInstalled(id){return state.installed.has(id)}
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2600)}
+function setVariant(v){if(!VARIANT_ORDER.includes(v))return;state.variant=v;const u=new URL(location.href);u.searchParams.set('variant',v);history.replaceState(null,'',u);render()}
+function cycleVariant(dir){const i=VARIANT_ORDER.indexOf(state.variant);setVariant(VARIANT_ORDER[(i+dir+VARIANT_ORDER.length)%VARIANT_ORDER.length])}
+function selectKey(id){state.key=id;if(id==='knob'){showToast('旋钮用于切换 profile：点击下方 profile 可应用到当前按键')}render()}
+function selectGesture(id){if(state.key==='knob')return;state.gesture=id;render()}
+function assignProfile(pid){const p=profile(pid);if(!p)return;if(state.key==='knob'){state.activeProfile=pid;showToast(`旋钮当前指向「${p.name}」`);render();return}state.assignments[state.key][state.gesture]=pid;state.activeProfile=pid;showToast(`已把「${p.name}」分配给 ${KEYS.find(k=>k.id===state.key).label} · ${gestureName(state.gesture)}（原型预览）`);render()}
+function togglePlugin(id){const p=plugin(id);if(!p)return;if(id==='au05'||id==='gamepad'||id==='scripts'){showToast('内置插件不能卸载');return}if(isInstalled(id)){state.installed.delete(id);showToast(`已停用 ${p.name}（原型预览）`)}else{state.installed.add(id);showToast(`已安装 ${p.name}，可创建 profile（原型预览）`)}state.modal=id;render()}
+function render(){document.getElementById('app').innerHTML=state.variant==='A'?renderA():state.variant==='B'?renderB():renderC();renderModal();const label=document.getElementById('protoLabel');label.innerHTML=`<b>${state.variant} · ${VARIANT_NAMES[state.variant]}</b><em>← / → 切换方向 · 点按键后选手势 · 单击 / 双击 / 长按</em>`}
+
+/* ── shared chrome ─────────────────────────────────────────────────────── */
+function topbar(){
+  return `<header class="topbar">
+    <div class="brand"><div class="brand-mark">VK</div><div><b>Vib<span>Dock</span></b><small>plugin workbench</small></div></div>
+    <div class="crumbs"><span>工作台</span><span class="slash">/</span><b>Vibe Key</b><span class="slash">/</span><span>配置</span></div>
+    <div class="top-actions">
+      <span class="conn-pill"><span class="dot live"></span>本机服务 · 已连接</span>
+      <span class="tag">${isInstalled('au05')?'AU05 已连接':'AU05 未连接'}</span>
+      <button class="avatar" data-action="noop" aria-label="账户">LH</button>
+    </div>
+  </header>`
+}
+function pluginGlyph(p,cls=''){return `<span class="plugin-glyph ${cls}" style="color:${p.accent};background:${p.accent}14;border-color:${p.accent}35">${esc(p.glyph)}</span>`}
+function pluginMiniList(){
+  return PLUGINS.filter(p=>p.kind!=='动作插件').map(p=>`<button class="plugin-mini" data-action="open-plugin" data-plugin="${p.id}">
+    ${pluginGlyph(p)}<span style="min-width:0"><b>${esc(p.name)}</b><small>${isInstalled(p.id)?'已安装':'未安装'}</small></span>
+    <span class="dot ${isInstalled(p.id)?(p.status==='waiting'?'warn':'live'):'off'}"></span>
+  </button>`).join('')
+}
+function keyCallouts(){
+  return `<div class="callouts">${KEYS.map(k=>{
+    const active=state.key===k.id;
+    const count=gestureCount(k.id);
+    const sub=k.id==='knob'?`点击切换 profile`:`${count}/3 手势 · ${gestureName(state.gesture)}：${assignedName(k.id)}`;
+    return `<button class="callout" data-action="select-key" data-key="${k.id}" aria-pressed="${active}">
+      <span class="idx">${k.idx}</span><span><b>${k.label}${k.id==='knob'?'':` <span class="gcount">${count}/3</span>`}</b><small>${esc(sub)}</small></span>
+      <span class="dot ${active?'warn':(k.id==='knob'?'off':'live')}"></span>
+    </button>`}).join('')}</div>`
+}
+function gestureTabs(keyId){
+  return `<div class="gesture-tabs" role="tablist" aria-label="手势">${GESTURES.map(g=>{
+    const p=assignedProfile(keyId,g.id);
+    return `<button class="gesture-tab" role="tab" data-action="select-gesture" data-gesture="${g.id}" aria-selected="${state.gesture===g.id}">
+      ${p?'<span class="count"></span>':''}<b>${g.name}</b><small>${p?esc(p.name):'未配置'}</small>
+    </button>`}).join('')}</div>`
+}
+function timingCard(){
+  return `<div class="timing-card"><h3><span>手势判定</span><span class="mono">HOST TIMING</span></h3>
+    <div class="timing-row"><label for="doubleWindow">双击窗口</label><input id="doubleWindow" type="range" min="150" max="600" step="50" value="300" data-action="noop"><output>300 ms</output></div>
+    <div class="timing-row"><label for="longPress">长按阈值</label><input id="longPress" type="range" min="350" max="900" step="50" value="550" data-action="noop"><output>550 ms</output></div>
+    <p>单击要等双击窗口结束才执行；长按达到阈值立即执行，松开不再触发单击。AU05 固件只存一个哨兵键，判定在本机服务里完成。</p></div>`
+}
+function profileDeck(){
+  const gesture=state.key==='knob'?'':gestureName(state.gesture);
+  return `<div class="deck-head"><h2>Profile 库</h2><small>${state.key==='knob'?'旋钮用于切换 profile':'点击卡片应用到当前按键 · '+gesture} · 由插件提供</small></div>
+  <div class="profile-deck">${PROFILES.map(p=>{
+    const assigned=state.key!=='knob'&&assignedProfile(state.key)?.id===p.id;
+    const pl=pluginOfProfile(p);const installed=isInstalled(p.plugin);
+    return `<button class="profile-card" data-action="assign-profile" data-profile="${p.id}" data-assigned="${assigned}">
+      <div class="profile-card-top"><b>${esc(p.name)}</b>${assigned?'<span class="assign-mark">当前</span>':`<span class="tag" style="color:${p.color};border-color:${p.color}35">${esc(pl?pl.vendor:'')}</span>`}</div>
+      <p>${esc(p.desc)}</p>
+      <div class="steps-mini">${p.steps.slice(0,3).map(s=>`<span class="chip">${esc(s.t)}</span>`).join('')}${p.steps.length>3?`<span class="chip">+${p.steps.length-3}</span>`:''}</div>
+      ${installed?'':'<span class="field-note" style="color:var(--red)">需要安装插件</span>'}
+    </button>`}).join('')}</div>`
+}
+function comboDeck(){
+  return `<section class="combo-section"><div class="combo-head"><h2>多键组合</h2><small>最多 3 键 · 快按窗口 250 ms · 同时长按 550 ms</small></div>
+  <div class="combo-deck">${COMBOS.map(c=>`<button class="combo-card" data-action="noop">
+    <div class="combo-card-top"><b>${esc(c.name)}</b><span class="combo-kind ${c.kind==='hold'?'hold':''}">${c.kind==='hold'?'长按':'快按'}</span></div>
+    <div class="combo-keys">${c.controls.map(x=>`<span class="combo-key">0${x} ${KEYS[x-1].label}</span>`).join('<span class="combo-arrow">→</span>')}</div>
+    <p>${esc(c.desc)} · 执行「${esc(profile(c.profile)?.name||'')}」</p>
+  </button>`).join('')}
+  <button class="combo-card" data-action="noop" style="align-items:center;justify-content:center;border-style:dashed;color:var(--ink-3)">+ 新建组合</button></div></section>`
+}
+function inspector(selectedKey=state.key){
+  const k=KEYS.find(x=>x.id===selectedKey)||KEYS[0];
+  const p=assignedProfile(selectedKey);
+  const knob=selectedKey==='knob';
+  const count=gestureCount(selectedKey);
+  return `<aside class="inspector">
+    <div class="inspector-head"><div><div class="eyebrow">${knob?'PROFILE DIAL':'KEY GESTURE'}</div><h2>${knob?'旋钮':k.label}</h2><small>${knob?'旋转切换 profile，按下确认':'同一个按键可以拥有单击、双击、长按三种动作'}</small></div><span class="tag ${p?'jade':''}">${knob?'轮盘':count+'/3'}</span></div>
+    ${knob?`
+      <label>Profile 轮盘</label>
+      <div class="step-list">${PROFILES.map(x=>`<button class="step" data-action="assign-profile" data-profile="${x.id}" style="text-align:left"><span class="step-no">${x.steps.length}</span><span><b>${esc(x.name)}</b><small>${esc(pluginOfProfile(x)?.name||'')}</small></span><span class="dot ${state.activeProfile===x.id?'warn':'off'}"></span></button>`).join('')}</div>
+      <p class="field-note">旋钮是全局 profile 选择器；按键仍保留各自手势。旋转时预览角标会跟随，按下可确认。</p>
+    `:`
+      ${gestureTabs(selectedKey)}
+      <label>由哪个插件处理 · ${gestureName(state.gesture)}</label>
+      <select class="select" data-action="select-plugin" aria-label="插件">${PLUGINS.filter(x=>x.kind!=='设备插件').map(x=>`<option value="${x.id}" ${p&&p.plugin===x.id?'selected':''} ${isInstalled(x.id)?'':'disabled'}>${esc(x.name)}${isInstalled(x.id)?'':'（未安装）'}</option>`).join('')}</select>
+      <label>Profile（${gestureName(state.gesture)}）</label>
+      <select class="select" data-action="select-profile" aria-label="Profile">${PROFILES.filter(x=>isInstalled(x.plugin)).map(x=>`<option value="${x.id}" ${p&&p.id===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
+      <div class="sequence"><div class="sequence-head"><h3>${gestureName(state.gesture)}动作序列</h3><span class="mono">${p?p.steps.length:0} STEPS</span></div>
+        <ul class="step-list">${p?p.steps.map((s,i)=>`<li class="step"><span class="step-no">${String(i+1).padStart(2,'0')}</span><span><b>${esc(stepAction(s))}</b><small>${esc(stepDetail(s))}</small></span><span class="grip">⋮⋮</span></li>`).join(''):'<li class="step"><span class="step-no">0</span><span><b>尚未配置</b><small>从下方 Profile 库选择</small></span></li>'}</ul>
+        <button class="step-add" data-action="noop">+ 添加步骤（插件提供的动作）</button>
+      </div>
+      ${timingCard()}
+      ${autoCard()}
+      <div class="inspector-actions"><button class="btn" data-action="select-key" data-key="${selectedKey}">测试反馈</button><button class="btn primary" data-action="noop">保存到本机</button></div>
+    `}
+  </aside>`
+}
+function autoCard(){
+  const codex=isInstalled('codex'),dsh=isInstalled('dsh');
+  return `<div class="auto-card">${icon('wand')}<div><b>自动配置建议</b><p>${codex&&dsh?'检测到 Codex 与 DeepSeek Harness 已安装。可把语音键的单击 / 双击 / 长按分别设为微信语音、Codex、DSH，把 3 个按键变成 9 个动作。':'安装 Codex 或 DSH 插件后，这里会出现一键配置。'}</p>${codex&&dsh?'<button class="btn sm" data-action="auto-config">一键生成</button>':''}</div></div>`
+}
+function stepAction(s){return s.t}
+function stepDetail(s){return ({launch:'启动并聚焦应用',send:'向目标应用发送按键',mic:'切换指定麦克风',wait:'等待固定时间',focus:'前置窗口'})[s.i]||'插件动作'}
+function profileStepIcon(s){return ({launch:'play',send:'command',mic:'mic',wait:'spark',focus:'grid'})[s.i]||'command'}
+
+/* ── Variant A: device canvas ─────────────────────────────────────────── */
+function renderA(){
+  return `${topbar()}<div class="workbench">
+    <aside class="rail">
+      <section><div class="rail-head"><span>设备</span><button data-action="noop" aria-label="添加设备">+</button></div>
+        <button class="device-item" aria-selected="true"><span class="device-thumb"></span><span><b>Vibe Key</b><small>AU05 · 已连接</small></span><span class="dot live"></span></button>
+        <button class="device-item" data-action="open-plugin" data-plugin="gamepad"><span class="controller-thumb">${controllerThumb()}</span><span><b>Sony 白色手柄</b><small>未连接 · 等待 USB / 蓝牙</small></span><span class="dot warn"></span></button>
+      </section>
+      <section><div class="rail-head"><span>已安装插件</span><button data-action="noop" aria-label="插件目录">+</button></div>${pluginMiniList()}</section>
+      <div class="rail-note">插件只声明自己拥有的能力：设备、应用、快捷键、命令。工作台根据清单生成配置，不再为每个应用手写一套页面。</div>
+    </aside>
+    <main class="canvas">
+      <div class="canvas-head"><div><h1>Vibe Key 画布</h1><small>3 个按键 × 3 种手势 = 9 个动作位；点击按键，再选单击 / 双击 / 长按。</small></div><div class="spacer"></div><span class="tag amber">9 个手势槽</span><span class="tag jade"><span class="dot live"></span>固件已读回</span><button class="btn sm" data-action="open-plugin" data-plugin="au05">设备设置</button></div>
+      <div class="stage"><div class="stage-device">${deviceSVG(state.key)}</div>${keyCallouts()}<div class="stage-hint">${icon('spark')} 单击 / 双击 / 长按可绑定不同 profile <button class="btn sm" data-action="auto-config">一键生成</button></div></div>
+      ${profileDeck()}
+      ${comboDeck()}
+    </main>
+    ${inspector()}
+  </div>`
+}
+
+/* ── Variant B: patch bay ──────────────────────────────────────────────── */
+function renderB(){
+  const k=KEYS.find(x=>x.id===state.key)||KEYS[0];const p=assignedProfile(state.key);const pl=p?pluginOfProfile(p):null;
+  const focus=plugin(state.focusPlugin)||plugin('au05');
+  return `${topbar()}<div class="workbench-b">
+    <nav class="plugin-rail" aria-label="已安装插件">${PLUGINS.filter(x=>isInstalled(x.id)).map(x=>`<button data-action="focus-plugin" data-plugin="${x.id}" aria-pressed="${state.focusPlugin===x.id}">${pluginGlyph(x)}<small>${esc(x.name.split(' ')[0])}</small></button>`).join('')}<div class="rail-label">plugins</div></nav>
+    <main class="patch-main">
+      <div class="patch-head"><div><h1>把按键接到一个插件</h1><small>先选手势，再接插件能力与动作序列。同一个按键的三种手势可以走完全不同的链。</small></div><button class="btn sm" data-action="noop">+ 新建 profile</button></div>
+      <div class="profile-tabs" role="tablist" aria-label="Profile">${PROFILES.map(x=>`<button class="profile-tab" data-action="assign-profile" data-profile="${x.id}" aria-selected="${p&&p.id===x.id}">${esc(x.name)}</button>`).join('')}</div>
+      ${state.key==='knob'?'':gestureTabs(state.key)}
+      <div class="chain-wrap">
+        <div class="chain-node device-node">${deviceSVG(state.key,'compact')}<h3>${k.label}</h3><small>${state.key==='knob'?'旋钮 · profile 轮盘':`按钮 · ${gestureName(state.gesture)}`}</small></div>
+        <div class="wire"><span>INPUT</span></div>
+        <div class="chain-node plugin-node"><div class="node-eyebrow">${pluginGlyph(pl||plugin('wechat'))}<span>${pl?esc(pl.kind):'插件'}</span></div><h2>${esc(pl?pl.name:'选择插件')}</h2><p>${esc(pl?pl.desc:'从左侧插件栏选择一个应用插件，工作台会显示它能提供的动作。')}</p><div class="cap-list">${(pl?pl.caps:[]).map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div><div class="node-foot"><span class="tag ${isInstalled(pl?.id||'')?'jade':'amber'}">${isInstalled(pl?.id||'')?'已安装':'需要安装'}</span><button class="btn sm" data-action="open-plugin" data-plugin="${pl?pl.id:'codex'}">配置</button></div></div>
+        <div class="wire"><span>ACTION</span></div>
+        <div class="chain-node action-node"><div class="node-eyebrow"><span>SEQUENCE · ${gestureName(state.gesture)}</span><span>${p?p.steps.length:0} STEPS</span></div><h2>${p?esc(p.name):'未配置'}</h2><ol>${p?p.steps.map((s,i)=>`<li><span class="n">${String(i+1).padStart(2,'0')}</span>${icon(profileStepIcon(s))}<span>${esc(s.t)}</span></li>`).join(''):'<li>从 profile 标签选择一个动作</li>'}</ol><div class="node-foot"><span class="mono">按 ${k.idx} · ${gestureName(state.gesture)}</span><button class="btn sm" data-action="noop">+ 步骤</button></div></div>
+      </div>
+      <div class="chain-meta">
+        <div class="meta-card"><h3>插件详情 · ${esc(focus.name)}</h3><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65">${esc(focus.desc)}</p><div class="meta-row" style="margin-top:8px"><span>版本 / 提供方</span><span>${esc(focus.version)} · ${esc(focus.vendor)}</span></div><div class="meta-row"><span>状态</span><span>${focus.status}</span></div><div class="meta-row"><span>能力</span><span>${focus.caps.join(' / ')}</span></div><button class="btn sm" style="margin-top:9px" data-action="open-plugin" data-plugin="${focus.id}">打开插件设置</button></div>
+        <div class="meta-card"><h3>自动化提示</h3><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65">检测到 ${isInstalled('codex')?'Codex':''}${isInstalled('dsh')?' / DSH':''} 可用。工作台会根据设备能力和已装插件生成推荐，而不是让用户从空表单开始。</p><button class="btn sm" style="margin-top:9px" data-action="auto-config">生成推荐配置</button></div>
+      </div>
+      ${comboDeck()}
+    </main>
+    ${inspector()}
+  </div>`
+}
+
+/* ── Variant C: profile board ──────────────────────────────────────────── */
+function renderC(){
+  const k=KEYS.find(x=>x.id===state.key)||KEYS[0];
+  return `${topbar()}<div class="profiles-wrap">
+    <main class="profiles-main">
+      <div class="profiles-head"><div><h1>Profiles 是配置本身</h1><p>一个 profile 描述“哪个按键做什么”。插件提供动作，profile 负责组合；换设备时只换 profile。</p></div><button class="btn primary" data-action="noop">+ 新建 Profile</button></div>
+      <div class="profile-grid">${PROFILES.map(p=>{
+        const pl=pluginOfProfile(p);const keys=[];
+        for(const [keyId,slots] of Object.entries(state.assignments)){for(const [gid,pid] of Object.entries(slots||{})){if(pid===p.id){const key=KEYS.find(x=>x.id===keyId);keys.push(`${key?key.label:keyId}·${gestureName(gid)}`)}}}
+        return `<button class="big-profile" data-action="select-profile-card" data-profile="${p.id}" data-selected="${state.activeProfile===p.id}">
+          <div class="big-profile-top"><div><h2>${esc(p.name)}</h2><small>${esc(pl?pl.name:'')} · ${p.steps.length} 步</small></div><span class="tag" style="color:${p.color};border-color:${p.color}35">${esc(pl?pl.vendor:'')}</span></div>
+          <div class="profile-steps">${p.steps.map((s,i)=>`<span><span class="n">${String(i+1).padStart(2,'0')}</span>${esc(s.t)}</span>`).join('')}</div>
+          <div class="profile-foot"><div class="key-badges">${keys.length?keys.map(x=>`<span class="key-badge">${esc(x)}</span>`).join(''):'<span class="field-note">未绑定按键</span>'}</div>${p.id===state.activeProfile?'<span class="tag amber">编辑中</span>':`<span class="tag">${isInstalled(p.plugin)?'可用':'需安装'}</span>`}</div>
+        </button>`}).join('')}</div>
+      <div class="auto-card" style="margin-top:16px">${icon('wand')}<div><b>自动配置：从“检测到的应用”开始</b><p>扫描到 ${isInstalled('codex')?'Codex':''}${isInstalled('dsh')?'、DSH':''}${isInstalled('wechat')?'、微信输入法':''}。工作台可以生成 3 个按键 × 单击 / 双击 / 长按 = 9 个动作位，用户只需确认或替换其中几个。</p><button class="btn sm" data-action="auto-config">生成 9 个推荐动作</button></div></div>
+      ${comboDeck()}
+    </main>
+    <aside class="market"><div class="market-head"><h2>插件目录</h2><button class="btn sm" data-action="noop">管理</button></div><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65;margin-bottom:12px">安装插件后，它提供的动作会出现在 profile 编辑器里；设备插件还会出现在左侧设备栏。</p>${PLUGINS.map(p=>`<div class="plugin-row">${pluginGlyph(p)}<div class="grow"><b>${esc(p.name)}</b><small>${esc(p.kind)} · ${esc(p.vendor)}</small></div><button class="btn sm ${isInstalled(p.id)?'ghost':''}" data-action="toggle-plugin" data-plugin="${p.id}">${isInstalled(p.id)?'已安装':'安装'}</button></div>`).join('')}</aside>
+  </div>
+  <div class="device-dock"><div class="dock-device">${deviceSVG(state.key,'compact')}</div><div class="dock-copy"><b>Vibe Key · 已连接</b><small>点击按键切换检查对象 · 当前 ${k.label} · ${state.key==='knob'?'profile 轮盘':gestureName(state.gesture)} → ${esc(assignedName(state.key))}</small></div><div class="dock-keys">${KEYS.slice(0,3).map(x=>`<button class="dock-key" data-action="select-key" data-key="${x.id}" aria-pressed="${state.key===x.id}"><b>${x.label}</b><small>${gestureCount(x.id)}/3 手势</small></button>`).join('')}<button class="dock-key" data-action="select-key" data-key="knob" aria-pressed="${state.key==='knob'}"><b>旋钮</b><small>切换 profile</small></button></div></div>`
+}
+
+/* ── device illustration ───────────────────────────────────────────────── */
+function controllerThumb(){
+  return `<svg viewBox="0 0 64 46" aria-hidden="true"><path d="M15 7h34c7 0 12 5 12 12l-2 14c-1 6-9 8-13 3l-5-6H21l-5 6c-4 5-12 3-13-3L1 19C1 12 8 7 15 7Z" fill="#f3f1ea" stroke="#b9b5aa" stroke-width="1.4"/><path d="M15 7h34c7 0 12 5 12 12l-1 4H4l-1-4C1 12 8 7 15 7Z" fill="#faf8f2"/><circle cx="21" cy="23" r="5" fill="#d9d5cb" stroke="#8c887e" stroke-width="1.1"/><circle cx="43" cy="23" r="5" fill="#d9d5cb" stroke="#8c887e" stroke-width="1.1"/><circle cx="21" cy="23" r="2" fill="#8c887e"/><circle cx="43" cy="23" r="2" fill="#8c887e"/><path d="M11 17h6M14 14v6" stroke="#8c887e" stroke-width="1.2" stroke-linecap="round"/><circle cx="49" cy="16" r="1.6" fill="#8c887e"/><circle cx="53" cy="20" r="1.6" fill="#8c887e"/><circle cx="45" cy="20" r="1.6" fill="#8c887e"/><circle cx="49" cy="24" r="1.6" fill="#8c887e"/><path d="M29 30h6" stroke="#83d4ba" stroke-width="1.6" stroke-linecap="round"/></svg>`
+}
+function deviceSVG(activeKey,className=''){
+  const active=k=>activeKey===k?' active':'';
+  return `<svg class="vibe-key ${className}" viewBox="0 0 380 640" role="img" aria-label="Ulanzi Vibe Key 设备示意图">
+  <defs>
+    <linearGradient id="vkBody" x1="0" y1="0" x2="1" y2=".1"><stop offset="0" stop-color="#f7f5ef"/><stop offset=".22" stop-color="#e3e0d8"/><stop offset=".55" stop-color="#c8c5bc"/><stop offset=".82" stop-color="#dedbd2"/><stop offset="1" stop-color="#f0eee7"/></linearGradient>
+    <linearGradient id="vkBodyEdge" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffffff" stop-opacity=".65"/><stop offset=".2" stop-color="#ffffff" stop-opacity=".05"/><stop offset=".8" stop-color="#4a4842" stop-opacity=".18"/><stop offset="1" stop-color="#fff" stop-opacity=".25"/></linearGradient>
+    <linearGradient id="vkKey" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbfaf6"/><stop offset=".5" stop-color="#e2dfd7"/><stop offset="1" stop-color="#c9c6bd"/></linearGradient>
+    <radialGradient id="vkKnob" cx=".34" cy=".24" r=".9"><stop offset="0" stop-color="#fdfcf8"/><stop offset=".55" stop-color="#e6e3db"/><stop offset=".82" stop-color="#c4c0b7"/><stop offset="1" stop-color="#a09c92"/></radialGradient>
+    <radialGradient id="vkKnobRim" cx=".4" cy=".3" r=".8"><stop offset=".6" stop-color="#d8d4cb"/><stop offset="1" stop-color="#9d998f"/></radialGradient>
+    <pattern id="vkGrille" width="11" height="11" patternUnits="userSpaceOnUse"><circle cx="5.5" cy="5.5" r="2.1" fill="#7c7970" opacity=".55"/></pattern>
+    <filter id="vkShadow" x="-40%" y="-20%" width="180%" height="170%"><feDropShadow dx="0" dy="22" stdDeviation="18" flood-color="#000" flood-opacity=".55"/></filter>
+    <filter id="vkGlow"><feGaussianBlur stdDeviation="5"/></filter>
+    <filter id="vkSoft"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+  <ellipse cx="242" cy="606" rx="112" ry="18" fill="#000" opacity=".38" filter="url(#vkSoft)"/>
+  <g filter="url(#vkShadow)">
+    <rect x="150" y="26" width="178" height="548" rx="31" fill="url(#vkBody)" stroke="#ffffff" stroke-opacity=".28"/>
+    <rect x="150" y="26" width="178" height="548" rx="31" fill="none" stroke="#6c6961" stroke-opacity=".45"/>
+    <rect x="158" y="34" width="9" height="532" rx="4.5" fill="url(#vkBodyEdge)" opacity=".8"/>
+    <rect x="316" y="40" width="6" height="520" rx="3" fill="#4d4a44" opacity=".22"/>
+    <rect x="172" y="54" width="134" height="78" rx="19" fill="#d5d2c9" stroke="#ffffff" stroke-opacity=".22"/>
+    <rect x="178" y="60" width="122" height="66" rx="15" fill="url(#vkGrille)" opacity=".9"/>
+    <circle cx="298" cy="91" r="3.2" fill="#83d4ba"><animate attributeName="opacity" values=".45;1;.45" dur="2.6s" repeatCount="indefinite"/></circle>
+    <text x="239" y="45" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" letter-spacing="1.8" fill="#6d6a62" opacity=".85">VIBEKEY</text>
+    <g class="device-key${active('knob')}" data-action="select-key" data-key="knob" role="button" tabindex="0" aria-label="旋钮：切换 profile">
+      <circle class="key-halo" cx="239" cy="204" r="80" fill="none" stroke="#e7b96f" stroke-width="1.2" opacity="0" stroke-dasharray="3 5"/>
+      <circle cx="239" cy="207" r="70" fill="#000" opacity=".28" filter="url(#vkGlow)"/>
+      <circle class="knob-face" cx="239" cy="199" r="69" fill="url(#vkKnobRim)" stroke="#ffffff" stroke-opacity=".25"/>
+      <circle cx="239" cy="199" r="61" fill="url(#vkKnob)" stroke="#8e8a80" stroke-opacity=".55"/>
+      <circle cx="239" cy="199" r="45" fill="none" stroke="#ffffff" stroke-opacity=".3"/>
+      <circle cx="239" cy="199" r="45" fill="none" stroke="#6f6c63" stroke-opacity=".15"/>
+      <path d="M239 154v18" stroke="#77736a" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+      <path d="M239 216v34" stroke="#f7f4ed" stroke-width="2" stroke-linecap="round" opacity=".35"/>
+      ${[0,90,180,270].map(a=>{const r=(a*Math.PI)/180;const x1=239+Math.cos(r)*59,y1=199+Math.sin(r)*59,x2=239+Math.cos(r)*65,y2=199+Math.sin(r)*65;return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#7b776e" stroke-width="2" stroke-linecap="round" opacity=".55"/>`}).join('')}
+    </g>
+    ${keyGroup('button1',312,'mic')}
+    ${keyGroup('button2',402,'check')}
+    ${keyGroup('button3',492,'x')}
+    <g opacity=".8"><rect x="322" y="306" width="12" height="34" rx="6" fill="#d6d2c9" stroke="#8f8b81" stroke-opacity=".5"/><path d="M325 318h6" stroke="#7b776e" stroke-width="1.6" stroke-linecap="round"/></g>
+    <text x="345" y="286" transform="rotate(90 345 286)" font-size="7.5" letter-spacing="1.3" fill="#77736a" opacity=".75">POWER</text>
+    <g opacity=".55"><rect x="309" y="548" width="6" height="6" rx="1.2" fill="#71b9a0"/><rect x="309" y="558" width="6" height="6" rx="1.2" fill="#a6a298"/></g>
+  </g>
+  <g class="vk-dongle" transform="translate(31 486)" opacity=".92">
+    <rect x="0" y="20" width="54" height="92" rx="15" fill="url(#vkBody)" stroke="#ffffff" stroke-opacity=".3"/>
+    <rect x="15" y="0" width="24" height="24" rx="4" fill="#d8d4cb" stroke="#87837a" stroke-opacity=".6"/>
+    <rect x="20" y="4" width="14" height="8" rx="2" fill="#8d8980"/>
+    <circle cx="27" cy="44" r="3" fill="#83d4ba" opacity=".9"/>
+    <path d="M15 64h24M15 72h24M15 80h18" stroke="#9a968c" stroke-width="1.5" stroke-linecap="round" opacity=".55"/>
+    <text x="27" y="104" text-anchor="middle" font-size="6.5" letter-spacing="1" fill="#77736a">2.4G</text>
+  </g>
+  </svg>`
+}
+function keyGroup(id,y,ic){
+  const path=ICONS[ic];
+  return `<g class="device-key${state.key===id?' active':''}" data-action="select-key" data-key="${id}" role="button" tabindex="0" aria-label="${KEYS.find(k=>k.id===id).label}">
+    <rect class="key-halo" x="180" y="${y-7}" width="116" height="86" rx="22" fill="none" stroke="#e7b96f" stroke-width="1.2" opacity="0" stroke-dasharray="3 5"/>
+    <rect x="186" y="${y}" width="104" height="72" rx="18" fill="#000" opacity=".22" filter="url(#vkGlow)"/>
+    <rect class="key-face" x="186" y="${y-2}" width="104" height="72" rx="18" fill="url(#vkKey)" stroke="#ffffff" stroke-opacity=".4"/>
+    <rect x="190" y="${y+2}" width="96" height="64" rx="15" fill="none" stroke="#9b978d" stroke-opacity=".35"/>
+    <circle cx="238" cy="${y+34}" r="22" fill="#e9e6de" stroke="#ffffff" stroke-opacity=".5"/>
+    <circle cx="238" cy="${y+34}" r="22" fill="none" stroke="#8f8b81" stroke-opacity=".25"/>
+    <g transform="translate(226 ${y+22}) scale(.95)" fill="none" stroke="#6e6a61" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${path}</g>
+  </g>`
+}
+
+/* ── modal ─────────────────────────────────────────────────────────────── */
+function renderModal(){
+  const root=document.getElementById('modal-root');
+  if(!state.modal){root.innerHTML='';return}
+  const p=plugin(state.modal);if(!p){root.innerHTML='';return}
+  root.innerHTML=`<div class="modal-backdrop" data-action="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-head">${pluginGlyph(p)}<div><h2 id="modalTitle">${esc(p.name)}</h2><small>${esc(p.kind)} · ${esc(p.vendor)} · v${esc(p.version)}</small></div><button class="modal-close" data-action="close-modal" aria-label="关闭">×</button></div>
+    <p>${esc(p.desc)}</p>
+    <div class="modal-caps">${p.caps.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div>
+    <div class="modal-section"><h3>能力与配置</h3>${p.config.map(([a,b])=>`<div class="config-line"><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join('')||'<p>安装后由插件声明配置项，工作台自动生成表单。</p>'}</div>
+    <div class="modal-section"><h3>提供的 profile</h3>${PROFILES.filter(x=>x.plugin===p.id).map(x=>`<div class="config-line"><span>${esc(x.name)}</span><span>${x.steps.length} 步</span></div>`).join('')||'<p>这个插件还没有提供 profile。</p>'}</div>
+    <div class="modal-actions"><button class="btn" data-action="close-modal">关闭</button>${['au05','gamepad','scripts'].includes(p.id)?'<button class="btn primary" data-action="close-modal">设备设置</button>':`<button class="btn ${isInstalled(p.id)?'danger':'primary'}" data-action="toggle-plugin" data-plugin="${p.id}">${isInstalled(p.id)?'停用插件':'安装插件'}</button>`}</div>
+  </div></div>`
+}
+
+/* ── events ────────────────────────────────────────────────────────────── */
+document.addEventListener('click',e=>{
+  if(e.target.closest('.modal')&&!e.target.closest('[data-action]'))return;
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.dataset.action;
+  if(a==='variant-prev')return cycleVariant(-1);
+  if(a==='variant-next')return cycleVariant(1);
+  if(a==='select-key')return selectKey(el.dataset.key);
+  if(a==='select-gesture')return selectGesture(el.dataset.gesture);
+  if(a==='assign-profile')return assignProfile(el.dataset.profile);
+  if(a==='open-plugin'){state.modal=el.dataset.plugin;return render()}
+  if(a==='close-modal'){state.modal=null;return render()}
+  if(a==='toggle-plugin'){togglePlugin(el.dataset.plugin);return render()}
+  if(a==='auto-config'){state.assignments.button1={single:'wechat',double:'codex',long:'dsh'};state.assignments.button2={single:'codex',double:'dsh',long:'media'};state.assignments.button3={single:'dsh',double:'media',long:'wechat'};showToast('已生成 9 个推荐动作：每个按键都可单击 / 双击 / 长按（原型预览）');return render()}
+  if(a==='focus-plugin'){state.focusPlugin=el.dataset.plugin;return render()}
+  if(a==='select-profile-card'){state.activeProfile=el.dataset.profile;showToast(`正在编辑「${profile(el.dataset.profile)?.name}」`);return render()}
+  if(a==='noop')return showToast('原型交互：这个操作在接入服务后生效')
+  showToast('原型交互：这个操作在接入服务后生效')
+});
+document.addEventListener('change',e=>{
+  const el=e.target.closest('[data-action]');if(!el)return;
+  if(el.dataset.action==='select-plugin'){state.focusPlugin=el.value;showToast('已切换插件（原型预览）');render()}
+  if(el.dataset.action==='select-profile'){assignProfile(el.value)}
+});
+document.addEventListener('keydown',e=>{
+  const tag=(e.target&&e.target.tagName||'').toLowerCase();
+  if(['input','textarea','select'].includes(tag)||e.target.isContentEditable)return;
+  if(e.key==='Escape'&&state.modal){state.modal=null;render();return}
+  if(e.key==='ArrowRight'){e.preventDefault();cycleVariant(1)}
+  if(e.key==='ArrowLeft'){e.preventDefault();cycleVariant(-1)}
+  if((e.key==='Enter'||e.key===' ')&&e.target.matches('[data-action]')){e.preventDefault();e.target.click()}
+});
+render();
+</script>
+</body></html>

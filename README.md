@@ -1,476 +1,195 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/vibdock-symbol-light.svg">
-  <img src="assets/brand/vibdock-symbol.svg" alt="VibDock logo: diamond with a negative-space voice channel" width="88" height="88">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/vibdock-symbol-light.svg">
+    <img src="assets/brand/vibdock-symbol.svg" alt="VibDock" width="92" height="92">
+  </picture>
+</p>
 
-# VibDock
+<h1 align="center">VibDock</h1>
 
-A local-first bridge between hardware controls, voice workflows, and personal AI agents.
+<p align="center"><b>One key. Your whole AI workflow.</b><br>
+A local-first bridge between hardware controls, voice workflows and personal AI agents.</p>
 
-Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="README.technical.md">Technical README</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#interface">Interface</a> ·
+  <a href="#guided-setup">Guided setup</a>
+</p>
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. Current Windows source also recognises running window applications independently of their audio sessions and can save up to eight per-application shortcut bindings that dispatch a user-supplied chord only when the bound executable owns the foreground window. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
+<p align="center">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4?style=flat-square">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-2021-B7410E?style=flat-square">
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-no%20cloud-3F7A5F?style=flat-square">
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-1D1B18?style=flat-square">
+</p>
 
-**Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline predates the desktop and microphone-association changes. New candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
+<p align="center">
+  <img src="assets/screenshots/workbench.png" alt="VibDock workbench: click a Vibe Key button, choose a gesture, run a profile" width="920">
+</p>
 
-**Desktop status feedback:** The corner status indicator is implemented in source as an opt-in Windows overlay, **off by default**. Enable it by setting `VIBDOCK_OVERLAY=1` (`on`, `true`, and `yes` also work) before starting the service; `VIBDOCK_OVERLAY_CORNER` selects a corner (`bottom-right` default, or `bottom-left`, `top-right`, `top-left`). The window is placed in the taskbar-free work area of the primary monitor; if that work area cannot be read it falls back to the full monitor rectangle, which is **not** taskbar-aware and may let the indicator overlap a taskbar band. It has unit tests for its status contracts and placement but has **not** been accepted against live Windows: no run has verified typing/focus behaviour, multi-monitor placement, or failed-action feedback on a real desktop. The optional breathing border is planned and not implemented.
+VibDock turns a small physical keypad into a controller for coding agents, voice
+input and everyday desktop actions. Press a key to talk to Codex or DeepSeek
+Harness, mute the microphone, launch a workflow, or run a saved sequence —
+without installing the vendor's Studio and without sending data to a cloud
+service.
 
-## Download and run
+The UI is served by the same resident Rust service that owns the device, global
+hotkeys and process actions. The browser is the config surface, not a remote
+control with extra privileges.
 
-Published v0.1.0 archives contain one Rust executable and this README. Current Windows source builds produce `vibdock.exe` (console CLI) and `vibdock-launcher.exe` (desktop launcher); the pending release pipeline packages both and checks their executable subsystems. No Node.js, Python, or separate Web server is required.
+## What it does
 
-| Platform | Published v0.1.0 | Pending source |
-| --- | --- | --- |
-| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, tray-first Settings, persistent software/microphone associations and exact-session playback controls, dual-entry archive |
-| Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
-| macOS Apple silicon | Design preview | Native .app, menu bar/Dock and floating panel, persistent application list/icons/running state, authenticated local configuration; audio and global shortcuts unsupported |
+- **Physical keys, no vendor Studio.** First-run defaults write `Ctrl + Win`
+  (WeChat voice), `Enter` and `Escape` into the three Ulanzi AU05 buttons over
+  the vendor HID interface, with readback verification.
+- **One key, a sequence of actions.** Launch an app, send a chord, toggle a
+  microphone, run a local structured command, or wait. Steps run in order and
+  stop at the first failure.
+- **Gestures and combos, designed in.** Three buttons become more than three
+  actions: single / double / long press, plus `1+2`, `1+2+3`, `2+3` and held
+  two-button combos.
+- **A touch-first Pad.** Project the same profiles as large virtual keys on a
+  tablet or second screen. The browser asks the local service to execute a saved
+  action; it never injects input itself.
+- **A plugin-shaped core.** Device, input and action layers are Rust crates with
+  manifests and capability checks, so another keypad or agent integration does
+  not require editing the host for every button.
 
-## macOS native candidate
+## Interface
 
-Current source also packages `VibDock.app`: open it for the original-logo menu
-bar, Dock entry and a small resident panel. Use Settings for the proved local
-configuration page; closing the panel hides it, and Quit stops the verified
-service. Repeated launches restore the same panel, including direct binary
-launches from a second installed copy.
+<table>
+<tr>
+<td width="50%"><img src="assets/screenshots/workbench.png" alt="Device-first workbench"><br><sub><b>Workbench.</b> Pick a key, see its three gestures and multi-key combos.</sub></td>
+<td width="50%"><img src="assets/screenshots/editor.png" alt="Gesture action editor"><br><sub><b>Editor.</b> A drawer keeps the page quiet: choose a profile, inspect steps, adjust timing.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="assets/screenshots/plugins.png" alt="Plugin panel"><br><sub><b>Plugins.</b> Device and application capabilities in one place, with an explicit install state.</sub></td>
+<td width="50%"><img src="assets/screenshots/pad.png" alt="Virtual Pad"><br><sub><b>Virtual Pad.</b> Large touch targets for a tablet or a second screen.</sub></td>
+</tr>
+</table>
 
-Candidates are not Developer ID signed or notarized. Hosted checks distinguish
-real AppKit own-view rendering from a full desktop/pointer test. macOS software pins and native icons describe verified application presence only.
-Audio, voice control, software actions and global shortcuts remain unavailable.
-See [macOS native behavior and acceptance](docs/macos-desktop.md) for limits.
+> These images are the current **product design preview**. The production
+> Settings page is being migrated to this workbench; the source still builds the
+> earlier Settings UI. The Pad has a working `POST /api/pad/execute` path and a
+> static prototype, but the `/pad` route and pairing flow are not served yet.
 
-## Configure a hardware shortcut (pending Windows source)
+## Quick start
 
-This workflow requires a build containing both `vibdock.exe` and `vibdock-launcher.exe`; the published v0.1.0 download does not contain the launcher.
+**For users:** download a published archive from
+[Releases](https://github.com/loonghao/vibdock/releases), extract both
+executables into one folder, and run `vibdock-launcher.exe`. The launcher keeps
+the tray service running and opens authenticated local Settings.
 
-1. Extract both executables into the same directory. Start `vibdock-launcher.exe` to open authenticated local Settings and keep the notification-area icon running. Click the VibDock tray icon or launch again to reopen Settings.
-2. Select the intended microphone from the service's device list. In the binding editor, record a combination such as **Ctrl+Alt+Shift+F9** and save it.
-3. Check the separate **background binding** row. “Registered” means Windows accepted the shortcut; it does not mean an audio action already ran. A conflict leaves the previous configuration and registration in place.
-4. In Ulanzi Studio, map the desired button to that exact keyboard combination using its shortcut action. Physical-device identification is not inferred from a mapped keyboard event.
-5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
-6. Close the browser to leave the service running. Reopen **Settings…** from the tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
-
-Only one microphone/shortcut pair is currently active. Up to eight separate
-per-application shortcut bindings can also be saved (see below). Do not run
-legacy `listen` with the same chord: Windows allows only one registration. Input-device mute affects every application using that microphone. Per-agent input and voice-session start/stop are separate planned controls. Right-click a saved Windows software icon to mute or unmute one explicitly selected current playback session; its receipt requires a matching native readback. A dated two-session exact-session mute/unmute readback check is recorded in the [application recognition acceptance record](docs/testing/app-recognition-acceptance.md); meeting-level real-audio isolation remains pending. The existing explicit-session playback CLI is documented below.
-
-Settings uses the service's saved configuration and real microphone list; service-mode saves do not write browser-local drafts. On the software page, associate each pinned Windows application with an exact microphone or clear that association. Its microphone controls address that saved endpoint and fail if it is unavailable. This is metadata plus endpoint control: it does not change the application's Windows input route, establish which microphone the application uses, or start/end a voice session. Endpoint mute affects every application using it.
-
-The status page uses bounded, serial polling. When the service cannot answer, it shows unknown rather than preserving a successful state. “Last action” is a readback after a shortcut action, not continuous tracking of changes made by other applications. A service restart clears action history and requires a fresh browser session.
-
-## Per-application shortcuts (Windows source)
-
-Settings > **应用与麦克风** also recognises running applications that own a
-visible top-level window, even when they have no playback session. This is how
-an input method, a coding agent, or a meeting client can be selected before it
-produces audio. Recognised names include Tencent Meeting (`wemeetapp.exe`),
-WeChat Input (`wetype*.exe`), Codex/ChatGPT (`codex.exe`/`chatgpt.exe`) and
-WorkBuddy. That match is a filename label only: it does not establish that the
-client is installed correctly, connected, signed in, or able to accept a
-shortcut.
-
-For a recognised application, save:
-
-- a **VibDock trigger** registered globally, such as `Ctrl + Alt + Shift + F10`;
-- a **dispatch shortcut**, such as the voice shortcut configured inside the
-  target application.
-
-When the trigger fires, VibDock reads the current foreground window and, by
-default, sends the dispatch chord only if that window belongs to the saved
-executable. If a different application is in front, nothing is sent. For a
-background input method or tray tool that never owns a foreground window, an
-explicit **running** scope checks that the saved executable is running and then
-sends the chord to whatever application is foreground. **The dispatch result is
-not a verified application state**: the application may ignore the chord,
-interpret it differently, or be unable to receive elevated input. A successful
-dispatch is reported as `DISPATCHED`, never as "voice started" or "microphone
-open".
-
-Read the target's actual shortcut from its own settings. VibDock ships no
-built-in WeChat, Codex, or Tencent Meeting shortcut. Up to eight bindings are
-saved in `shortcuts.json`; a trigger must be unique, and a dispatch chord may
-not equal any VibDock trigger (Windows would feed the injected chord back into
-the global registration). Bindings live in
-`%LOCALAPPDATA%\VibDock\shortcuts.json`; executable paths in that file are
-personal data.
-
-The same bindings are available without the browser:
+**From source (Windows 10/11):**
 
 ```powershell
-.\vibdock.exe shortcut-apps
-.\vibdock.exe shortcut-list --json
-.\vibdock.exe shortcut-add --app "ChatGPT" --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space"
-.\vibdock.exe shortcut-add --application <reference> --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space" --scope running
-.\vibdock.exe shortcut-remove --id <saved-id>
+git clone https://github.com/loonghao/vibdock.git
+cd vibdock
+cargo build --release
+.\target\release\vibdock-launcher.exe
 ```
 
-`shortcut-apps` prints the opaque reference from a fresh scan; the CLI never
-accepts an executable path. `--app` requires a unique case-insensitive name and
-defaults a background application to `running`. The service must already be
-running (`service-start`), and the command never dispatches the chord itself.
+No Node.js, Python or separate web server is required. The published v0.1.0
+preview is older than the current source; the AU05/action work is a source
+candidate, not a new release.
 
-Recognition is deliberately bounded: only visible, non-cloaked, non-tool
-windows are considered, shell/host processes are skipped, and a capped or
-partially unreadable window scan reports state as unknown rather than "not
-running". A closed set of known integration executables (`wetype*`, `wemeet*`,
-`codex`, `workbuddy`) is also recognised when it runs without a window, so
-WeChat Input can be pinned even when it has no visible window. Other background
-services and tray-only helpers are not listed.
-The dated [application recognition acceptance record](docs/testing/app-recognition-acceptance.md)
-lists the live detections, shortcut dispatch checks and the remaining UI limits.
-Live foreground/focus and injected-input acceptance on a real desktop remains
-pending; see [the software contract](docs/resident-software.md).
+## Guided setup
 
-## Local speech-to-text (optional native build)
+A first-run flow is integrated into Settings (service mode): connect the device,
+choose a template, confirm the 3×3 gesture matrix, then save. It writes real
+AU05 gesture slots through the authenticated API and reports failed firmware
+readback instead of claiming success.
 
-An optional `stt` Cargo feature adds offline speech-to-text with a local
-SenseVoice ONNX model. The default preview binary does not include this
-dependency; build it explicitly:
+![First-run guide](assets/screenshots/onboarding.png)
 
-```powershell
-cargo build --release --features stt
-.\target\release\vibdock.exe transcribe --wav sample.wav --json
-.\target\release\vibdock.exe dictate --seconds 5 --json
-.\target\release\vibdock.exe dictate --seconds 5 --vad --json
-.\target\release\vibdock.exe dictate --wav sample.wav --insert
-.\target\release\vibdock.exe dictate --hold --trigger "Ctrl+Alt+Space" --insert --target "ChatGPT"
+Every key exposes single, double and long press. Click a cell to choose a Profile,
+type a chord manually, or record one; the grid is the same 3×3 gesture matrix used
+by the workbench.
+
+![Gesture editor](assets/screenshots/onboarding-editor.png)
+
+- [Install and configure guide](docs/guide/installation.md) — traditional setup,
+  direct chords, application shortcuts, hardware actions, verification,
+  troubleshooting and uninstall.
+- [Standalone onboarding prototype](docs/design/onboarding.html) — the visual
+  reference and Agent prompt used by the in-app wizard.
+
+## Let an agent configure it
+
+VibDock ships an [Agent skill](skills/vibdock/SKILL.md) plus a
+[helper](scripts/vibdock-agent.ps1). A user can say:
+
+> Bind button 2 to open Codex, and put WeChat voice on button 1. Read the current
+> configuration first; do not overwrite anything without asking.
+
+The agent reads `GET /api/plugins`, `GET /api/actions` and `hardware-status`,
+resolves application references instead of guessing paths, asks before writing
+firmware, and reports the readback and recent-trigger result.
+
+## How it fits together
+
+```
+vibdock-launcher / vibdock-cli
+            │
+            ▼
+      VibDock host           auth, config, profiles, actions, API
+      ├── vibdock-device-au05      AU05 HID + firmware readback
+      ├── vibdock-device-gamepad   generic HID gamepad
+      ├── vibdock-actions          action/profile schema + commands
+      ├── vibdock-input            hotkey, gesture and combo matching
+      ├── vibdock-au05             pure AU05 protocol
+      └── vibdock-plugin-api       manifest, capability and plugin traits
 ```
 
-`transcribe` handles one WAV. `dictate` is Windows-only and captures from the
-default microphone (1–30 seconds), transcribes it, and with `--insert` types the
-result into the window that is focused at insertion time using Unicode
-`SendInput`. `--vad` trims the captured clip to Silero-detected speech and fails
-with a distinct "no speech" error when nothing is detected. `--hold --trigger
-<chord>` registers that chord globally and
-captures until the key is released; Escape cancels and discards the clip.
-`--target <title-substring>` requires `--insert` and refuses to type unless the
-foreground window title contains that text (case-insensitive), so the launching
-terminal cannot receive the transcript by accident. It never presses Enter,
-clicks Send, or submits a form, and it re-checks the foreground window before and
-after insertion. A detected focus change is an error; success means input was
-sent, not that the target accepted or displayed it. The transcript and audio
-stay local.
+The device and action crates are already independent of the service and web
+layer. The host advertises built-in plugin manifests at `GET /api/plugins` and
+the next extraction steps are tracked in the open roadmap.
 
-The model is discovered in this order: `--model-dir`, `VIBDOCK_STT_MODEL_DIR`,
-the existing DeepSeek Harness SenseVoice cache (read-only), then
-`%LOCALAPPDATA%\VibDock\models\sensevoice`. A missing model fails closed with
-the checked paths and the install route; the command never downloads at runtime.
-Building with `stt` downloads the pinned sherpa-onnx native archives at build
-time, so that build is not offline-friendly. The separate consent-gated model
-download lives in [scripts/stt](scripts/stt/README.md).
+## Honest status
 
-Still not implemented: configured-device selection, continuous listening, an
-interactive insertion target picker, clipboard fallback, and any claim of
-verified voice-session or content state. The native build is not part of the
-default CI artifact; packaging and model licensing remain open in
-[the local speech input design](docs/design/local-speech-input.md). The dated
-[local dictation acceptance record](docs/testing/local-dictation-acceptance.md)
-lists the live WAV, microphone, hold-trigger and Notepad insertion results.
+| Area | Current state |
+| --- | --- |
+| AU05 direct firmware bindings | Verified on a real device: defaults, readback, direct chord, physical action |
+| Hardware action sequences | Wait-step execution verified; launch/send-keys/mic/command chain implemented, full chain not live-tested |
+| Gestures and combos | AU05 single/double/long slots are persisted and executed by the service; multi-key combos and hook-based suppression are still pending |
+| Gamepad | Adapter implemented; no live gamepad was available for acceptance |
+| Virtual Pad | Prototype + saved-action execution endpoint; `/pad` route and pairing pending |
+| Plugin framework | Device/action/input crates extracted; read-only built-in registry; third-party sidecar pending |
 
-## Explore the design preview
+See the full acceptance notes in [docs/testing](docs/testing) and the technical
+detail in [README.technical.md](README.technical.md). Do not treat a sent chord
+or a successful API response as proof that an application changed state.
 
-```powershell
-.\vibdock.exe serve
-```
+## Design and agent docs
 
-Open http://127.0.0.1:43128 to explore the design. The preview uses mock data, never controls audio, and keeps bindings in the browser's own local storage so they survive a reload — they are not written to any backend or device configuration. Close the terminal or press Ctrl+C to stop the preview server. The current `serve` and `listen` commands are separate processes.
-
-## Resident service
-
-`service-start` runs a loopback service on the same address with authenticated
-configuration and action endpoints:
-
-```powershell
-.\vibdock.exe service-start
-.\vibdock.exe service-status
-.\vibdock.exe service-stop
-```
-
-The service generates a bearer token at startup from the OS entropy source and
-records it with the bound port in `%LOCALAPPDATA%\VibDock\service.json`. Reads
-and writes under `/api` require that token via `Authorization: Bearer <token>`
-or the `X-VibDock-Token` header. Requests are rejected unless the `Host` header
-is the bound loopback address and any `Origin` header is that same loopback
-origin. `/api/config` validates `device_id` and `hotkey`, then registers the shortcut
-before persisting to `config.json`. Missing patch fields retain their previous
-values; explicit null clears a field. Hotkeys require a modifier and a supported
-key. Character keys use the active Windows keyboard layout; required symbol
-modifiers must be included. Registration errors return 409 with the actual
-reason and rollback state; disk-write errors return 500. No shell or
-arbitrary-command endpoint exists.
-
-Repeated `service-start` invocations reuse the running instance instead of
-binding a second listener. The published record is treated only as a candidate:
-before it is trusted, the service on that port must answer a fresh 32-byte
-challenge at `POST /instance/challenge` with an HMAC-SHA256 proof derived from
-the recorded token. Discovery sends only the random nonce, never the bearer
-token; an HTTP 200 response alone is not ownership evidence. The complete
-challenge has a 700 ms budget and an 8 KiB response limit. Browser-code and
-shutdown control requests prove ownership and send their bearer on the same
-pinned IPv4 connection, with a two-second total budget across both exchanges
-and the same response limit. They never reconnect or fall back to IPv6 after
-proof. Only a successful challenge with one valid Content-Length and no
-Transfer-Encoding permits one additional HTTP exchange; chunked or ambiguous
-framing is always closed after its response.
-A stale marker left by a killed service is recovered only after proving no
-owner answers; if an unrelated process holds the port, startup fails with an
-error and leaves the marker alone. Older preview services without challenge
-proofs are not trusted: exit their tray or stop them with their matching older
-CLI before replacing the executables. Atomic state writes create exclusive
-fresh temporary files before writing; Unix files are created with mode 0600.
-Windows state protection relies on the parent directory's inherited ACLs; an
-explicit per-user ACL guarantee has not been established.
-
-Request bodies are bounded: an oversized or non-UTF-8 body is answered with
-413 rather than read in full. If the OS entropy source fails, the service
-refuses to start instead of minting a weaker token.
-
-The desktop launcher requests a one-use browser code through the authenticated
-`POST /api/bootstrap/new` endpoint and opens it in a URL fragment. The page must
-clear the fragment immediately and redeem it at `POST /api/bootstrap` with
-`{"code":"..."}` to receive an in-memory session token. Codes expire after
-60 seconds and cannot be reused. Sessions expire after eight hours or a service
-restart; they permit configuration and device actions, but not service shutdown,
-instance identity, or issuing more codes. Pending codes and sessions are bounded.
-The service-mode page consumes the code automatically and clears the fragment
-before redemption. Reopen the page from the tray when a code or session expires.
-
-`service-stop` performs a real shutdown: it asks the running service to stop
-over the loopback API using the recorded token, and waits for the port to be
-released. Only the instance that can prove it holds that token is stopped, so
-an unrelated process on the same port is never terminated by name. The service
-clears its instance marker as it exits.
-
-## Tray entry (Windows)
-
-Double-click `vibdock-launcher.exe` to start or reuse an authenticated resident
-service and open Web Settings directly. Keep both executables in the same directory.
-The notification-area icon remains running; there is no Windows resident panel.
-
-- **Settings…**, the primary tray icon click, or another launch opens a fresh one-use handoff to the
-  proved service’s actual address. A browser launch failure is visible.
-- **Mute microphone / Unmute microphone** targets the exact saved microphone
-  identity and reports the verified readback. A missing or unreadable device is
-  shown as unavailable; there is no default-device fallback.
-- **Pinned software** lists up to eight saved entries and exposes their exact
-  playback-session mute/unmute actions. It does not start or stop an
-  application’s voice session.
-- Closing the browser leaves the tray and service running.
-- **Service status** reports service ownership/liveness only. It does not claim an
-  audio action, application voice session, or hardware input is working.
-- **Exit VibDock** asks the verified service to stop. A shutdown failure leaves the
-  controls available for retry. No process-name termination is used.
-
-The existing named mutex keeps one desktop entry. Status is checked off the UI
-thread, expires after four seconds, and falls back to unknown/unavailable.
-Original monochrome icon variants follow the Windows system tray light/dark
-setting; Explorer taskbar recreation re-adds the icon. Original artwork is also
-embedded in the executable and settings homepage; it requires no external request.
-The separate optional mouse-transparent feedback overlay is unchanged.
-
-Pinned software also appears in a compact logo strip above the primary taskbar's
-work area. Badges show playback muted (`×`), active (`▶`), idle (`II`), disconnected
-(`–`) or unknown (`?`). Hover text and accessible button names explain the state;
-click opens Settings and right-click uses the same exact-session menu. Partial
-or expired observations stay unknown. This strip does not report voice activity,
-does not modify Explorer, and still requires live pointer/DPI/focus acceptance.
-
-Settings > **应用与麦克风** lists current readable Windows playback sessions. Pin an
-observed software entry to keep its location/output selection across restart in
-`apps.json`, separately from the global shortcut binding. The settings page and notification
-area show its current native resource icon or a generic placeholder. Removal
-changes only the saved entry. Stale, partial or unsupported reads stay unknown;
-playback activity does not establish microphone use, voice state or agent work.
-Windows software-icon menus offer explicit single-session playback mute/unmute,
-with identity checks and a verified readback receipt. Mac application presence
-remains read-only. See the
-[software state, privacy and lifecycle contract](docs/resident-software.md).
-
-Authenticated same-origin `POST /api/apps/bind` accepts exactly
-`{"revision":0,"id":"<saved-entry-id>","device_id":"<microphone-endpoint-id>"}`;
-use `device_id: null` to clear it. A non-null endpoint must pass a current exact-device
-read before the optional `device_id` is persisted. A stale revision or unavailable
-endpoint returns 409 and preserves the previous association. This association
-does not set an application's operating-system audio route.
-
-On macOS, Settings > **应用集成** instead lists native running applications.
-Pinned bundle locations survive restart in a separate `apps-macos.json`. The
-floating panel, menu-bar menu and Dock menu show native icons and Running, Not
-running or Unknown. Process presence never establishes playback, recording or
-agent work. Missing or stale icons use a placeholder. See the
-[macOS native contract](docs/macos-desktop.md) and
-[desktop acceptance checklist](docs/design/desktop-candidate.md) for validation limits.
-
-Set `VIBDOCK_PORT` to bind a different loopback port when running acceptance
-tests, so they do not disturb a service already on the default one.
-
-## Control a microphone on Windows
-
-```powershell
-.\vibdock.exe devices
-.\vibdock.exe status --device '<full endpoint ID from devices>'
-.\vibdock.exe listen --device '<full endpoint ID from devices>'
-```
-
-Choose the microphone by its displayed name and full ID. In Ulanzi Studio, map the voice button to **Ctrl+Alt+Shift+F9**. Keep `listen` running; each press toggles the selected microphone and prints its actual mute state. A conflicting hotkey is rejected. Disconnecting the endpoint produces an error instead of silently switching to another microphone.
-
-Use `mute`, `unmute`, or `toggle` in place of `status` for individual commands. Exit codes are zero on success and nonzero on error. Exiting does not restore or change the microphone state.
-
-**Device mute affects every app using that microphone.** It is different from muting one agent's input or output. The agent must use the selected microphone for this control to affect its audio. Hold-to-talk and device-specific button recognition are not implemented.
-
-## Troubleshooting
-
-- **Shortcut is occupied:** choose another combination, or stop the other `listen`/service instance holding it. A failed edit preserves the previous saved binding.
-- **Microphone disappeared:** reconnect the configured endpoint and check its identity. VibDock does not silently switch to another microphone.
-- **Page is unauthorized after restart:** reopen configuration from the launcher or tray to obtain a fresh one-use browser code. Never share the service token or bootstrap URL.
-- **State is unknown:** check that the service is running. The page resumes polling after a timeout; reopening it renews authorization when needed.
-- **Another application owns the port:** resolve that conflict or explicitly choose a different `VIBDOCK_PORT`. Startup will not terminate the other application or silently select another port.
-
-## Application playback controls (unreleased Windows source)
-
-These commands are implemented in current source. A dated two-session
-exact-session mute/unmute readback check is recorded in the
-[application recognition acceptance record](docs/testing/app-recognition-acceptance.md),
-and a repeatable opt-in two-application state check is available below;
-audible meeting-level isolation remains unverified, and the published v0.1.0
-download does not include them.
-
-Application playback sessions are separate from microphone mute: they let one
-program's audio be silenced while everything else keeps playing.
-
-```powershell
-.\vibdock.exe app-devices
-.\vibdock.exe app-list --endpoint '<full endpoint ID from app-devices>'
-.\vibdock.exe app-mute --endpoint '<endpoint ID>' --session '<session ID from app-list>'
-```
-
-Use `app-status`, `app-unmute`, or `app-toggle` in place of `app-mute`. Each
-command prints a readable summary followed by one line of JSON describing the
-session that was actually read back, for example:
-
-```json
-{"endpoint_id":"{0.0.0.00000000}.{...}","session_instance_id":"{...}","process_id":1234,"display_name":"Music","process_identity":"pid 1234","muted":true,"volume":1.000000,"volume_valid":true,"active":true}
-```
-
-Choose a session by its `session_instance_id`, shown as `session:` in the
-readable output. Application playback control is deliberately strict:
-
-- Both `--endpoint` and `--session` are required. There is no default endpoint
-  and no "first session" fallback, so a mute cannot land on a device or
-  application you did not name.
-- The session is re-verified immediately before any change. If it has gone away
-  or a different process now owns it, the command fails and says so instead of
-  controlling a different session.
-- Only the mute state is changed, for that one session. The system master mute,
-  the volume of other applications, and microphone state are never touched.
-- Mute state is never reported from the request: it is read back from Windows
-  after the change, and a mismatch is an error.
-- `app-toggle` flips the session's state as read immediately before the write,
-  not a value observed earlier. A third-party change in between cannot make the
-  command write the inverse of what you asked for.
-- A volume the platform does not report is emitted as `"volume":null` with
-  `"volume_valid":false`, never as `0`, so "silent" and "unknown" stay
-  distinguishable.
-
-Applications that split audio across several processes are **not** grouped
-automatically. Where the owning process cannot be resolved, it is reported as
-`unknown process` and you choose explicitly rather than relying on a guess from
-similar names. Only playback (output) sessions are addressed; this is unrelated
-to microphone input mute.
-
-On Linux and macOS these commands report that application audio sessions are
-unimplemented rather than returning an empty list.
-
-**A readback failure after a write is not the same as no change.** Once the mute
-change has been submitted to Windows, a failure to re-read the result is
-reported as "submitted but not confirmed" — the change may already be applied.
-Query `app-status` before retrying; repeating `app-toggle` could reverse a mute
-that did take effect. A failure *before* the write is different: nothing was
-changed, and the command says the session is gone instead.
-
-One session whose state cannot be read is skipped during enumeration rather than
-failing the whole endpoint, so an unreadable session belonging to another
-process cannot make an unrelated session impossible to control. When that
-happens `app-list` prints a warning naming how many sessions were skipped, so a
-partial list is never presented as a complete one.
-
-Two kinds of skipped sessions are reported separately, because only one is a
-problem. Sessions with no session-instance identifier — system sounds, on most
-Windows desktops — are **not addressable** and are never selectable; that is
-expected and is counted but not treated as a fault. A session that is
-addressable but whose state could not be read is a genuine **could not be read**
-warning.
-
-### Reproducible two-application isolation check
-
-`scripts/test-playback-isolation.ps1` is an opt-in Windows-only harness that
-repeats the two-application check against real playback sessions. It writes two
-short distinct WAV tones to a temporary directory, starts two `pwsh` players
-using `System.Media.SoundPlayer.PlayLooping()`, requires the single active
-render endpoint from `app-devices`, selects exactly the two sessions owned by
-the player PIDs, mutes A, and asserts A reads `muted=true` while B remains
-`muted=false` and `active=true`. It then unmutes A, verifies both sessions are
-still unmuted and active, and always stops the players and deletes the
-temporary files in `finally`.
-
-```powershell
-cargo build --locked
-pwsh -NoProfile -File scripts/test-playback-isolation.ps1
-```
-
-The harness never issues a device-level command and never falls back to another
-endpoint or session. It is state-level evidence only: no meeting is joined and
-audible output is not measured. Because it needs real Windows audio hardware it
-is not a hosted-CI step. See [the harness notes](docs/testing/playback-isolation.md).
-
-## Product direction
-
-`vibdock capabilities` reports documentation-derived integration declarations.
-Installed-client verification is pending; the report labels those capabilities
-as unknown or unverified rather than claiming a working application connection.
-
-- Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
-- Keep input mute, application output mute, and platform voice-session controls separate.
-- Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
-- Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. A two-session exact-session state check is recorded, while meeting-level isolation and hardware bindings for these playback actions remain open. The opt-in two-application harness checks session state, not audibility.
-- Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
-- Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
-
-The control API authenticates callers and validates browser origins. The `serve` preview is read-only, loopback-only, and rejects unexpected Host headers. `service-start` exposes authenticated `/api` configuration and action endpoints, including real microphone status, mute, unmute, and toggle through the Windows audio adapter. A sent shortcut must not be reported as a verified application state change.
-
-See [the interaction specification](docs/design/README.md) and [the clickable design source](docs/design/index.html).
+- [Design workbench, clean direction](docs/design/prototype-clean.html)
+- [Virtual Pad design](docs/design/virtual-pad.md)
+- [Plugin modularization](docs/design/plugin-modularization.md)
+- [Agent skill](skills/vibdock/SKILL.md) — safe CLI/API workflows for agents
+- [Agent helper](scripts/vibdock-agent.ps1) — reads the local token without printing it
+- [Roadmap issues](https://github.com/loonghao/vibdock/issues/71)
 
 ## Development
 
 ```powershell
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --all-targets
+cargo clippy --workspace --locked --all-targets -- -D warnings
+cargo test --workspace --locked --all-targets
 node scripts/test-binding-ui.cjs
-cargo build --locked --release --target-dir target
 ```
 
-Audio access is confined to the Windows adapter. The command parser and embedded preview run on all supported build platforms.
-
-The opt-in `scripts/test-playback-isolation.ps1` harness is intentionally not a
-CI step: it needs a real Windows audio endpoint and two live player processes.
-See [the harness notes](docs/testing/playback-isolation.md).
-
-## Releases
-
-Conventional Commits on `main` feed release-please. It opens a version/changelog PR; merging that PR creates a release, and the same workflow builds Windows x64, Linux x64, and macOS ARM64 archives plus SHA256 files. A release tag alone does not establish that all downloads were built successfully; check the workflow and assets.
-
-With the default GitHub token, bot-created release PRs do not automatically trigger PR workflows. Dispatch CI on the release branch and wait for all checks at its current head before merging. A scoped GitHub App token can automate this later. Repository Actions settings must permit workflow-created pull requests.
-
-### Resident launch behavior
-
-On Windows, double-click to start or reuse one resident service and open authenticated Web Settings. Closing the page keeps the tray and service alive; Exit VibDock stops it. Repeated launches reopen Settings through the same tray owner. The CLI, tray entry and authenticated shutdown are implemented in source; a packaged double-click launcher executable is not published yet. The macOS candidate retains its native panel.
-
-WeChat Input and Codex/Mini are the first integration priorities. WorkBuddy and meeting-friendly per-application audio controls follow; Slack and Tencent Meeting scenarios remain integration-specific acceptance work.
-
-The latest product launch design uses a thin Windows launcher/tray executable alongside the console CLI, both sharing one Rust core/service. The `tray` command implements the tray entry and shares the service core with the CLI; current preview downloads still contain only the CLI.
-
-Integration evidence and shortcut ownership are tracked in [voice integration evidence](docs/integrations/voice-evidence.md). Documentation support does not mean an installed client has been controlled successfully.
+The detailed technical README keeps the complete feature matrix, API contract,
+permissions, device quirks and acceptance checklist: **[README.technical.md](README.technical.md)**.
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+MIT. VibDock is independent of Ulanzi, OpenAI, DeepSeek, Tencent and WorkBuddy;
+product names are used only to describe integrations.
+
+<p align="center"><a href="README.zh-CN.md">阅读中文版 →</a></p>
+
+
+
+

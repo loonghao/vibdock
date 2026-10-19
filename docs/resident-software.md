@@ -65,18 +65,22 @@ makes the window list partial:
 partial list never claims that an application is absent.
 
 A closed set of known integration executables (`wetype*.exe`, `wemeet*.exe`,
-`codex.exe`/`chatgpt.exe`, `workbuddy.exe`) is additionally matched by exact
-process name so a background input method or tray agent can be recognised
-without a window. These rows are marked `background: true`. That pass is
-best-effort: an unreadable protected helper is skipped and does not make the
-window list partial, and it never establishes audio, voice, account, or control
-state. One row per integration is retained after deduplication against a
-windowed client.
+`codex.exe`/`chatgpt.exe`, `DeepSeek Harness.exe`, `workbuddy.exe`) is
+additionally matched by exact process name so a background input method or tray
+agent can be recognised without a window. These rows are marked
+`background: true`. That pass is best-effort: an unreadable protected helper is
+skipped and does not make the window list partial, and it never establishes
+audio, voice, account, or control state. One row per integration is retained
+after deduplication against a windowed client.
 
 A recognised executable basename may carry an integration label
-(`tencent_meeting`, `wechat_input`, `codex`, `workbuddy`). The label is
+(`tencent_meeting`, `wechat_input`, `codex`, `dsh`, `workbuddy`). The label is
 recognition metadata only. It does not prove installation, connection, account
-state, audio use, or that the client accepts any shortcut.
+state, audio use, or that the client accepts any shortcut. `DeepSeek Harness.exe`
+is matched by exact basename (case-insensitive), so unrelated names such as
+`deepseek.exe` or `DeepSeek Harness Helper.exe` are not recognised. That
+mapping has unit coverage only; no live foreground dispatch against DeepSeek
+Harness has been recorded.
 
 `shortcuts.json` (schema 1, revision, at most eight entries) stores one random
 id, label, executable location, VibDock trigger and dispatch chord per entry.
@@ -89,13 +93,39 @@ accepts a revision and saved id. Both require the existing authentication and sa
 checks. A stale reference, stale revision, duplicate application, duplicate
 trigger, or a chord conflict returns 409 and preserves the previous file.
 `GET /api/shortcuts` returns labels, trigger/dispatch chords, registration
-state and errors, but never an executable path.
+state and errors, but never an executable path. A saved entry may also name an
+optional AU05 `device_button` (`0`-`2`); the service then writes that binding's
+trigger into the button's firmware setting and reports the provisioning state in
+shortcut and hardware responses. A firmware write failure does not roll back the
+saved binding. See [AU05 direct bindings](design/au05-direct-bindings.md).
 
-Both chords use the existing modifier-plus-key grammar. `Win` and bare keys are
-not supported. A dispatch chord equal to any VibDock trigger is rejected: an
-injected chord is delivered to the same global hotkey table, so allowing it
-would make VibDock re-trigger itself. Changing the microphone trigger to a saved
-dispatch chord is rejected for the same reason.
+Registered triggers use the existing modifier-plus-key grammar. A registered
+trigger containing `Win`, or consisting of a bare key, is rejected: Windows
+reserves `MOD_WIN` for shell bindings, and a bare registered key would swallow
+that key everywhere. A dispatch chord may contain `Win` (for example
+`Ctrl + Win`); it is injected with `SendInput`. A dispatch chord equal to any
+VibDock trigger is rejected: an injected chord is delivered to the same global
+hotkey table, so allowing it would make VibDock re-trigger itself. Changing the
+microphone trigger to a saved dispatch chord is rejected for the same reason.
+
+The AU05 adapter also has a direct firmware mode stored in `hardware.json`
+(schema 1, up to three buttons): a chord or bare key is written into a button
+with no host hotkey, no dispatch, and no application-target check. It is how the
+first-run defaults are written (`Ctrl + Win` 微信语音, `Enter` 回车, `Escape`
+取消, skipping buttons that already have an application binding) and how
+`Ctrl + Win` reaches an input method that ignores injected input. A button
+carries an application binding, a direct chord, or a hardware action, never more
+than one, and a direct chord is never observed in the recent-trigger log. See
+[AU05 direct bindings](design/au05-direct-bindings.md).
+
+Hardware action bindings (`actions.json`, schema 1, up to 16) map one AU05
+button or HID gamepad button to 1-8 ordered steps: launch an application, send a
+chord, toggle an explicit microphone, run a local command from `commands.json`,
+or wait. An AU05 action gets a generated trigger, registered and written into
+firmware; a gamepad action has no trigger and no firmware write. Steps execute
+in order and stop at the first failure, with the result in the recent-trigger
+log; there is no action-execute endpoint and no voice start/stop. See
+[hardware action sequences](design/hardware-actions.md).
 
 Registration happens before the file is committed, and the previous set is
 restored on registration or persistence failure. At startup, a trigger that

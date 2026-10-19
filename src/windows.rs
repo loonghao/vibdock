@@ -48,6 +48,11 @@ impl HotkeyCode {
                 Modifier::Control => MOD_CONTROL,
                 Modifier::Alt => MOD_ALT,
                 Modifier::Shift => MOD_SHIFT,
+                // `MOD_WIN` is mapped only so the value is complete; a trigger
+                // containing Win is rejected before registration because
+                // Windows reserves it for shell bindings. Dispatch chords use
+                // the virtual-key path below.
+                Modifier::Win => MOD_WIN,
             };
         }
         modifiers |= MOD_NOREPEAT;
@@ -87,6 +92,9 @@ fn virtual_key(key: Key) -> Option<u32> {
         Key::Enter => Some(u32::from(VK_RETURN.0)),
         Key::Tab => Some(u32::from(VK_TAB.0)),
         Key::Backspace => Some(u32::from(VK_BACK.0)),
+        // Dispatch-only. Registration rejects it explicitly before this value
+        // could be handed to `RegisterHotKey`.
+        Key::Win => Some(u32::from(VK_LWIN.0)),
     }
 }
 
@@ -126,6 +134,20 @@ pub struct RegisteredHotkey {
 impl RegisteredHotkey {
     /// Registers `hotkey` for this thread, returning the live registration.
     pub fn register(hotkey: &Hotkey, id: i32) -> std::result::Result<RegisteredHotkey, String> {
+        if let Some(modifier) = hotkey.modifiers().iter().find(|m| !m.is_registrable()) {
+            return Err(format!(
+                "{} is not available as a VibDock trigger: Windows reserves it for shell bindings. \
+                 Use it only in the dispatch shortcut, or choose another trigger.",
+                modifier.as_str()
+            ));
+        }
+        if hotkey.key() == Key::Win {
+            return Err(
+                "The Windows key is not available as a VibDock trigger. Use it only in the \
+                 dispatch shortcut."
+                    .to_string(),
+            );
+        }
         if let Key::Character(character) = hotkey.key() {
             let mapping = character_key(character)
                 .ok_or("The character is unavailable on the active keyboard layout.")?;
@@ -445,7 +467,32 @@ unsafe fn inject_dispatch(hotkey: &Hotkey, code: HotkeyCode) -> std::result::Res
     for modifier in modifiers.iter().rev() {
         inputs.push(key_input(*modifier, true));
     }
-    let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    // A chord involving the Windows key is handled in visible stages: some
+    // input-method hooks ignore a zero-duration injected chord or only react
+    // once the modifier is actually held. Keeping the same events but spacing
+    // them out preserves the chord's identity while making it observable.
+    let involves_win = modifiers.contains(&VK_LWIN.0) || code.virtual_key as u16 == VK_LWIN.0;
+    if involves_win {
+        for modifier in &modifiers {
+            send_inputs(&[key_input(*modifier, false)])?;
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        send_inputs(&[key_input(code.virtual_key as u16, false)])?;
+        std::thread::sleep(std::time::Duration::from_millis(140));
+        send_inputs(&[key_input(code.virtual_key as u16, true)])?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        for modifier in modifiers.iter().rev() {
+            send_inputs(&[key_input(*modifier, true)])?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        return Ok(());
+    }
+    send_inputs(&inputs)
+}
+
+/// Sends one batch and reports a partial acceptance honestly.
+fn send_inputs(inputs: &[INPUT]) -> std::result::Result<(), String> {
+    let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
         return Err(format!(
             "Windows accepted {sent} of {} input events; the shortcut may not have been sent.",
@@ -460,6 +507,10 @@ fn modifier_virtual_key(modifier: Modifier) -> u16 {
         Modifier::Control => VK_CONTROL.0,
         Modifier::Alt => VK_MENU.0,
         Modifier::Shift => VK_SHIFT.0,
+        // Left Windows key. Injection of `Ctrl + Win` is how a background IME
+        // voice shortcut is reached; it is never registered as a VibDock
+        // trigger.
+        Modifier::Win => VK_LWIN.0,
     }
 }
 
@@ -591,6 +642,29 @@ pub(crate) unsafe fn capture_devices(
         found.push((device_name(&device)?, device_id(&device)?));
     }
     Ok(found)
+}
+
+/// Finds an active capture endpoint whose display name contains `needle`
+/// (case-insensitive) and returns its display name.
+///
+/// Used only to label a known hardware microphone in the hardware status view.
+/// It never selects, opens, or changes an audio route, and returns `None`
+/// rather than guessing when no matching endpoint is present.
+pub(crate) fn capture_endpoint_containing(needle: &str) -> Option<String> {
+    let needle = needle.to_ascii_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().is_ok();
+        let _com = initialized.then_some(Com);
+        let manager: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        capture_devices(&manager)
+            .ok()?
+            .into_iter()
+            .find_map(|(name, _)| name.to_ascii_lowercase().contains(&needle).then_some(name))
+    }
 }
 
 /// Executes one action against the platform audio stack.
@@ -767,6 +841,21 @@ mod tests {
             code.modifiers.0 & MOD_NOREPEAT.0 != 0,
             "repeat suppression must always be requested"
         );
+    }
+
+    #[test]
+    fn win_is_dispatch_only_and_never_registered() {
+        let binding = hotkey("Ctrl + Win + F9");
+        assert!(binding.modifiers().contains(&Modifier::Win));
+        // Dispatch conversion must exist (the virtual-key path uses it), while
+        // registration must refuse before calling RegisterHotKey.
+        assert!(HotkeyCode::from_hotkey(&binding).is_some());
+        assert!(RegisteredHotkey::register(&binding, 999).is_err());
+        assert_eq!(modifier_virtual_key(Modifier::Win), VK_LWIN.0);
+        // A modifier-only chord uses the Windows key as its key half.
+        let modifier_only = hotkey("Ctrl + Win");
+        assert_eq!(virtual_key(Key::Win), Some(u32::from(VK_LWIN.0)));
+        assert!(RegisteredHotkey::register(&modifier_only, 998).is_err());
     }
 
     #[test]

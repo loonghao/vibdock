@@ -219,6 +219,7 @@ fn known_integration(executable: &str) -> Option<&'static str> {
         "wemeetapp.exe" | "wemeet.exe" => Some("tencent_meeting"),
         "wetype.exe" | "wetype_renderer.exe" | "wetype_server.exe" => Some("wechat_input"),
         "codex.exe" | "chatgpt.exe" => Some("codex"),
+        "deepseek harness.exe" => Some("dsh"),
         "workbuddy.exe" => Some("workbuddy"),
         _ => None,
     }
@@ -1940,10 +1941,41 @@ mod tests {
                 Some("wechat_input"),
             ),
             (r"C:\Apps\Codex\codex.exe", Some("codex")),
+            (
+                r"C:\Users\Example\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe",
+                Some("dsh"),
+            ),
+            (r"C:\Apps\WorkBuddy\workbuddy.exe", Some("workbuddy")),
             (r"C:\Apps\Codex\CodexHelper.exe", None),
             (r"C:\Apps\Slack\slack.exe", None),
         ] {
             assert_eq!(known_integration(path), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn known_integration_is_case_insensitive_and_exact() {
+        assert_eq!(
+            known_integration(r"C:\Apps\DeepSeek\DEEPSEEK HARNESS.EXE"),
+            Some("dsh")
+        );
+        assert_eq!(
+            known_integration(r"C:\Apps\DeepSeek\deepseek harness.exe"),
+            Some("dsh")
+        );
+        assert_eq!(
+            known_integration(r"C:\Apps\DeepSeek\DeepSeek Harness.exe"),
+            Some("dsh")
+        );
+        // No other deepseek*.exe name may be recognised by accident.
+        for path in [
+            r"C:\Apps\DeepSeek\deepseek.exe",
+            r"C:\Apps\DeepSeek\deepseek-harness.exe",
+            r"C:\Apps\DeepSeek\deepseek_harness.exe",
+            r"C:\Apps\DeepSeek\DeepSeek Harness Helper.exe",
+            r"C:\Apps\DeepSeek\xdeepseek harness.exe",
+        ] {
+            assert_eq!(known_integration(path), None, "{path}");
         }
     }
 

@@ -12,11 +12,11 @@ use std::fmt;
 
 /// The modifiers a binding may require.
 ///
-/// Only the four combinations Windows can express in a `RegisterHotKey` mask
-/// are represented. There is deliberately no `Win` variant: `MOD_WIN` is
-/// reserved for OS shell bindings that never reach an application window, so
-/// accepting it would let a user record a hotkey the platform silently refuses
-/// and then believe it is armed.
+/// `Win` is parsed because it is a real dispatch target (for example an input
+/// method whose voice shortcut is `Ctrl + Win`). It is not registrable as a
+/// VibDock trigger: Windows reserves `MOD_WIN` for shell bindings, so a trigger
+/// containing it is rejected before `RegisterHotKey` is called rather than
+/// saved and silently never fired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Modifier {
     /// `Ctrl`.
@@ -25,6 +25,8 @@ pub enum Modifier {
     Alt,
     /// `Shift`.
     Shift,
+    /// The Windows key. Dispatch-only; never valid in a registered trigger.
+    Win,
 }
 
 impl Modifier {
@@ -34,20 +36,27 @@ impl Modifier {
             Modifier::Control => "Ctrl",
             Modifier::Alt => "Alt",
             Modifier::Shift => "Shift",
+            Modifier::Win => "Win",
         }
     }
 
     /// Parses a modifier name case-insensitively, including browser aliases.
     ///
-    /// `Control`, `Alt`/`Menu`/`Option`, and `Shift` are the spellings a
+    /// `Control`, `Alt`/`Menu`/`Option`, `Shift` and `Win` are the spellings a
     /// browser `KeyboardEvent` or a hand-written config can produce.
     pub fn parse(name: &str) -> Option<Modifier> {
         match name.trim().to_ascii_lowercase().as_str() {
             "ctrl" | "control" => Some(Modifier::Control),
             "alt" | "menu" | "option" => Some(Modifier::Alt),
             "shift" => Some(Modifier::Shift),
+            "win" | "windows" => Some(Modifier::Win),
             _ => None,
         }
+    }
+
+    /// True when this modifier can be part of a registered global trigger.
+    pub fn is_registrable(self) -> bool {
+        !matches!(self, Modifier::Win)
     }
 }
 
@@ -91,6 +100,12 @@ pub enum Key {
     Tab,
     /// `Backspace`.
     Backspace,
+    /// The Windows key as the key half of a dispatch chord.
+    ///
+    /// This exists so a modifier-only shell chord such as `Ctrl + Win` (a
+    /// common input-method voice shortcut) can be represented and injected.
+    /// It is dispatch-only: a trigger whose key is Win can never be registered.
+    Win,
 }
 
 impl Key {
@@ -132,6 +147,8 @@ impl Key {
             ("arrowdown", Key::Down),
             ("arrowleft", Key::Left),
             ("arrowright", Key::Right),
+            ("win", Key::Win),
+            ("windows", Key::Win),
         ];
         let lowered = name.to_ascii_lowercase();
         if let Some((_, key)) = NAMED.iter().find(|(text, _)| *text == lowered.as_str()) {
@@ -168,6 +185,7 @@ impl Key {
             Key::Down => "Down".to_string(),
             Key::Left => "Left".to_string(),
             Key::Right => "Right".to_string(),
+            Key::Win => "Win".to_string(),
         }
     }
 }
@@ -400,6 +418,23 @@ mod tests {
             Hotkey::parse("Ctrl + PageDown").unwrap().as_string(),
             "Ctrl + PageDown"
         );
+    }
+
+    #[test]
+    fn win_is_parsed_but_not_registrable() {
+        let hotkey = Hotkey::parse("Ctrl + Win + F9").unwrap();
+        assert_eq!(hotkey.modifiers(), &[Modifier::Control, Modifier::Win]);
+        assert_eq!(hotkey.as_string(), "Ctrl + Win + F9");
+        // A modifier-only shell chord is represented with Win as the key half.
+        let modifier_only = Hotkey::parse("Ctrl + Win").unwrap();
+        assert_eq!(modifier_only.modifiers(), &[Modifier::Control]);
+        assert_eq!(modifier_only.key(), Key::Win);
+        assert_eq!(modifier_only.as_string(), "Ctrl + Win");
+        assert!(!Modifier::Win.is_registrable());
+        assert!(Modifier::Control.is_registrable());
+        // Aliases accepted by the page/recorder but not a silent wildcard.
+        assert_eq!(Modifier::parse("windows"), Some(Modifier::Win));
+        assert_eq!(Modifier::parse("Super"), None);
     }
 
     #[test]
