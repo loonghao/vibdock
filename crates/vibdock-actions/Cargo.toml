@@ -1,0 +1,16 @@
+[package]
+name = "vibdock-actions"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Saved action/profile model and structured command definitions."
+
+[lib]
+name = "vibdock_actions"
+path = "src/lib.rs"
+
+[dependencies]
+getrandom = "0.2"
+serde_json = "1"
+vibdock-input = { path = "../vibdock-input" }

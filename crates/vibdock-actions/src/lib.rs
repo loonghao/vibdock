@@ -20,10 +20,77 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::hotkey::Hotkey;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use vibdock_input::hotkey::Hotkey;
+
+/// Host-side hotkey registration used by saved action triggers.
+///
+/// The actions crate owns the binding table but not the Windows registration.
+/// The host implements this trait with its platform adapter, so the crate can
+/// be tested and built without a message loop.
+pub trait HotkeyBackend {
+    fn register(&mut self, hotkey: &Hotkey, id: i32) -> Result<(), String>;
+    fn clear(&mut self);
+}
+
+fn generate_token() -> Result<String, String> {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed)
+        .map_err(|error| format!("Secure identifiers are unavailable: {error}"))?;
+    Ok(seed.iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+        out
+    }))
+}
+
+fn local_executable_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() > 7
+        && bytes.len() <= 4096
+        && !path.chars().any(char::is_control)
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1..3] == *b":\\"
+        && !path[3..].contains(['/', ':', '*', '?', '"', '<', '>', '|'])
+        && path[3..].split('\\').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !part.ends_with(['.', ' '])
+        })
+        && path
+            .rsplit('.')
+            .next()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+}
+
+fn atomic_write(path: &PathBuf, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))?;
+    std::fs::create_dir_all(dir)?;
+    let token =
+        generate_token().map_err(|_| std::io::Error::other("token"))?;
+    let temp = dir.join(format!(
+        ".{}.{}.{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("actions"),
+        std::process::id(),
+        token
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let written = file.write_all(contents).and_then(|_| file.sync_all());
+    drop(file);
+    let result = written.and_then(|_| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
 
 const MAX_BINDINGS: usize = 16;
 const MAX_STEPS: usize = 8;
@@ -34,10 +101,10 @@ const MAX_ARGUMENT_LEN: usize = 512;
 const MAX_PARAMETERS: usize = 8;
 /// Hotkey ids 2000..2999 are reserved for action bindings; the microphone uses
 /// id 1 and per-application bindings use 1000+.
-pub(crate) const HOTKEY_ID_BASE: i32 = 2000;
+pub const HOTKEY_ID_BASE: i32 = 2000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Source {
+pub enum Source {
     Au05Button(u8),
     Gamepad {
         device_key: String,
@@ -80,7 +147,7 @@ impl Source {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Step {
+pub enum Step {
     Launch {
         label: String,
         executable: String,
@@ -241,9 +308,7 @@ impl Step {
 
     fn validate_persisted(&self, commands: &CommandRegistry) -> bool {
         match self {
-            Step::Launch { executable, .. } => {
-                crate::resident_action_protocol::local_executable_path(executable)
-            }
+            Step::Launch { executable, .. } => local_executable_path(executable),
             Step::Command {
                 command_id,
                 parameters,
@@ -254,12 +319,12 @@ impl Step {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Binding {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) source: Source,
-    pub(crate) trigger: Option<String>,
-    pub(crate) steps: Vec<Step>,
+pub struct Binding {
+    pub id: String,
+    pub name: String,
+    pub source: Source,
+    pub trigger: Option<String>,
+    pub steps: Vec<Step>,
 }
 
 impl Binding {
@@ -347,40 +412,43 @@ thread_local! {
 
 /// Other bindings that already own a trigger, button, or direct chord.
 #[derive(Default)]
-pub(crate) struct Reserved {
-    pub(crate) mic_hotkey: Option<Hotkey>,
-    pub(crate) app_triggers: Vec<Hotkey>,
-    pub(crate) app_dispatch_chords: Vec<Hotkey>,
-    pub(crate) app_buttons: Vec<u8>,
-    pub(crate) direct_buttons: Vec<u8>,
-    pub(crate) direct_chords: Vec<Hotkey>,
+pub struct Reserved {
+    pub mic_hotkey: Option<Hotkey>,
+    pub app_triggers: Vec<Hotkey>,
+    pub app_dispatch_chords: Vec<Hotkey>,
+    pub app_buttons: Vec<u8>,
+    pub direct_buttons: Vec<u8>,
+    pub direct_chords: Vec<Hotkey>,
 }
 
-pub(crate) struct Registry {
+pub struct Registry {
     path: PathBuf,
     revision: u64,
     bindings: Vec<Binding>,
     commands: CommandRegistry,
     load_error: Option<String>,
     register: bool,
-    /// Live registrations keep their hotkeys armed; dropping a handle
-    /// unregisters it, so they must stay owned by this registry.
-    #[cfg(windows)]
-    live_hotkeys: Vec<crate::windows::RegisteredHotkey>,
+    backend: Option<Box<dyn HotkeyBackend>>,
 }
 
 impl Registry {
-    pub(crate) fn start(enabled: bool, commands: CommandRegistry) -> Self {
-        let path = crate::service::state_dir().map(|dir| dir.join("actions.json"));
-        let mut registry = match path {
-            Ok(path) => Self::load(path, commands),
-            Err(_) => Self::empty(
+    pub fn start(
+        enabled: bool,
+        commands: CommandRegistry,
+        state_dir: PathBuf,
+        backend: Option<Box<dyn HotkeyBackend>>,
+    ) -> Self {
+        let mut registry = if state_dir.as_os_str().is_empty() {
+            Self::empty(
                 PathBuf::new(),
                 commands,
                 Some("Action storage is unavailable; existing data was not changed.".into()),
-            ),
+            )
+        } else {
+            Self::load(state_dir.join("actions.json"), commands)
         };
         registry.register = enabled && !cfg!(test);
+        registry.backend = backend;
         #[cfg(windows)]
         if enabled {
             registry.rebind_all();
@@ -396,13 +464,12 @@ impl Registry {
             commands,
             load_error: error,
             register: !cfg!(test),
-            #[cfg(windows)]
-            live_hotkeys: Vec::new(),
+            backend: None,
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn empty_for_test(commands: CommandRegistry) -> Self {
+    pub fn empty_for_test(commands: CommandRegistry) -> Self {
         Self::empty(PathBuf::new(), commands, None)
     }
 
@@ -438,11 +505,11 @@ impl Registry {
         registry
     }
 
-    pub(crate) fn commands(&self) -> &CommandRegistry {
+    pub fn commands(&self) -> &CommandRegistry {
         &self.commands
     }
 
-    pub(crate) fn view(&self) -> Value {
+    pub fn view(&self) -> Value {
         json!({
             "schema_version": 1,
             "platform": if cfg!(windows) { "windows" } else { "unsupported" },
@@ -455,27 +522,27 @@ impl Registry {
         })
     }
 
-    pub(crate) fn has_button(&self, button: u8) -> bool {
+    pub fn has_button(&self, button: u8) -> bool {
         self.bindings
             .iter()
             .any(|binding| binding.source == Source::Au05Button(button))
     }
 
     #[allow(dead_code)]
-    pub(crate) fn has_gamepad_button(&self, device_key: &str, usage: u16) -> bool {
+    pub fn has_gamepad_button(&self, device_key: &str, usage: u16) -> bool {
         self.bindings.iter().any(|binding| {
             matches!(&binding.source, Source::Gamepad { device_key: key, usage: u, .. } if key == device_key && *u == usage)
         })
     }
 
     #[allow(dead_code)]
-    pub(crate) fn gamepad_binding(&self, device_key: &str, usage: u16) -> Option<&Binding> {
+    pub fn gamepad_binding(&self, device_key: &str, usage: u16) -> Option<&Binding> {
         self.bindings.iter().find(|binding| {
             matches!(&binding.source, Source::Gamepad { device_key: key, usage: u, .. } if key == device_key && *u == usage)
         })
     }
 
-    pub(crate) fn triggers(&self) -> Vec<Hotkey> {
+    pub fn triggers(&self) -> Vec<Hotkey> {
         self.bindings
             .iter()
             .filter_map(|binding| {
@@ -488,7 +555,7 @@ impl Registry {
     }
 
     /// True when `trigger` equals a saved action binding trigger.
-    pub(crate) fn conflicts_with_trigger(&self, trigger: &Hotkey) -> bool {
+    pub fn conflicts_with_trigger(&self, trigger: &Hotkey) -> bool {
         self.bindings.iter().any(|binding| {
             binding
                 .trigger
@@ -498,7 +565,7 @@ impl Registry {
         })
     }
 
-    pub(crate) fn fired(&self, id: i32) -> Option<(String, Vec<Step>)> {
+    pub fn fired(&self, id: i32) -> Option<(String, Vec<Step>)> {
         let index = usize::try_from(id - HOTKEY_ID_BASE).ok()?;
         let binding = self.bindings.get(index)?;
         binding.trigger.as_ref()?;
@@ -509,7 +576,7 @@ impl Registry {
     ///
     /// Pad buttons may execute only saved bindings; they cannot submit a new
     /// step list, so this path never creates or edits an action.
-    pub(crate) fn steps_for_id(&self, id: &str) -> Option<Vec<Step>> {
+    pub fn steps_for_id(&self, id: &str) -> Option<Vec<Step>> {
         self.bindings
             .iter()
             .find(|binding| binding.id == id)
@@ -517,7 +584,7 @@ impl Registry {
     }
 
     /// The saved display name for one action.
-    pub(crate) fn name_for_id(&self, id: &str) -> Option<String> {
+    pub fn name_for_id(&self, id: &str) -> Option<String> {
         self.bindings
             .iter()
             .find(|binding| binding.id == id)
@@ -525,7 +592,7 @@ impl Registry {
     }
 
     /// Display data for a fired action hotkey, for the recent-trigger log.
-    pub(crate) fn describe(&self, id: i32) -> Option<(String, Option<String>, Option<u8>)> {
+    pub fn describe(&self, id: i32) -> Option<(String, Option<String>, Option<u8>)> {
         let index = usize::try_from(id - HOTKEY_ID_BASE).ok()?;
         let binding = self.bindings.get(index)?;
         let button = match binding.source {
@@ -536,7 +603,7 @@ impl Registry {
     }
 
     /// The AU05 button carried by one saved action binding, if any.
-    pub(crate) fn button_for_id(&self, id: &str) -> Option<u8> {
+    pub fn button_for_id(&self, id: &str) -> Option<u8> {
         self.bindings
             .iter()
             .find(|binding| binding.id == id)
@@ -546,11 +613,11 @@ impl Registry {
             })
     }
 
-    pub(crate) fn bindings(&self) -> &[Binding] {
+    pub fn bindings(&self) -> &[Binding] {
         &self.bindings
     }
 
-    pub(crate) fn remove(&mut self, body: &str) -> (u16, Value) {
+    pub fn remove(&mut self, body: &str) -> (u16, Value) {
         let fail = |code, error: &str| (code, json!({"error":error}));
         if self.load_error.is_some() {
             return fail(
@@ -583,7 +650,7 @@ impl Registry {
         self.commit(bindings)
     }
 
-    pub(crate) fn add(
+    pub fn add(
         &mut self,
         body: &str,
         reserved: &Reserved,
@@ -685,7 +752,7 @@ impl Registry {
             },
             Source::Gamepad { .. } => None,
         };
-        let Ok(id) = crate::service::generate_token() else {
+        let Ok(id) = generate_token() else {
             return fail(503, "Secure action identifiers are unavailable");
         };
         let mut bindings = self.bindings.clone();
@@ -720,11 +787,11 @@ impl Registry {
         for number in 1..=12u8 {
             let candidate = Hotkey::new(
                 [
-                    crate::hotkey::Modifier::Control,
-                    crate::hotkey::Modifier::Alt,
-                    crate::hotkey::Modifier::Shift,
+                    vibdock_input::hotkey::Modifier::Control,
+                    vibdock_input::hotkey::Modifier::Alt,
+                    vibdock_input::hotkey::Modifier::Shift,
                 ],
-                crate::hotkey::Key::Function(number),
+                vibdock_input::hotkey::Key::Function(number),
             );
             let text = candidate.as_string();
             if !used.contains(&text) {
@@ -798,13 +865,15 @@ impl Registry {
                 "steps": binding.steps.iter().map(Step::stored_json).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
         });
-        crate::service::atomic_write(&self.path, stored.to_string().as_bytes())
+        atomic_write(&self.path, stored.to_string().as_bytes())
             .map_err(|_| "Could not save actions; previous state is unchanged".to_string())
     }
 
     #[cfg(windows)]
     fn rebind_all(&mut self) {
-        self.live_hotkeys.clear();
+        if let Some(backend) = &mut self.backend {
+            backend.clear();
+        }
         LIVE_ARMED.with(|armed| armed.borrow_mut().clear());
         if !self.register {
             return;
@@ -816,40 +885,41 @@ impl Registry {
             let Ok(hotkey) = Hotkey::parse(trigger) else {
                 continue;
             };
-            if let Ok(handle) =
-                crate::windows::RegisteredHotkey::register(&hotkey, action_hotkey_id(index))
-            {
-                self.live_hotkeys.push(handle);
-                LIVE_ARMED.with(|armed| {
-                    armed.borrow_mut().insert(binding.id.clone());
-                });
+            if let Some(backend) = &mut self.backend {
+                if backend.register(&hotkey, action_hotkey_id(index)).is_ok() {
+                    LIVE_ARMED.with(|armed| {
+                        armed.borrow_mut().insert(binding.id.clone());
+                    });
+                }
             }
         }
     }
 
     #[cfg(windows)]
     fn try_rebind(&mut self, bindings: &[Binding]) -> Result<(), String> {
-        self.live_hotkeys.clear();
+        if let Some(backend) = &mut self.backend {
+            backend.clear();
+        }
         LIVE_ARMED.with(|armed| armed.borrow_mut().clear());
         if !self.register {
             return Ok(());
         }
-        let mut handles = Vec::new();
         for (index, binding) in bindings.iter().enumerate() {
             let Some(trigger) = binding.trigger.as_deref() else {
                 continue;
             };
             let hotkey =
                 Hotkey::parse(trigger).map_err(|error| format!("{}: {error}", binding.name))?;
-            let handle =
-                crate::windows::RegisteredHotkey::register(&hotkey, action_hotkey_id(index))
-                    .map_err(|error| format!("{}: {error}", binding.name))?;
-            handles.push(handle);
+            let Some(backend) = &mut self.backend else {
+                return Err("No hotkey backend is available".to_string());
+            };
+            backend
+                .register(&hotkey, action_hotkey_id(index))
+                .map_err(|error| format!("{}: {error}", binding.name))?;
             LIVE_ARMED.with(|armed| {
                 armed.borrow_mut().insert(binding.id.clone());
             });
         }
-        self.live_hotkeys = handles;
         Ok(())
     }
 }
@@ -891,20 +961,20 @@ fn parse_file(bytes: &[u8], commands: &CommandRegistry) -> Option<(Vec<Binding>,
 
 /// A structured local command definition.
 #[derive(Clone, Debug)]
-pub(crate) struct CommandDefinition {
-    pub(crate) id: String,
-    pub(crate) label: String,
+pub struct CommandDefinition {
+    pub id: String,
+    pub label: String,
     executable: String,
     args: Vec<String>,
     parameters: Vec<ParameterDefinition>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ParameterDefinition {
-    pub(crate) name: String,
-    pub(crate) label: String,
-    pub(crate) required: bool,
-    pub(crate) max_length: usize,
+pub struct ParameterDefinition {
+    pub name: String,
+    pub label: String,
+    pub required: bool,
+    pub max_length: usize,
 }
 
 impl CommandDefinition {
@@ -928,7 +998,7 @@ impl CommandDefinition {
         }
         let label = bounded_text(value.get("label"), 80)?;
         let executable = bounded_text(value.get("executable"), 1024)?;
-        if !crate::resident_action_protocol::local_executable_path(&executable) {
+        if !local_executable_path(&executable) {
             return None;
         }
         let args = argument_list(value.get("args")).ok()?;
@@ -972,7 +1042,7 @@ impl CommandDefinition {
     }
 }
 
-pub(crate) struct CommandRegistry {
+pub struct CommandRegistry {
     path: PathBuf,
     revision: u64,
     definitions: Vec<CommandDefinition>,
@@ -981,7 +1051,7 @@ pub(crate) struct CommandRegistry {
 
 impl CommandRegistry {
     #[cfg(test)]
-    pub(crate) fn empty_for_test() -> Self {
+    pub fn empty_for_test() -> Self {
         Self {
             path: PathBuf::new(),
             revision: 0,
@@ -990,19 +1060,18 @@ impl CommandRegistry {
         }
     }
 
-    pub(crate) fn start() -> Self {
-        let path = crate::service::state_dir().map(|dir| dir.join("commands.json"));
-        match path {
-            Ok(path) => Self::load(path),
-            Err(_) => Self {
+    pub fn start(state_dir: PathBuf) -> Self {
+        if state_dir.as_os_str().is_empty() {
+            return Self {
                 path: PathBuf::new(),
                 revision: 0,
                 definitions: Vec::new(),
                 load_error: Some(
                     "Command storage is unavailable; existing data was not changed.".into(),
                 ),
-            },
+            };
         }
+        Self::load(state_dir.join("commands.json"))
     }
 
     fn load(path: PathBuf) -> Self {
@@ -1042,7 +1111,7 @@ impl CommandRegistry {
         registry
     }
 
-    pub(crate) fn view(&self) -> Value {
+    pub fn view(&self) -> Value {
         json!({
             "schema_version": 1,
             "revision": self.revision,
@@ -1054,7 +1123,7 @@ impl CommandRegistry {
         })
     }
 
-    pub(crate) fn expand(
+    pub fn expand(
         &self,
         command_id: &str,
         parameters: &BTreeMap<String, String>,
@@ -1197,7 +1266,7 @@ mod tests {
     fn registry() -> (Registry, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "vibdock-actions-test-{}",
-            crate::service::generate_token().unwrap()
+            generate_token().unwrap()
         ));
         std::fs::create_dir(&dir).unwrap();
         (
@@ -1208,8 +1277,7 @@ mod tests {
                 commands: CommandRegistry::empty_for_test(),
                 load_error: None,
                 register: false,
-                #[cfg(windows)]
-                live_hotkeys: Vec::new(),
+                backend: None,
             },
             dir,
         )
@@ -1330,7 +1398,7 @@ mod tests {
     fn commands_file() -> (super::CommandRegistry, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "vibdock-commands-test-{}",
-            crate::service::generate_token().unwrap()
+            generate_token().unwrap()
         ));
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("commands.json");
@@ -1392,3 +1460,4 @@ mod tests {
         assert!(super::CommandDefinition::parse(&value).is_none());
     }
 }
+

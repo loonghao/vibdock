@@ -7,11 +7,14 @@ already builds these crates:
 - `vibdock-au05` — pure Ulanzi AU05 wire protocol and keymap;
 - `vibdock-device-au05` — Windows AU05 HID enumeration, provisioning and readback;
 - `vibdock-device-gamepad` — generic Windows HID gamepad input;
+- `vibdock-actions` — saved action/profile schema, command definitions and trigger registration seam;
 - `vibdock-plugin-api` — manifest, capability and plugin trait contracts.
 
 The action executor, web routes, app shortcuts and profiles still live in the
 root crate. The host now has a read-only built-in plugin registry at
-`GET /api/plugins`, but it is not yet a full loader. This document is explicit
+`GET /api/plugins`, but it is not yet a full loader. Action persistence and
+command definitions are extracted; Windows hotkey registration is injected
+through a `HotkeyBackend` trait. This document is explicit
 about what is done and what is not.
 
 ## The problem
@@ -75,6 +78,7 @@ Rules:
 | --- | --- | --- | --- |
 | `vibdock-input` | hotkey parse/normalize, single/double/long classifier, 2–3 button sequence/hold matcher | HID, hotkey registration, actions | extracted |
 | `vibdock-au05` | vendor frame format, TEA, shortcut/fixed-function payloads, keymap, readback parsing | opening HID, persistence, defaults | extracted |
+| `vibdock-actions` | saved action/profile schema, step parsing, commands, trigger registration seam | Windows registration, execution, web | extracted |
 | `vibdock-plugin-api` | manifest schema, capability enum, device view, profile preset, action descriptor, plugin/host traits | implementation, OS access | new |
 | `vibdock-device-au05` | HID enumeration/open, vendor frame I/O, provision/readback, device identity | profiles, web, actions | extracted |
 | `vibdock-device-gamepad` | generic gamepad enumeration and button edges | profiles, web | extracted |
@@ -171,6 +175,7 @@ open HID. Device plugins need the sidecar/native route.
 - Extracted `src/hotkey.rs`, `src/gesture.rs`, `src/combo.rs` into
   `crates/vibdock-input`.
 - Extracted `src/au05.rs` into `crates/vibdock-au05`.
+- Extracted `src/actions.rs` into `crates/vibdock-actions`; Windows hotkey registration is now a `HotkeyBackend` implemented by the host, and the state directory is injected.
 - The root crate re-exports `vibdock_input::hotkey` and aliases
   `vibdock_au05 as au05`, so existing `crate::hotkey` / `crate::au05` call sites
   did not need a flag-day rewrite.
@@ -249,6 +254,8 @@ action id.
 - No plugin-authored shell strings; command steps remain structured argv.
 - No claim that extracting crates makes third-party plugins safe. The sidecar,
   capability and signing work is a separate phase.
+
+
 
 
 

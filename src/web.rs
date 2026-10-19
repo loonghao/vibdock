@@ -1014,12 +1014,15 @@ fn accept_loop(
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut apps = crate::resident_apps::Registry::start(token.is_some());
     let mut shortcuts = ShortcutRegistry::start(token.is_some());
-    let hardware_dir = crate::service::state_dir().unwrap_or_default();
+    let state_dir = crate::service::state_dir().unwrap_or_default();
+    let hardware_dir = state_dir.clone();
     let hardware_mic = crate::windows::capture_endpoint_containing("au05");
     let mut hardware =
         crate::hardware::Hardware::start(token.is_some(), hardware_dir, hardware_mic);
-    let commands = crate::actions::CommandRegistry::start();
-    let mut actions = crate::actions::Registry::start(token.is_some(), commands);
+    let commands = crate::actions::CommandRegistry::start(state_dir.clone());
+    let actions_backend = crate::actions_backend::backend();
+    let mut actions =
+        crate::actions::Registry::start(token.is_some(), commands, state_dir, actions_backend);
     #[cfg(windows)]
     let mut gamepads = crate::gamepad_windows::Monitor::new();
     #[cfg(windows)]
@@ -2953,8 +2956,11 @@ mod resident_api_tests {
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
-        let actions = crate::actions::Registry::empty_for_test(
-            crate::actions::CommandRegistry::empty_for_test(),
+        let actions = crate::actions::Registry::start(
+            false,
+            crate::actions::CommandRegistry::start(std::path::PathBuf::new()),
+            std::path::PathBuf::new(),
+            None,
         );
         let config = Config::default();
         for (path, method) in [
@@ -3032,8 +3038,11 @@ mod resident_api_tests {
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
-        let actions = crate::actions::Registry::empty_for_test(
-            crate::actions::CommandRegistry::empty_for_test(),
+        let actions = crate::actions::Registry::start(
+            false,
+            crate::actions::CommandRegistry::start(std::path::PathBuf::new()),
+            std::path::PathBuf::new(),
+            None,
         );
         let request = Request {
             method: Method::Post,
@@ -3065,8 +3074,11 @@ mod resident_api_tests {
         let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let feedback = ActionFeedback::default();
-        let actions = crate::actions::Registry::empty_for_test(
-            crate::actions::CommandRegistry::empty_for_test(),
+        let actions = crate::actions::Registry::start(
+            false,
+            crate::actions::CommandRegistry::start(std::path::PathBuf::new()),
+            std::path::PathBuf::new(),
+            None,
         );
         for (path, method) in [
             ("/api/hardware", Method::Get),
@@ -3145,8 +3157,11 @@ mod resident_api_tests {
     #[test]
     fn action_routes_require_authentication_and_origin() {
         let host = format!("127.0.0.1:{}", crate::service::port());
-        let mut actions = crate::actions::Registry::empty_for_test(
-            crate::actions::CommandRegistry::empty_for_test(),
+        let mut actions = crate::actions::Registry::start(
+            false,
+            crate::actions::CommandRegistry::start(std::path::PathBuf::new()),
+            std::path::PathBuf::new(),
+            None,
         );
         let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
@@ -3256,8 +3271,11 @@ mod resident_api_tests {
     #[test]
     fn pad_execute_requires_auth_and_only_accepts_saved_ids() {
         let host = format!("127.0.0.1:{}", crate::service::port());
-        let actions = crate::actions::Registry::empty_for_test(
-            crate::actions::CommandRegistry::empty_for_test(),
+        let actions = crate::actions::Registry::start(
+            false,
+            crate::actions::CommandRegistry::start(std::path::PathBuf::new()),
+            std::path::PathBuf::new(),
+            None,
         );
         let mut feedback = ActionFeedback::default();
         let mut request = Request {

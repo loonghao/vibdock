@@ -6,13 +6,15 @@
 //! so the console CLI and the Windows launcher cannot drift apart.
 
 use std::{error::Error, fmt};
-mod actions;
+mod actions_backend;
 mod app_audio;
 #[cfg(not(windows))]
 mod app_session_stub;
 #[cfg(windows)]
 mod app_session_windows;
 mod app_shortcuts;
+// Saved actions and command definitions are a standalone crate.
+pub(crate) use vibdock_actions as actions;
 // AU05 wire protocol and keymap live in a standalone crate; the Windows HID
 // adapter in this crate owns device I/O.
 pub(crate) use vibdock_au05 as au05;
