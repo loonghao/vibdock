@@ -1,0 +1,199 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>VibDock · Pad</title>
+<style>
+:root{
+  color-scheme:light;
+  --paper:#f4f2ec;--surface:#fffdf9;--ink:#1d1b18;--muted:#78736a;--faint:#a39d92;
+  --line:#e5e0d6;--line-strong:#d4cdc0;--accent:#b45f2a;--accent-soft:#f3e7dc;--green:#3f7a5f;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font:14px/1.45 "Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased;text-wrap:pretty;
+  touch-action:manipulation;user-select:none;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+h1,h2,p{margin:0}
+h1{font-size:26px;line-height:1.1;letter-spacing:-.5px;font-weight:600}
+.icon{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.pad-shell{min-height:100%;display:flex;flex-direction:column;padding:max(18px,env(safe-area-inset-top)) max(22px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(22px,env(safe-area-inset-left))}
+.topbar{display:flex;align-items:center;gap:18px;min-height:44px}
+.brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;letter-spacing:-.2px;white-space:nowrap}
+.brand-mark{width:22px;height:22px;border:1.5px solid var(--ink);border-radius:6px;display:grid;place-items:center;font-size:10px;font-weight:700;background:var(--surface)}
+.brand span{color:var(--accent)}
+.topbar .grow{flex:1}
+.status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
+.tool{border:1px solid var(--line-strong);background:var(--surface);border-radius:7px;height:32px;padding:0 10px;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+.tool:hover{border-color:#bfb6a7;color:var(--ink)}
+.tool[aria-pressed=true]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.page-tabs{display:flex;gap:4px;margin-top:22px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.page-tab{border-radius:6px;padding:7px 12px;font-size:13px;color:var(--muted)}
+.page-tab:hover{background:#ece8df;color:var(--ink)}
+.page-tab[aria-selected=true]{background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:550;padding:6px 11px}
+.page-head{display:flex;align-items:flex-end;gap:18px;margin-top:20px}
+.page-head .grow{flex:1}
+.page-head p{font-size:12px;color:var(--faint);margin-top:5px}
+.page-head .hint{font-size:11px;color:var(--faint);white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(180px,1fr));gap:14px;margin-top:18px;flex:1;min-height:0}
+.tile{
+  position:relative;min-height:168px;border:1px solid var(--line);border-radius:12px;background:var(--surface);
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:18px 16px 36px;text-align:left;
+  transition:border-color .12s,background .12s,transform .08s;overflow:hidden;
+}
+.tile:hover{border-color:var(--line-strong);background:#fffefa}
+.tile:active{transform:scale(.985)}
+.tile[data-busy=true]{border-color:var(--accent);background:var(--accent-soft)}
+.tile .num{position:absolute;right:12px;top:12px;font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
+.tile .tile-icon{width:40px;height:40px;border:1px solid var(--line);border-radius:9px;display:grid;place-items:center;color:var(--muted);background:#faf8f3}
+.tile .tile-icon .icon{width:21px;height:21px}
+.tile b{font-size:21px;line-height:1.15;letter-spacing:-.3px;font-weight:600;margin-top:14px;overflow-wrap:anywhere}
+.tile small{font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.45}
+.tile .tile-kind{position:absolute;left:16px;right:16px;bottom:12px;font-size:10.5px;color:var(--faint);display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:none}
+.tile .tile-kind .badge{border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--muted);font-size:10px;flex:none}
+.tile .tile-kind .detail{overflow:hidden;text-overflow:ellipsis}
+.tile[data-edit=true]{border-style:dashed}
+.tile[data-edit=true]::after{content:"点按配置";position:absolute;left:16px;bottom:12px;font-size:10px;color:var(--accent)}
+.tile[data-edit=true] .tile-kind{display:none}
+.empty{border:1px dashed var(--line-strong);border-radius:12px;min-height:168px;display:grid;place-items:center;color:var(--faint);font-size:12px;background:transparent}
+.foot{margin-top:auto;padding-top:24px;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--faint)}
+.foot b{font-weight:500;color:var(--muted)}
+.foot .grow{flex:1}
+.toast{position:fixed;left:50%;bottom:max(24px,env(safe-area-inset-bottom));transform:translate(-50%,10px);padding:9px 14px;border-radius:7px;background:#2c2924;color:#fff;font-size:12px;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:60;white-space:nowrap;box-shadow:0 8px 24px #0002}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+/* edit sheet */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(29,27,24,.18);z-index:40;display:grid;place-items:center;padding:20px}
+.sheet{width:min(420px,100%);background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 18px 50px #281f1620}
+.sheet-head{display:flex;align-items:flex-start;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.sheet-head .grow{flex:1}
+.sheet-head h2{font-size:18px;letter-spacing:-.3px}
+.sheet-head small{display:block;margin-top:3px;color:var(--muted);font-size:11.5px}
+.sheet-close{width:26px;height:26px;border:1px solid var(--line);border-radius:5px;color:var(--muted);display:grid;place-items:center;font-size:15px}
+.sheet label{display:block;font-size:11px;color:var(--muted);margin:16px 0 6px}
+.select{width:100%;border:1px solid var(--line-strong);background:#fff;border-radius:6px;padding:9px;font-size:13px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8d8578 50%),linear-gradient(135deg,#8d8578 50%,transparent 50%);background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+.sheet-actions{display:flex;gap:8px;margin-top:18px}
+.sheet-actions .button{flex:1;justify-content:center}
+.button{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line-strong);background:var(--surface);border-radius:7px;padding:8px 12px;font-size:12.5px}
+.button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:550}
+@media(max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(3,minmax(150px,1fr))}.tile{min-height:156px}.page-head .hint{display:none}}
+@media(max-width:620px){.pad-shell{padding:14px}.topbar{gap:10px}.status{display:none}.page-tabs{margin-top:16px}.grid{grid-template-columns:1fr 1fr;grid-template-rows:repeat(3,minmax(140px,1fr));gap:10px}.tile{min-height:140px;padding:13px}.tile b{font-size:17px}.tile small{font-size:11px}.brand{font-size:14px}.tool .label{display:none}.tool{padding:0 8px}.page-head h1{font-size:21px}.foot{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<body>
+<div class="pad-shell">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">V</span><span>Vib<span>Dock</span> Pad</span></div>
+    <div class="grow"></div>
+    <div class="status"><span class="dot"></span>Vibe Key 已连接</div>
+    <button class="tool" id="editBtn" aria-pressed="false"><span class="label">编辑</span></button>
+    <button class="tool" id="fullBtn"><span class="label">全屏</span></button>
+  </header>
+  <nav class="page-tabs" id="tabs" aria-label="Pad 页面"></nav>
+  <div class="page-head"><div class="grow"><h1 id="pageTitle">工作</h1><p id="pageSub">3 个按键映射到 9 个动作，直接点按执行。</p></div><span class="hint">点击即触发 · 长按不替代物理手势</span></div>
+  <main class="grid" id="grid" aria-label="虚拟按键"></main>
+  <div class="foot"><span>最近</span><b id="recentText">01 微信语音 · 12:04:22</b><span class="grow"></span><span>同一台电脑 · 需要服务授权</span></div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div id="sheetRoot"></div>
+<script>
+const PAGES={
+  work:{name:'工作',sub:'3 个按键映射到 9 个动作，直接点按执行。',tiles:[
+    {id:'wechat',num:'01',title:'微信语音',icon:'mic',kind:'快捷键',detail:'Ctrl + Win'},
+    {id:'codex',num:'02',title:'Codex 语音',icon:'code',kind:'应用',detail:'启动 + Ctrl + Shift + Space'},
+    {id:'dsh',num:'03',title:'DSH 工作台',icon:'layers',kind:'应用',detail:'打开并聚焦'},
+    {id:'mute',num:'04',title:'麦克风静音',icon:'mute',kind:'设备',detail:'AU05 麦克风'},
+    {id:'combo',num:'05',title:'1 + 2 组合',icon:'combo',kind:'组合',detail:'1+2 快按 → Codex'},
+    {id:'workbuddy',num:'06',title:'WorkBuddy',icon:'spark',kind:'应用',detail:'启动并开始语音'}
+  ]},
+  voice:{name:'语音',sub:'把常用语音入口放大，适合放在 Pad 或副屏。',tiles:[
+    {id:'wechat',num:'01',title:'微信语音',icon:'mic',kind:'快捷键',detail:'Ctrl + Win'},
+    {id:'codex',num:'02',title:'Codex 语音',icon:'code',kind:'应用',detail:'启动 + 发语音快捷键'},
+    {id:'dsh',num:'03',title:'DSH 语音',icon:'layers',kind:'应用',detail:'聚焦 + 语音'},
+    {id:'mute',num:'04',title:'麦克风静音',icon:'mute',kind:'设备',detail:'AU05 麦克风'},
+    {id:'combo3',num:'05',title:'1 + 2 + 3',icon:'combo',kind:'组合',detail:'三键快按 → DSH'},
+    {id:'workbuddy',num:'06',title:'WorkBuddy',icon:'spark',kind:'应用',detail:'启动并开始语音'}
+  ]},
+  media:{name:'媒体',sub:'播放、音量和常用控制都可以做成大按钮。',tiles:[
+    {id:'play',num:'01',title:'播放 / 暂停',icon:'play',kind:'快捷键',detail:'媒体播放键'},
+    {id:'prev',num:'02',title:'上一首',icon:'prev',kind:'快捷键',detail:'媒体上一首'},
+    {id:'next',num:'03',title:'下一首',icon:'next',kind:'快捷键',detail:'媒体下一首'},
+    {id:'mute',num:'04',title:'麦克风静音',icon:'mute',kind:'设备',detail:'AU05 麦克风'},
+    {id:'volup',num:'05',title:'音量 +',icon:'plus',kind:'快捷键',detail:'音量增加'},
+    {id:'voldown',num:'06',title:'音量 −',icon:'minus',kind:'快捷键',detail:'音量降低'}
+  ]}
+};
+const ICONS={
+  mic:'<path d="M11 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M5 11a6 6 0 0 0 12 0M11 17v3M8 20h6"/>',
+  code:'<path d="m8 7-4 4 4 4M14 7l4 4-4 4M12.5 5l-3 14"/>',
+  layers:'<path d="m11 3 8 4-8 4-8-4 8-4Z"/><path d="m3 11 8 4 8-4M3 15l8 4 8-4"/>',
+  mute:'<path d="M4 9v4h3l4 3V6L7 9H4Z"/><path d="m15 8 4 6M19 8l-4 6"/>',
+  combo:'<rect x="3" y="4" width="7" height="7" rx="2"/><rect x="12" y="4" width="7" height="7" rx="2"/><rect x="3" y="13" width="7" height="7" rx="2"/><path d="M15.5 13v7M13 16.5h5"/>',
+  spark:'<path d="M11 3v3M11 16v3M3 11h3M16 11h3M5.3 5.3l2.1 2.1M14.6 14.6l2.1 2.1M16.7 5.3l-2.1 2.1M7.4 14.6l-2.1 2.1"/>',
+  play:'<path d="M7 4v14l12-7Z"/>',
+  prev:'<path d="M5 5v12M17 5 8 11l9 6V5Z"/>',
+  next:'<path d="M17 5v12M5 5l9 6-9 6V5Z"/>',
+  plus:'<path d="M11 5v12M5 11h12"/>',
+  minus:'<path d="M5 11h12"/>'
+};
+let state={page:new URL(location.href).searchParams.get('page')||'work',edit:new URL(location.href).searchParams.get('edit')==='1',busy:null,sheet:null};
+let toastTimer=0;
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function icon(name){return `<svg class="icon" viewBox="0 0 22 22" aria-hidden="true">${ICONS[name]||ICONS.spark}</svg>`}
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),1800)}
+function setPage(id){if(!PAGES[id])return;state.page=id;state.sheet=null;const u=new URL(location.href);u.searchParams.set('page',id);history.replaceState(null,'',u);render()}
+function setEdit(on){state.edit=on;const u=new URL(location.href);if(on)u.searchParams.set('edit','1');else u.searchParams.delete('edit');history.replaceState(null,'',u);render()}
+function openSheet(tile){state.sheet=tile;render()}
+function render(){
+  const page=PAGES[state.page];
+  document.getElementById('tabs').innerHTML=Object.entries(PAGES).map(([id,p])=>`<button class="page-tab" data-page="${id}" aria-selected="${state.page===id}">${esc(p.name)}</button>`).join('');
+  document.getElementById('pageTitle').textContent=page.name;
+  document.getElementById('pageSub').textContent=page.sub;
+  document.getElementById('grid').innerHTML=page.tiles.map(tile=>`<button class="tile" data-tile="${tile.id}" data-edit="${state.edit}" data-busy="${state.busy===tile.id}" aria-label="${esc(tile.title)}，${esc(tile.kind)}">
+    <span class="num">${tile.num}</span>
+    <span class="tile-icon">${icon(tile.icon)}</span>
+    <b>${esc(tile.title)}</b>
+    <small>${esc(tile.detail)}</small>
+    <span class="tile-kind"><span class="badge">${esc(tile.kind)}</span><span class="detail">${esc(tile.detail)}</span></span>
+  </button>`).join('');
+  document.getElementById('editBtn').setAttribute('aria-pressed',String(state.edit));
+  document.getElementById('recentText').textContent=state.edit?'编辑模式 · 点按按键配置':'01 微信语音 · 12:04:22';
+  renderSheet();
+}
+function renderSheet(){
+  const root=document.getElementById('sheetRoot');
+  if(!state.sheet){root.innerHTML='';return}
+  const tile=state.sheet;
+  root.innerHTML=`<div class="sheet-backdrop" data-action="close-sheet"><div class="sheet" role="dialog" aria-modal="true">
+    <div class="sheet-head"><div class="grow"><h2>${esc(tile.title)}</h2><small>配置这个虚拟按键</small></div><button class="sheet-close" data-action="close-sheet" aria-label="关闭">×</button></div>
+    <label for="tileProfile">执行内容</label><select class="select" id="tileProfile"><option>微信语音 · Ctrl + Win</option><option>Codex 语音 · 启动 + 快捷键</option><option>DSH 工作台 · 打开并聚焦</option><option>麦克风静音</option><option>1+2 快按 → Codex</option></select>
+    <div class="sheet-actions"><button class="button" data-action="close-sheet">取消</button><button class="button primary" data-action="save-tile">保存（原型）</button></div>
+  </div></div>`
+}
+document.addEventListener('click',e=>{
+  if(e.target.closest('.sheet')&&!e.target.closest('[data-action]'))return;
+  const page=e.target.closest('[data-page]');
+  if(page){setPage(page.dataset.page);return}
+  if(e.target.closest('#editBtn')){setEdit(!state.edit);return}
+  if(e.target.closest('#fullBtn')){if(document.fullscreenElement)document.exitFullscreen?.();else document.documentElement.requestFullscreen?.();return}
+  const tile=e.target.closest('[data-tile]');
+  if(tile){
+    if(state.edit){openSheet(PAGES[state.page].tiles.find(t=>t.id===tile.dataset.tile));return}
+    const t=PAGES[state.page].tiles.find(t=>t.id===tile.dataset.tile);
+    state.busy=tile.dataset.tile;render();showToast(`已触发「${t.title}」（原型预览）`);
+    setTimeout(()=>{if(state.busy===tile.dataset.tile){state.busy=null;render()}},700);
+    return;
+  }
+  const action=e.target.closest('[data-action]');
+  if(action){
+    if(action.dataset.action==='close-sheet'){state.sheet=null;render();return}
+    if(action.dataset.action==='save-tile'){state.sheet=null;render();showToast('已保存（原型预览，不写入服务）');return}
+  }
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){if(state.sheet){state.sheet=null;render()}else if(state.edit)setEdit(false)}
+});
+render();
+</script>
+</body></html>

@@ -505,6 +505,25 @@ impl Registry {
         Some((binding.name.clone(), binding.steps.clone()))
     }
 
+    /// The saved steps for one action, for direct Pad execution.
+    ///
+    /// Pad buttons may execute only saved bindings; they cannot submit a new
+    /// step list, so this path never creates or edits an action.
+    pub(crate) fn steps_for_id(&self, id: &str) -> Option<Vec<Step>> {
+        self.bindings
+            .iter()
+            .find(|binding| binding.id == id)
+            .map(|binding| binding.steps.clone())
+    }
+
+    /// The saved display name for one action.
+    pub(crate) fn name_for_id(&self, id: &str) -> Option<String> {
+        self.bindings
+            .iter()
+            .find(|binding| binding.id == id)
+            .map(|binding| binding.name.clone())
+    }
+
     /// Display data for a fired action hotkey, for the recent-trigger log.
     pub(crate) fn describe(&self, id: i32) -> Option<(String, Option<String>, Option<u8>)> {
         let index = usize::try_from(id - HOTKEY_ID_BASE).ok()?;
@@ -1289,6 +1308,22 @@ mod tests {
         assert_eq!(view["bindings"][0]["steps"][0]["label"], "Codex");
         assert!(view["bindings"][0]["steps"][0].get("executable").is_none());
         assert!(!view.to_string().contains("Codex.exe"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saved_action_steps_can_be_looked_up_for_pad_execution() {
+        let (mut registry, dir) = registry();
+        let body = add_body(
+            serde_json::json!({"kind":"au05","button":0}),
+            serde_json::json!([{"type":"wait","ms":1}]),
+        );
+        let (code, view) = registry.add(&body, &Reserved::default(), &mut |_| None);
+        assert_eq!(code, 200, "{view}");
+        let id = view["bindings"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(registry.name_for_id(&id).as_deref(), Some("测试动作"));
+        assert_eq!(registry.steps_for_id(&id).unwrap().len(), 1);
+        assert!(registry.steps_for_id("missing").is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

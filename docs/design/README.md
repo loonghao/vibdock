@@ -167,4 +167,7 @@ The current Settings page is feature-oriented; the next direction is device-firs
 
 The gesture direction adds three slots per physical control (单击 / 双击 / 长按), so three AU05 buttons become nine actions. The timing classifier is unit-tested in crates/vibdock-input/src/gesture.rs and the multi-button matcher in crates/vibdock-input/src/combo.rs (sequences, holds, longer-sequence precedence); the Windows sentinel-key hook and profile wiring are not implemented yet. The prototype's 单击 / 双击 / 长按 tabs show the intended UI.
 
+## Virtual Pad direction
+
+The same profiles can be projected as large touch-first virtual keys on a Pad or second screen. The prototype is [prototype-pad.html](prototype-pad.html); the API, pairing boundary and current status are in [virtual-pad.md](virtual-pad.md). POST /api/pad/execute already runs only a saved action id and records a pad recent event; the /pad route and pairing flow are not implemented yet.
 

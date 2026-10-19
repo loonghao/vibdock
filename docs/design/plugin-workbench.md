@@ -332,6 +332,10 @@ The prototype adds a 多键组合 deck with the exact patterns `1+2`, `1+2+3`,
 `2+3`, and `1+2` hold. Each card shows the ordered key sequence, the pattern
 kind (快按 / 长按), and the profile it executes.
 
+### Virtual Pad
+
+The same profiles can also be rendered as large touch-first virtual keys on a second screen. See [virtual-pad.md](virtual-pad.md) and [prototype-pad.html](prototype-pad.html). This is a projection of the profile engine, not a remote OS keyboard; the host executes only saved action ids.
+
 ### UI composition
 
 The host provides primitives; plugins contribute data, not untrusted HTML:
@@ -448,6 +452,8 @@ review process have tests.
   suppresses its own keys and a missing service never fabricates a gesture.
 - The page remains usable with no device, no gamepad, no plugins installed, and
   in read-only preview mode (no authenticated calls).
+
+
 
 
 

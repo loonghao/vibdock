@@ -1176,6 +1176,7 @@ fn accept_loop(
         let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
+            || path == "/api/pad/execute"
             || is_hardware_action_route(&path)
             || path.starts_with("/api/apps/actions/")
             || path.starts_with("/api/shortcuts")
@@ -1215,6 +1216,8 @@ fn accept_loop(
         let (mut code, mut mime, mut payload) =
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
+            } else if path == "/api/pad/execute" {
+                pad_execute_route(&routed_request, token.is_some(), &actions, &mut feedback)
             } else if is_hardware_action_route(&path) {
                 #[cfg(windows)]
                 let mut gamepad_devices = || gamepad_devices_json(&mut gamepads);
@@ -2399,6 +2402,83 @@ fn shortcuts_route(
 /// Hardware detection and explicit re-provisioning.
 /// Hardware action bindings and the local command table.
 #[allow(clippy::too_many_arguments)]
+/// Executes one saved action binding from the Pad view.
+///
+/// The browser submits only an id; it cannot submit a step list. This keeps the
+/// virtual keypad on the same saved-action path as a physical button and avoids
+/// turning the Pad into an arbitrary process/input endpoint.
+fn pad_execute_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    actions: &crate::actions::Registry,
+    feedback: &mut ActionFeedback,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    if request.method != Method::Post || request.path != "/api/pad/execute" {
+        return (
+            405,
+            "application/json",
+            serde_json::json!({"error":"Use POST /api/pad/execute"}).to_string(),
+        );
+    }
+    let id = serde_json::from_str::<serde_json::Value>(request.body)
+        .ok()
+        .and_then(|value| value["id"].as_str().map(str::to_string));
+    let Some(id) = id else {
+        return (
+            400,
+            "application/json",
+            serde_json::json!({"error":"id must be a saved action id"}).to_string(),
+        );
+    };
+    let Some(steps) = actions.steps_for_id(&id) else {
+        return (
+            404,
+            "application/json",
+            serde_json::json!({"error":"No saved action with that id"}).to_string(),
+        );
+    };
+    let name = actions
+        .name_for_id(&id)
+        .unwrap_or_else(|| "Pad action".into());
+    let result = run_action_steps(&steps, actions.commands());
+    let detail = result.as_ref().ok().cloned();
+    let recorded = result
+        .as_ref()
+        .map(|_| "DONE".to_string())
+        .map_err(Clone::clone);
+    feedback.record_event(
+        TriggerEvent {
+            source: "pad",
+            label: Some(&name),
+            trigger: None,
+            dispatch: None,
+            device_button: None,
+            target: None,
+            detail: detail.as_deref(),
+        },
+        recorded,
+    );
+    match result {
+        Ok(detail) => (
+            200,
+            "application/json",
+            serde_json::json!({"state":"DONE","name":name,"detail":detail}).to_string(),
+        ),
+        Err(error) => (
+            502,
+            "application/json",
+            serde_json::json!({"state":"FAILED","name":name,"error":error}).to_string(),
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn actions_route(
     request: &Request<'_>,
     token_configured: bool,
@@ -3114,5 +3194,44 @@ mod resident_api_tests {
         assert_eq!(code, 200);
         let value: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(value["bindings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pad_execute_requires_auth_and_only_accepts_saved_ids() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let actions = crate::actions::Registry::empty_for_test(
+            crate::actions::CommandRegistry::empty_for_test(),
+        );
+        let mut feedback = ActionFeedback::default();
+        let mut request = Request {
+            method: Method::Post,
+            path: "/api/pad/execute",
+            host: Some(&host),
+            origin: None,
+            authorized: false,
+            body: "{\"id\":\"missing\"}",
+            body_rejected: false,
+        };
+        assert_eq!(
+            pad_execute_route(&request, true, &actions, &mut feedback).0,
+            401
+        );
+        request.authorized = true;
+        request.origin = Some("https://attacker.invalid");
+        assert_eq!(
+            pad_execute_route(&request, true, &actions, &mut feedback).0,
+            403
+        );
+        request.origin = None;
+        request.body = "{}";
+        assert_eq!(
+            pad_execute_route(&request, true, &actions, &mut feedback).0,
+            400
+        );
+        request.body = "{\"id\":\"missing\"}";
+        assert_eq!(
+            pad_execute_route(&request, true, &actions, &mut feedback).0,
+            404
+        );
     }
 }
