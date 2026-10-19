@@ -28,6 +28,8 @@ pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
 #[cfg(windows)]
+mod gesture_monitor;
+#[cfg(windows)]
 pub(crate) use vibdock_device_gamepad as gamepad_windows;
 // Gesture and combo recognition live in the platform-independent input crate;
 // the Windows gesture monitor will construct them when the profile layer lands.

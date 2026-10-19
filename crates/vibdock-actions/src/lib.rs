@@ -23,6 +23,8 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+pub mod gestures;
 use vibdock_input::hotkey::Hotkey;
 
 /// Host-side hotkey registration used by saved action triggers.
@@ -418,6 +420,7 @@ pub struct Reserved {
     pub app_buttons: Vec<u8>,
     pub direct_buttons: Vec<u8>,
     pub direct_chords: Vec<Hotkey>,
+    pub gesture_sentinels: Vec<Hotkey>,
 }
 
 pub struct Registry {
@@ -778,6 +781,9 @@ impl Registry {
             used.insert(chord.as_string());
         }
         for chord in &reserved.direct_chords {
+            used.insert(chord.as_string());
+        }
+        for chord in &reserved.gesture_sentinels {
             used.insert(chord.as_string());
         }
         if let Some(mic) = &reserved.mic_hotkey {

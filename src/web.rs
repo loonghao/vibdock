@@ -1024,8 +1024,11 @@ fn accept_loop(
         crate::hardware::Hardware::start(token.is_some(), hardware_dir, hardware_mic);
     let commands = crate::actions::CommandRegistry::start(state_dir.clone());
     let actions_backend = crate::actions_backend::backend();
+    let mut gestures = crate::actions::gestures::Store::start(state_dir.clone());
     let mut actions =
         crate::actions::Registry::start(token.is_some(), commands, state_dir, actions_backend);
+    #[cfg(windows)]
+    let mut gesture_monitor = crate::gesture_monitor::Monitor::new();
     #[cfg(windows)]
     let mut gamepads = crate::gamepad_windows::Monitor::new();
     #[cfg(windows)]
@@ -1034,7 +1037,7 @@ fn accept_loop(
     // A button that already has an application shortcut keeps it instead. The
     // read-only design preview never writes device configuration.
     if token.is_some() {
-        let action_buttons: Vec<u8> = actions
+        let mut action_buttons: Vec<u8> = actions
             .bindings()
             .iter()
             .filter_map(|binding| match binding.source {
@@ -1042,6 +1045,7 @@ fn accept_loop(
                 crate::actions::Source::Gamepad { .. } => None,
             })
             .collect();
+        action_buttons.extend(gestures.buttons());
         hardware.ensure_defaults(&shortcuts.device_bindings(), &action_buttons);
     }
     let mut feedback = ActionFeedback::default();
@@ -1087,6 +1091,42 @@ fn accept_loop(
                                 trigger: None,
                                 dispatch: None,
                                 device_button: None,
+                                target: None,
+                                detail: detail.as_deref(),
+                            },
+                            recorded,
+                        );
+                    }
+                }
+            }
+        }
+        // Gesture slots are fed by the AU05 sentinel keys. The monitor is
+        // poll-based so it can share the accept-loop thread with hotkeys.
+        #[cfg(windows)]
+        {
+            if token.is_some() {
+                gesture_monitor.set_buttons(&gestures.buttons());
+                for (button, kind) in gesture_monitor.poll() {
+                    if let Some(steps) = gestures.steps_for(button, kind) {
+                        let name = gestures
+                            .name_for(button, kind)
+                            .unwrap_or_else(|| "Vibe Key gesture".to_string());
+                        let result = run_action_steps(&steps, actions.commands());
+                        if let Err(error) = &result {
+                            eprintln!("ERROR: the gesture action failed: {error}");
+                        }
+                        let detail = result.as_ref().ok().cloned();
+                        let recorded = result
+                            .as_ref()
+                            .map(|_| "DONE".to_string())
+                            .map_err(Clone::clone);
+                        feedback.record_event(
+                            TriggerEvent {
+                                source: "gesture",
+                                label: Some(&name),
+                                trigger: None,
+                                dispatch: None,
+                                device_button: Some(button),
                                 target: None,
                                 detail: detail.as_deref(),
                             },
@@ -1187,6 +1227,7 @@ fn accept_loop(
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
             || path == "/api/plugins"
+            || path.starts_with("/api/gestures")
             || path == "/api/pad/execute"
             || is_hardware_action_route(&path)
             || path.starts_with("/api/apps/actions/")
@@ -1229,6 +1270,16 @@ fn accept_loop(
                 instance_challenge_route(&routed_request, token.as_deref())
             } else if path == "/api/plugins" {
                 plugins_route(&routed_request, token.is_some(), &plugins)
+            } else if path.starts_with("/api/gestures") {
+                gestures_route(
+                    &routed_request,
+                    token.is_some(),
+                    &mut gestures,
+                    &mut hardware,
+                    &shortcuts,
+                    &actions,
+                    &mut apps,
+                )
             } else if path == "/api/pad/execute" {
                 pad_execute_route(&routed_request, token.is_some(), &actions, &mut feedback)
             } else if is_hardware_action_route(&path) {
@@ -1243,6 +1294,7 @@ fn accept_loop(
                     &mut hardware,
                     &mut apps,
                     &shortcuts,
+                    &gestures,
                     &mut gamepad_devices,
                     state,
                 )
@@ -2413,6 +2465,149 @@ fn shortcuts_route(
 }
 
 /// Hardware detection and explicit re-provisioning.
+/// Three gesture slots per AU05 button, with sentinel firmware provisioning.
+fn gestures_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    gestures: &mut crate::actions::gestures::Store,
+    hardware: &mut crate::hardware::Hardware,
+    shortcuts: &ShortcutRegistry,
+    actions: &crate::actions::Registry,
+    apps: &mut crate::resident_apps::Registry,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    match (request.method, request.path) {
+        (Method::Get, "/api/gestures") => (200, "application/json", gestures.view().to_string()),
+        (Method::Post, "/api/gestures/add") => {
+            let button = serde_json::from_str::<serde_json::Value>(request.body)
+                .ok()
+                .and_then(|value| value["button"].as_u64())
+                .and_then(|value| u8::try_from(value).ok());
+            if let Some(button) = button {
+                let sentinel = crate::actions::gestures::GestureKind::sentinel_text(button)
+                    .and_then(|text| crate::hotkey::Hotkey::parse(&text).ok());
+                let trigger_conflict = sentinel.as_ref().is_some_and(|sentinel| {
+                    actions.bindings().iter().any(|binding| {
+                        binding
+                            .trigger
+                            .as_deref()
+                            .and_then(|trigger| crate::hotkey::Hotkey::parse(trigger).ok())
+                            .as_ref()
+                            == Some(sentinel)
+                    })
+                });
+                if hardware.direct_configured(button)
+                    || shortcuts
+                        .device_bindings()
+                        .iter()
+                        .any(|binding| binding.button == button)
+                    || actions.has_button(button)
+                    || sentinel.as_ref().is_some_and(|sentinel| {
+                        shortcuts.conflicts_with_trigger(&sentinel.as_string())
+                    })
+                    || trigger_conflict
+                {
+                    return (
+                        409,
+                        "application/json",
+                        serde_json::json!({"error":"That Vibe Key button already has a direct chord, application shortcut or action; clear it before adding a gesture."}).to_string(),
+                    );
+                }
+            }
+            let mut used_references = Vec::new();
+            let mut resolve = |reference: &str| -> Option<(String, String)> {
+                let (executable, label, _) = apps.resolve_application(reference)?;
+                used_references.push(reference.to_string());
+                Some((executable, label))
+            };
+            let (code, mut view) = gestures.add(request.body, actions.commands(), &mut resolve);
+            if code == 200 {
+                for reference in used_references {
+                    apps.consume_application(&reference);
+                }
+            }
+            if code == 200 {
+                if let Some(button) = button {
+                    view["hardware"] = match hardware.write_sentinel(button) {
+                        Ok(()) => serde_json::json!({
+                            "button": button,
+                            "state": "provisioned",
+                            "sentinel": format!("Ctrl + Alt + Shift + F{}", 10 + button),
+                            "error": null,
+                        }),
+                        Err(error) => serde_json::json!({
+                            "button": button,
+                            "state": "failed",
+                            "sentinel": format!("Ctrl + Alt + Shift + F{}", 10 + button),
+                            "error": error,
+                        }),
+                    };
+                }
+            }
+            (code, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/gestures/remove") => {
+            let id = serde_json::from_str::<serde_json::Value>(request.body)
+                .ok()
+                .and_then(|value| value["id"].as_str().map(str::to_string));
+            let button = id.as_deref().and_then(|id| {
+                gestures
+                    .bindings()
+                    .iter()
+                    .find(|binding| binding.id == id)
+                    .map(|binding| binding.button)
+            });
+            let (code, mut view) = gestures.remove(request.body);
+            if code == 200 {
+                if let Some(button) = button {
+                    if !gestures.has_button(button) {
+                        if let Err(error) = hardware.clear_button(button) {
+                            view["hardware"] = serde_json::json!({
+                                "button": button,
+                                "state": "failed",
+                                "error": error,
+                            });
+                        }
+                    }
+                }
+            }
+            (code, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/gestures/sync") => {
+            let mut results = Vec::new();
+            for button in gestures.buttons() {
+                results.push(match hardware.write_sentinel(button) {
+                    Ok(()) => serde_json::json!({
+                        "button": button,
+                        "state": "provisioned",
+                        "sentinel": format!("Ctrl + Alt + Shift + F{}", 10 + button),
+                        "error": null,
+                    }),
+                    Err(error) => serde_json::json!({
+                        "button": button,
+                        "state": "failed",
+                        "sentinel": format!("Ctrl + Alt + Shift + F{}", 10 + button),
+                        "error": error,
+                    }),
+                });
+            }
+            let mut view = gestures.view();
+            view["hardware"] = serde_json::Value::Array(results);
+            (200, "application/json", view.to_string())
+        }
+        _ => (
+            404,
+            "application/json",
+            serde_json::json!({"error":"Unknown gesture route"}).to_string(),
+        ),
+    }
+}
+
 /// Hardware action bindings and the local command table.
 #[allow(clippy::too_many_arguments)]
 /// Read-only built-in plugin registry for Settings and agent clients.
@@ -2521,6 +2716,7 @@ fn actions_route(
     hardware: &mut crate::hardware::Hardware,
     apps: &mut crate::resident_apps::Registry,
     shortcuts: &ShortcutRegistry,
+    gestures: &crate::actions::gestures::Store,
     devices: &mut dyn FnMut() -> serde_json::Value,
     config: &Config,
 ) -> Routed {
@@ -2556,6 +2752,14 @@ fn actions_route(
                     .collect(),
                 direct_buttons: hardware.direct_buttons(),
                 direct_chords: hardware.direct_chords(),
+                gesture_sentinels: gestures
+                    .buttons()
+                    .into_iter()
+                    .filter_map(|button| {
+                        crate::actions::gestures::GestureKind::sentinel_text(button)
+                    })
+                    .filter_map(|text| crate::hotkey::Hotkey::parse(&text).ok())
+                    .collect(),
             };
             #[cfg(windows)]
             let mut used_references = Vec::new();
@@ -3177,6 +3381,7 @@ mod resident_api_tests {
         let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let gestures = crate::actions::gestures::Store::start(std::path::PathBuf::new());
         let mut devices = || serde_json::json!({"devices":[]});
         let config = Config::default();
         for (path, method) in [
@@ -3204,6 +3409,7 @@ mod resident_api_tests {
                     &mut hardware,
                     &mut apps,
                     &shortcuts,
+                    &gestures,
                     &mut devices,
                     &config,
                 )
@@ -3220,6 +3426,7 @@ mod resident_api_tests {
                     &mut hardware,
                     &mut apps,
                     &shortcuts,
+                    &gestures,
                     &mut devices,
                     &config,
                 )
@@ -3243,6 +3450,7 @@ mod resident_api_tests {
             &mut hardware,
             &mut apps,
             &shortcuts,
+            &gestures,
             &mut devices,
             &config,
         );
@@ -3277,6 +3485,66 @@ mod resident_api_tests {
             .unwrap()
             .iter()
             .any(|plugin| plugin["id"] == "ulanzi.au05"));
+    }
+
+    #[test]
+    fn gesture_add_and_remove_round_trip_with_hardware_disabled() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("vibdock-gesture-route-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let mut gestures = crate::actions::gestures::Store::start(dir.clone());
+        let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
+        let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let actions = crate::actions::Registry::start(
+            false,
+            crate::actions::CommandRegistry::start(dir.clone()),
+            dir.clone(),
+            None,
+        );
+        let mut apps = crate::resident_apps::Registry::empty(dir.clone(), None);
+        let mut request = Request {
+            method: Method::Post,
+            path: "/api/gestures/add",
+            host: Some(&host),
+            origin: None,
+            authorized: true,
+            body: r#"{"revision":0,"name":"Route test","button":2,"gesture":"double","steps":[{"type":"send_keys","keys":"Ctrl + Shift + Space"}]}"#,
+            body_rejected: false,
+        };
+        let (code, _, body) = gestures_route(
+            &request,
+            true,
+            &mut gestures,
+            &mut hardware,
+            &shortcuts,
+            &actions,
+            &mut apps,
+        );
+        assert_eq!(code, 200, "{body}");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["gestures"].as_array().unwrap().len(), 1);
+        assert_eq!(value["hardware"]["sentinel"], "Ctrl + Alt + Shift + F12");
+        let id = value["gestures"][0]["id"].as_str().unwrap().to_string();
+        request.path = "/api/gestures/remove";
+        let remove_body = serde_json::json!({"revision":1,"id":id}).to_string();
+        request.body = &remove_body;
+        let (code, _, body) = gestures_route(
+            &request,
+            true,
+            &mut gestures,
+            &mut hardware,
+            &shortcuts,
+            &actions,
+            &mut apps,
+        );
+        assert_eq!(code, 200, "{body}");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(value["gestures"].as_array().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

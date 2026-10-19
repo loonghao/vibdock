@@ -17,7 +17,7 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use vibdock_au05::{self as au05, Button};
-use vibdock_input::hotkey::Hotkey;
+use vibdock_input::hotkey::{Hotkey, Key, Modifier};
 
 /// Atomic replacement for the small hardware store. The host passes the state
 /// directory in, so this crate does not depend on the service crate.
@@ -493,6 +493,22 @@ impl Hardware {
             let _ = (button, hotkey);
             Err("AU05 hardware control requires Windows.".into())
         }
+    }
+
+    /// Write the gesture sentinel for one button: Ctrl+Alt+Shift+F10/F11/F12.
+    ///
+    /// The host watches these keys to classify single/double/long press. The
+    /// button slot is mutually exclusive with a direct chord or action trigger.
+    pub fn write_sentinel(&mut self, button: u8) -> std::result::Result<(), String> {
+        let function = 10u8
+            .checked_add(button)
+            .filter(|function| *function <= 12)
+            .ok_or_else(|| "Unknown AU05 button index.".to_string())?;
+        let hotkey = Hotkey::new(
+            [Modifier::Control, Modifier::Alt, Modifier::Shift],
+            Key::Function(function),
+        );
+        self.write_trigger(button, &hotkey)
     }
 
     /// Direct chords currently configured, for cross-mode conflict checks.
