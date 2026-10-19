@@ -20,6 +20,8 @@ spatial and memorable; the settings page is a vertical document.
 The proposal is to make **the device the navigation**, **the profile the unit of
 configuration**, and **the integration a plugin**.
 
+See [plugin-modularization.md](plugin-modularization.md) for the crate/workspace boundary and the extraction status.
+
 ## Decision: borrow the DSH plugin shape, not its runtime
 
 DeepSeek Harness/Cordis is a good reference for the plugin contract:
@@ -395,9 +397,9 @@ controller as an unconnected device instead of pretending it works.
 
 ## Implementation status
 
-The platform-independent gesture classifier has landed as `src/gesture.rs` with
+The platform-independent gesture classifier has landed as `crates/vibdock-input/crates/vibdock-input/src/gesture.rs` with
 11 unit tests covering single, double, long, repeated down reports, window expiry,
-reset and unusable timings. The multi-button matcher has landed as `src/combo.rs`
+reset and unusable timings. The multi-button matcher has landed as `crates/vibdock-input/crates/vibdock-input/src/combo.rs`
 with 10 unit tests covering sequences, order independence, longer-sequence
 precedence, holds, quick release, repeated presses and bounded timings. They are
 not wired to the service yet: the Windows keyboard hook/sentinel path, persisted
@@ -446,5 +448,8 @@ review process have tests.
   suppresses its own keys and a missing service never fabricates a gesture.
 - The page remains usable with no device, no gamepad, no plugins installed, and
   in read-only preview mode (no authenticated calls).
+
+
+
 
 

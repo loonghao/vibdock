@@ -11,7 +11,7 @@
 
 /// One logical action selected by a press sequence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Gesture {
+pub enum Gesture {
     Single,
     Double,
     Long,
@@ -19,13 +19,13 @@ pub(crate) enum Gesture {
 
 /// Timing bounds chosen to match the workbench's user-facing sliders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Timings {
-    pub(crate) double_window_ms: u64,
-    pub(crate) long_press_ms: u64,
+pub struct Timings {
+    pub double_window_ms: u64,
+    pub long_press_ms: u64,
 }
 
 impl Timings {
-    pub(crate) const fn new(double_window_ms: u64, long_press_ms: u64) -> Option<Self> {
+    pub const fn new(double_window_ms: u64, long_press_ms: u64) -> Option<Self> {
         // A double-click window shorter than 50 ms is not reliably producible by
         // a human; a long press below 150 ms would collide with ordinary taps.
         if double_window_ms < 50
@@ -59,33 +59,33 @@ enum State {
     Consumed,
 }
 
-pub(crate) struct Classifier {
+pub struct Classifier {
     timings: Timings,
     state: State,
 }
 
 impl Classifier {
-    pub(crate) fn new(timings: Timings) -> Self {
+    pub fn new(timings: Timings) -> Self {
         Self {
             timings,
             state: State::Idle,
         }
     }
 
-    pub(crate) fn timings(&self) -> Timings {
+    pub fn timings(&self) -> Timings {
         self.timings
     }
 
-    pub(crate) fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> bool {
         matches!(self.state, State::Idle)
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.state = State::Idle;
     }
 
     /// Records a key-down edge. Returns `Double` on the second press of a pair.
-    pub(crate) fn press(&mut self, now_ms: u64) -> Option<Gesture> {
+    pub fn press(&mut self, now_ms: u64) -> Option<Gesture> {
         match self.state {
             State::Idle => {
                 self.state = State::Held {
@@ -114,7 +114,7 @@ impl Classifier {
     }
 
     /// Records a key-up edge. A long press that already fired is not repeated.
-    pub(crate) fn release(&mut self, now_ms: u64) -> Option<Gesture> {
+    pub fn release(&mut self, now_ms: u64) -> Option<Gesture> {
         match self.state {
             State::Idle | State::Consumed => {
                 self.state = State::Idle;
@@ -149,7 +149,7 @@ impl Classifier {
 
     /// Advances timers. Call this often enough to honour the long threshold and
     /// to resolve a single click after the double window.
-    pub(crate) fn tick(&mut self, now_ms: u64) -> Option<Gesture> {
+    pub fn tick(&mut self, now_ms: u64) -> Option<Gesture> {
         match self.state {
             State::Held {
                 since_ms,

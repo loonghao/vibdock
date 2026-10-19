@@ -1516,7 +1516,29 @@ dependencies = [
  "serde_json",
  "sha2",
  "sherpa-onnx",
+ "vibdock-au05",
+ "vibdock-input",
+ "vibdock-plugin-api",
  "windows 0.61.3",
+]
+
+[[package]]
+name = "vibdock-au05"
+version = "0.1.0"
+dependencies = [
+ "vibdock-input",
+]
+
+[[package]]
+name = "vibdock-input"
+version = "0.1.0"
+
+[[package]]
+name = "vibdock-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

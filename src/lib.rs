@@ -6,21 +6,17 @@
 //! so the console CLI and the Windows launcher cannot drift apart.
 
 use std::{error::Error, fmt};
+mod actions;
 mod app_audio;
 #[cfg(not(windows))]
 mod app_session_stub;
 #[cfg(windows)]
 mod app_session_windows;
 mod app_shortcuts;
-// AU05 Vibe Key vendor protocol. Windows-only in production; kept platform
-// independent so the wire format is testable on every build host.
-mod actions;
-mod au05;
+// AU05 wire protocol and keymap live in a standalone crate; the Windows HID
+// adapter in this crate owns device I/O.
+pub(crate) use vibdock_au05 as au05;
 mod browser_auth;
-// Multi-button chord recognition is platform independent and unit-tested; the
-// profile layer will construct it from saved combos.
-#[allow(dead_code)]
-mod combo;
 // Platform adapter that provisions the AU05 buttons. The stub reports
 // unavailable on hosts without the Windows HID adapter.
 mod capabilities;
@@ -31,10 +27,10 @@ pub mod feedback;
 mod feedback_windows;
 #[cfg(windows)]
 mod gamepad_windows;
-// Gesture timing is platform independent and unit-tested; the Windows gesture
-// monitor will construct it when the profile gesture layer lands.
-#[allow(dead_code)]
-mod gesture;
+// Gesture and combo recognition live in the platform-independent input crate;
+// the Windows gesture monitor will construct them when the profile layer lands.
+#[allow(unused_imports)]
+pub(crate) use vibdock_input::{combo, gesture};
 mod hardware;
 mod instance_proof;
 mod integrations;
@@ -72,7 +68,8 @@ pub mod resident_apps;
 #[cfg(windows)]
 mod resident_windows;
 
-pub mod hotkey;
+pub use vibdock_input::hotkey;
+pub use vibdock_plugin_api as plugin_api;
 pub mod service;
 pub mod transport;
 #[cfg(windows)]

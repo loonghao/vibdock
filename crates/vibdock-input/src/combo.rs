@@ -15,10 +15,10 @@
 
 use std::collections::BTreeMap;
 
-pub(crate) const MAX_CONTROLS: usize = 3;
+pub const MAX_CONTROLS: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ComboKind {
+pub enum ComboKind {
     /// Distinct controls tapped within the chord window.
     Sequence,
     /// Distinct controls held together past the hold threshold.
@@ -27,13 +27,13 @@ pub(crate) enum ComboKind {
 
 /// A configured combo. Controls are sorted and de-duplicated.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Pattern {
+pub struct Pattern {
     controls: Vec<u8>,
     kind: ComboKind,
 }
 
 impl Pattern {
-    pub(crate) fn new(kind: ComboKind, mut controls: Vec<u8>) -> Option<Self> {
+    pub fn new(kind: ComboKind, mut controls: Vec<u8>) -> Option<Self> {
         controls.sort_unstable();
         controls.dedup();
         if controls.len() < 2 || controls.len() > MAX_CONTROLS {
@@ -42,23 +42,23 @@ impl Pattern {
         Some(Self { controls, kind })
     }
 
-    pub(crate) fn controls(&self) -> &[u8] {
+    pub fn controls(&self) -> &[u8] {
         &self.controls
     }
 
-    pub(crate) fn kind(&self) -> ComboKind {
+    pub fn kind(&self) -> ComboKind {
         self.kind
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Config {
-    pub(crate) chord_window_ms: u64,
-    pub(crate) hold_ms: u64,
+pub struct Config {
+    pub chord_window_ms: u64,
+    pub hold_ms: u64,
 }
 
 impl Config {
-    pub(crate) const fn new(chord_window_ms: u64, hold_ms: u64) -> Option<Self> {
+    pub const fn new(chord_window_ms: u64, hold_ms: u64) -> Option<Self> {
         if chord_window_ms < 80 || chord_window_ms > 1_000 || hold_ms < 200 || hold_ms > 3_000 {
             return None;
         }
@@ -79,9 +79,9 @@ impl Default for Config {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Hit {
-    pub(crate) controls: Vec<u8>,
-    pub(crate) kind: ComboKind,
+pub struct Hit {
+    pub controls: Vec<u8>,
+    pub kind: ComboKind,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -95,7 +95,7 @@ struct Pending {
     deadline_ms: u64,
 }
 
-pub(crate) struct Matcher {
+pub struct Matcher {
     config: Config,
     patterns: Vec<Pattern>,
     held: BTreeMap<u8, Held>,
@@ -109,7 +109,7 @@ pub(crate) struct Matcher {
 }
 
 impl Matcher {
-    pub(crate) fn new(config: Config, patterns: Vec<Pattern>) -> Self {
+    pub fn new(config: Config, patterns: Vec<Pattern>) -> Self {
         Self {
             config,
             patterns,
@@ -122,15 +122,15 @@ impl Matcher {
         }
     }
 
-    pub(crate) fn config(&self) -> Config {
+    pub fn config(&self) -> Config {
         self.config
     }
 
-    pub(crate) fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> bool {
         self.held.is_empty() && self.order.is_empty() && self.pending.is_none()
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.held.clear();
         self.order.clear();
         self.first_press_ms = None;
@@ -141,7 +141,7 @@ impl Matcher {
 
     /// Records a control press. A hold is emitted by [`Self::tick`] once the
     /// threshold is crossed; a sequence is resolved on the final release.
-    pub(crate) fn press(&mut self, control: u8, now_ms: u64) -> Option<Hit> {
+    pub fn press(&mut self, control: u8, now_ms: u64) -> Option<Hit> {
         if self.consumed || self.held.contains_key(&control) {
             return None;
         }
@@ -165,7 +165,7 @@ impl Matcher {
 
     /// Records a control release. The hit is returned when the last control of
     /// a tapped combo is released and no longer combo could still extend it.
-    pub(crate) fn release(&mut self, control: u8, now_ms: u64) -> Option<Hit> {
+    pub fn release(&mut self, control: u8, now_ms: u64) -> Option<Hit> {
         self.held.remove(&control)?;
         if !self.held.is_empty() {
             return None;
@@ -217,7 +217,7 @@ impl Matcher {
 
     /// Fires a hold as soon as all of its controls have been held past the
     /// threshold, or resolves a pending shorter sequence at its deadline.
-    pub(crate) fn tick(&mut self, now_ms: u64) -> Option<Hit> {
+    pub fn tick(&mut self, now_ms: u64) -> Option<Hit> {
         if !self.consumed {
             if let Some(pattern) = self.hold_candidate(now_ms).cloned() {
                 self.consumed = true;

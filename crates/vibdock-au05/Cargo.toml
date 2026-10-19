@@ -1,0 +1,15 @@
+[package]
+name = "vibdock-au05"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Pure Ulanzi AU05 Vibe Key vendor protocol and keymap."
+
+[lib]
+name = "vibdock_au05"
+path = "src/lib.rs"
+
+[dependencies]
+vibdock-input = { path = "../vibdock-input" }
+

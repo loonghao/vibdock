@@ -9,54 +9,54 @@
 //! device I/O.
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::hotkey::{Hotkey, Key, Modifier};
+use vibdock_input::hotkey::{Hotkey, Key, Modifier};
 
 /// USB vendor ID of the AU05 vendor collection.
-pub(crate) const VENDOR_ID: u16 = 0xfff1;
+pub const VENDOR_ID: u16 = 0xfff1;
 /// USB product ID of the AU05 vendor collection.
-pub(crate) const PRODUCT_ID: u16 = 0x00dd;
+pub const PRODUCT_ID: u16 = 0x00dd;
 /// HID report ID of every vendor frame.
-pub(crate) const REPORT_ID: u8 = 0x55;
+pub const REPORT_ID: u8 = 0x55;
 /// Full report length in bytes, report ID included.
-pub(crate) const REPORT_LEN: usize = 64;
+pub const REPORT_LEN: usize = 64;
 /// Plaintext bytes available to a payload after the 4-byte header.
 const PAYLOAD_LEN: usize = REPORT_LEN - 4;
 /// Ciphertext bytes carried on the wire after the report ID.
 const CIPHER_LEN: usize = REPORT_LEN - 1;
 
 /// Header of "read shortcut slot".
-pub(crate) const GET_SHORTCUT_HEADER: [u8; 4] = [0x01, 0x06, 0x50, 0x01];
+pub const GET_SHORTCUT_HEADER: [u8; 4] = [0x01, 0x06, 0x50, 0x01];
 /// Header of "write shortcut slot".
-pub(crate) const SET_SHORTCUT_HEADER: [u8; 4] = [0x01, 0x06, 0x50, 0x04];
+pub const SET_SHORTCUT_HEADER: [u8; 4] = [0x01, 0x06, 0x50, 0x04];
 /// Header of "read fixed function".
-pub(crate) const GET_FIXED_FUNCTION_HEADER: [u8; 4] = [0x01, 0x06, 0x10, 0x01];
+pub const GET_FIXED_FUNCTION_HEADER: [u8; 4] = [0x01, 0x06, 0x10, 0x01];
 /// Header of "write fixed function".
-pub(crate) const SET_FIXED_FUNCTION_HEADER: [u8; 4] = [0x01, 0x06, 0x10, 0x04];
+pub const SET_FIXED_FUNCTION_HEADER: [u8; 4] = [0x01, 0x06, 0x10, 0x04];
 /// Header of "read battery state".
 ///
 /// Part of the vendor command surface; no caller reads the battery yet.
 #[allow(dead_code)]
-pub(crate) const GET_BATTERY_HEADER: [u8; 4] = [0x01, 0x01, 0x02, 0x01];
+pub const GET_BATTERY_HEADER: [u8; 4] = [0x01, 0x01, 0x02, 0x01];
 /// Header of the keep-alive heartbeat.
-pub(crate) const HEARTBEAT_HEADER: [u8; 4] = [0x06, 0x01, 0x23, 0x00];
+pub const HEARTBEAT_HEADER: [u8; 4] = [0x06, 0x01, 0x23, 0x00];
 
 /// One of the three round buttons the vendor protocol manages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Button(u8);
+pub struct Button(u8);
 
 impl Button {
     /// The button at a device slot index. Only slots 0..=2 are managed.
-    pub(crate) fn from_index(index: u8) -> Option<Self> {
+    pub fn from_index(index: u8) -> Option<Self> {
         (index < 3).then_some(Button(index))
     }
 
     /// The device slot index of this button.
-    pub(crate) fn index(self) -> u8 {
+    pub fn index(self) -> u8 {
         self.0
     }
 
     /// A human-readable name for diagnostics.
-    pub(crate) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self.0 {
             0 => "Button 1",
             1 => "Button 2",
@@ -65,7 +65,7 @@ impl Button {
     }
 
     /// All managed buttons, in slot order.
-    pub(crate) fn all() -> [Button; 3] {
+    pub fn all() -> [Button; 3] {
         [Button(0), Button(1), Button(2)]
     }
 }
@@ -73,7 +73,7 @@ impl Button {
 /// One shortcut entry: a HID page, its usage value, and the left/right sign
 /// bit the wire format carries in the page byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct KeyEntry {
+pub struct KeyEntry {
     /// HID usage page: 2 is the keyboard/consumer page, 3 is the modifier map.
     pub page: u8,
     /// HID usage ID on that page, or the modifier bit value.
@@ -88,7 +88,7 @@ pub(crate) struct KeyEntry {
 /// with an error naming the key rather than silently guessed, because a
 /// shortcut that reaches the device as some other key would fire the wrong
 /// action with no way to notice.
-pub(crate) fn hotkey_entries(hotkey: &Hotkey) -> Result<Vec<KeyEntry>, String> {
+pub fn hotkey_entries(hotkey: &Hotkey) -> Result<Vec<KeyEntry>, String> {
     let mut entries = Vec::with_capacity(hotkey.modifiers().len() + 1);
     for modifier in hotkey.modifiers() {
         entries.push(modifier_entry(*modifier));
@@ -99,13 +99,13 @@ pub(crate) fn hotkey_entries(hotkey: &Hotkey) -> Result<Vec<KeyEntry>, String> {
 
 /// A payload that writes one shortcut slot: `[index, 0x01, count, entries…]`.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn shortcut_payload(button: Button, hotkey: &Hotkey) -> Result<Vec<u8>, String> {
+pub fn shortcut_payload(button: Button, hotkey: &Hotkey) -> Result<Vec<u8>, String> {
     let entries = hotkey_entries(hotkey)?;
     Ok(shortcut_payload_entries(button, &entries))
 }
 
 /// A payload that writes one shortcut slot from already-derived entries.
-pub(crate) fn shortcut_payload_entries(button: Button, entries: &[KeyEntry]) -> Vec<u8> {
+pub fn shortcut_payload_entries(button: Button, entries: &[KeyEntry]) -> Vec<u8> {
     let mut payload = Vec::with_capacity(3 + entries.len() * 2);
     payload.extend_from_slice(&[button.index(), 0x01, entries.len() as u8]);
     for entry in entries {
@@ -120,7 +120,7 @@ pub(crate) fn shortcut_payload_entries(button: Button, entries: &[KeyEntry]) -> 
 /// `Enter` or `Esc`: the firmware emits it as a normal key press and no host
 /// hotkey is involved. A bare Windows key is refused because it would invoke
 /// the shell start menu rather than a user action.
-pub(crate) fn direct_entries(text: &str) -> Result<Vec<KeyEntry>, String> {
+pub fn direct_entries(text: &str) -> Result<Vec<KeyEntry>, String> {
     if let Ok(hotkey) = Hotkey::parse(text) {
         return hotkey_entries(&hotkey);
     }
@@ -133,7 +133,7 @@ pub(crate) fn direct_entries(text: &str) -> Result<Vec<KeyEntry>, String> {
 }
 
 /// The canonical display form of a direct chord.
-pub(crate) fn direct_canonical(text: &str) -> Result<String, String> {
+pub fn direct_canonical(text: &str) -> Result<String, String> {
     if let Ok(hotkey) = Hotkey::parse(text) {
         return Ok(hotkey.as_string());
     }
@@ -146,17 +146,17 @@ pub(crate) fn direct_canonical(text: &str) -> Result<String, String> {
 }
 
 /// A payload that clears one shortcut slot.
-pub(crate) fn clear_shortcut_payload(button: Button) -> [u8; 3] {
+pub fn clear_shortcut_payload(button: Button) -> [u8; 3] {
     [button.index(), 0x01, 0x00]
 }
 
 /// A payload that clears the fixed function bound to one button.
-pub(crate) fn fixed_function_clear_payload(button: Button) -> [u8; 3] {
+pub fn fixed_function_clear_payload(button: Button) -> [u8; 3] {
     [0x00, button.index(), 0x00]
 }
 
 /// A payload that reads the fixed function bound to one button.
-pub(crate) fn fixed_function_get_payload(button: Button) -> [u8; 2] {
+pub fn fixed_function_get_payload(button: Button) -> [u8; 2] {
     [0x00, button.index()]
 }
 
@@ -165,7 +165,7 @@ pub(crate) fn fixed_function_get_payload(button: Button) -> [u8; 2] {
 /// The header occupies plaintext bytes 0..4, the payload follows, and the
 /// rest is zero. A payload longer than 60 bytes is truncated; the final
 /// ciphertext byte never reaches the wire.
-pub(crate) fn encode_frame(header: [u8; 4], payload: &[u8]) -> [u8; REPORT_LEN] {
+pub fn encode_frame(header: [u8; 4], payload: &[u8]) -> [u8; REPORT_LEN] {
     let mut plain = [0u8; REPORT_LEN];
     plain[..4].copy_from_slice(&header);
     let length = payload.len().min(PAYLOAD_LEN);
@@ -182,7 +182,7 @@ pub(crate) fn encode_frame(header: [u8; 4], payload: &[u8]) -> [u8; REPORT_LEN] 
 /// The report ID is stripped, the remaining ciphertext is decrypted in
 /// 8-byte blocks, and the result is zero-padded into a full-size buffer.
 /// Returns `None` when the bytes are not a report for this report ID.
-pub(crate) fn decode_report(report: &[u8]) -> Option<[u8; REPORT_LEN]> {
+pub fn decode_report(report: &[u8]) -> Option<[u8; REPORT_LEN]> {
     if report.len() < 2 || report[0] != REPORT_ID {
         return None;
     }
@@ -198,13 +198,13 @@ pub(crate) fn decode_report(report: &[u8]) -> Option<[u8; REPORT_LEN]> {
 ///
 /// The device sets the high bit of the first byte and echoes `b1`/`b2`; `b3`
 /// carries the reply direction and must not be compared.
-pub(crate) fn response_matches(plain: &[u8; REPORT_LEN], header: [u8; 4]) -> bool {
+pub fn response_matches(plain: &[u8; REPORT_LEN], header: [u8; 4]) -> bool {
     plain[0] & 0x80 != 0 && plain[1] == header[1] && plain[2] == header[2]
 }
 
 /// A decoded shortcut-slot readback.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ShortcutReadback {
+pub struct ShortcutReadback {
     /// Device slot index the reply describes.
     pub button: u8,
     /// Stored entries in device order.
@@ -215,7 +215,7 @@ pub(crate) struct ShortcutReadback {
 ///
 /// The reply data is `[button_index, 0x01, count, (pageSign, value) * count]`.
 /// Malformed lengths and replies to a different command are rejected.
-pub(crate) fn parse_shortcut_readback(plain: &[u8; REPORT_LEN]) -> Option<ShortcutReadback> {
+pub fn parse_shortcut_readback(plain: &[u8; REPORT_LEN]) -> Option<ShortcutReadback> {
     if !response_matches(plain, GET_SHORTCUT_HEADER) || plain[5] != 0x01 {
         return None;
     }
@@ -238,7 +238,7 @@ pub(crate) fn parse_shortcut_readback(plain: &[u8; REPORT_LEN]) -> Option<Shortc
 /// right-side chord stored on the device is not the same binding as the
 /// left-side chord a recorded hotkey describes.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn shortcut_readback_matches(
+pub fn shortcut_readback_matches(
     plain: &[u8; REPORT_LEN],
     button: Button,
     hotkey: &Hotkey,
@@ -250,7 +250,7 @@ pub(crate) fn shortcut_readback_matches(
 }
 
 /// Whether a stored readback holds exactly the given entries, in order.
-pub(crate) fn shortcut_readback_matches_entries(
+pub fn shortcut_readback_matches_entries(
     plain: &[u8; REPORT_LEN],
     button: Button,
     expected: &[KeyEntry],
@@ -265,7 +265,7 @@ pub(crate) fn shortcut_readback_matches_entries(
 ///
 /// The reply data is `[0x00, button_index, func_index]`; the fixed function
 /// is a separate storage slot from the shortcut, and 0 means "none".
-pub(crate) fn parse_fixed_function_readback(plain: &[u8; REPORT_LEN]) -> Option<(u8, u8)> {
+pub fn parse_fixed_function_readback(plain: &[u8; REPORT_LEN]) -> Option<(u8, u8)> {
     if !response_matches(plain, GET_FIXED_FUNCTION_HEADER) || plain[4] != 0x00 {
         return None;
     }
