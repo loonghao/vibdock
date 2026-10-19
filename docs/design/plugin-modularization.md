@@ -1,14 +1,18 @@
 # Plugin modularization
 
-Status: architecture proposal plus the first extraction, 2026-10-19. The tree
+Status: device/input extraction and registry scaffold, 2026-10-19. The tree
 already builds these crates:
 
 - `vibdock-input` — hotkey parsing, gesture classifier, multi-button matcher;
 - `vibdock-au05` — pure Ulanzi AU05 wire protocol and keymap;
+- `vibdock-device-au05` — Windows AU05 HID enumeration, provisioning and readback;
+- `vibdock-device-gamepad` — generic Windows HID gamepad input;
 - `vibdock-plugin-api` — manifest, capability and plugin trait contracts.
 
-The Windows adapter, action executor, web routes and profiles still live in the
-root crate. This document is explicit about what is done and what is not.
+The action executor, web routes, app shortcuts and profiles still live in the
+root crate. The host now has a read-only built-in plugin registry at
+`GET /api/plugins`, but it is not yet a full loader. This document is explicit
+about what is done and what is not.
 
 ## The problem
 
@@ -72,10 +76,10 @@ Rules:
 | `vibdock-input` | hotkey parse/normalize, single/double/long classifier, 2–3 button sequence/hold matcher | HID, hotkey registration, actions | extracted |
 | `vibdock-au05` | vendor frame format, TEA, shortcut/fixed-function payloads, keymap, readback parsing | opening HID, persistence, defaults | extracted |
 | `vibdock-plugin-api` | manifest schema, capability enum, device view, profile preset, action descriptor, plugin/host traits | implementation, OS access | new |
-| `vibdock-device-au05` | HID enumeration/open, vendor frame I/O, provision/readback, device identity | profiles, web, actions | next |
-| `vibdock-device-gamepad` | generic gamepad enumeration and button edges | profiles, web | next |
+| `vibdock-device-au05` | HID enumeration/open, vendor frame I/O, provision/readback, device identity | profiles, web, actions | extracted |
+| `vibdock-device-gamepad` | generic gamepad enumeration and button edges | profiles, web | extracted |
 | `vibdock-integration-*` | app discovery/launch, default profiles, plugin-specific actions | config store, auth | next |
-| `vibdock-core` | plugin registry, profile store, action executor, capabilities, service | device protocols, UI layout | next |
+| `vibdock-core` | plugin registry, profile store, action executor, capabilities, service | device protocols, UI layout | partial: read-only `/api/plugins` in root |
 | `vibdock-web` | HTTP routes, auth boundary, schema form renderer, workbench shell | HID, firmware | next |
 | `vibdock-cli` / `vibdock-launcher` | argument parsing, tray/launcher wiring | business logic | later |
 
@@ -173,19 +177,24 @@ open HID. Device plugins need the sidecar/native route.
 - Added `crates/vibdock-plugin-api` with manifest validation and traits, and
   made it a host dependency.
 
-**Step 2 — AU05 device crate.**
+**Step 2 — AU05 and gamepad device crates (done).**
 
-Move `src/hardware.rs`'s Windows `windows_impl` and persistence split into
-`vibdock-device-au05`; move only the generic `DevicePlugin`/firmware interface
-into the plugin API. The host keeps the binding tables and conflict rules.
+Moved `src/hardware.rs` into `vibdock-device-au05`: the crate owns HID
+enumeration, vendor frame I/O, provision/readback and its small `hardware.json`
+store. The host passes the state directory and microphone label, so the crate
+has no service dependency. Moved `src/gamepad_windows.rs` into
+`vibdock-device-gamepad`. The root re-exports both under their old module names
+while call sites migrate.
 
-**Step 3 — host kernel and registry.**
+**Step 3 — host kernel and registry (partial).**
 
-Extract `vibdock-core` (service, config, profiles, action executor, plugin
-registry) and `vibdock-web` (routes, auth, form renderer) from the root. Add
-`GET /api/plugins`, enable/disable and per-plugin config routes. Keep the
-existing `/api/hardware` and `/api/actions` routes as compatibility adapters
-during the migration.
+Added `src/plugins.rs` with validated built-in manifests and a read-only
+`GET /api/plugins` (auth/origin checked). The demo manifest set covers AU05, a
+generic Sony DualSense, Codex, DeepSeek Harness, WeChat Input, WorkBuddy and the
+command provider. Still to do: extract `vibdock-core` (service, config, profiles,
+action executor, plugin registry) and `vibdock-web` (routes, auth, form
+renderer); add enable/disable and per-plugin config. Keep `/api/hardware` and
+`/api/actions` as compatibility adapters during the migration.
 
 **Step 4 — built-in integration plugins.**
 
@@ -193,11 +202,32 @@ Move Codex, DSH, WeChat Input and WorkBuddy into their own crates/manifests with
 declared actions and default profiles. The commands layer becomes
 `vibdock-action-commands`.
 
-**Step 5 — gamepad and third-party sidecars.**
+**Step 5 — third-party sidecars.**
 
-Extract `vibdock-device-gamepad` from `src/gamepad_windows.rs`; add the sidecar
-protocol and a local plugin folder with manifest signing. Only then advertise a
-plugin marketplace.
+The gamepad crate is extracted. Add the sidecar protocol and a local plugin
+folder with manifest signing. Only then advertise a plugin marketplace.
+
+## Agent access
+
+The repository ships an agent skill at
+[`skills/vibdock/SKILL.md`](../../skills/vibdock/SKILL.md) and a read-only helper
+at [`scripts/vibdock-agent.ps1`](../../scripts/vibdock-agent.ps1). The helper
+reads the loopback service state file, adds the bearer token without printing
+it, and exposes:
+
+```powershell
+scripts\vibdock-agent.ps1 plugins
+scripts\vibdock-agent.ps1 actions
+scripts\vibdock-agent.ps1 action-commands
+scripts\vibdock-agent.ps1 hardware
+scripts\vibdock-agent.ps1 pad-execute -Id <saved-action-id>
+```
+
+`GET /api/plugins` gives an agent the same plugin, capability and control list
+the workbench uses, so an agent does not need to hard-code AU05 button names.
+Mutation still goes through the existing authenticated action/hardware routes;
+the helper itself is read-only except for `pad-execute`, which runs one saved
+action id.
 
 ## Acceptance for the first extraction
 
@@ -219,3 +249,6 @@ plugin marketplace.
 - No plugin-authored shell strings; command steps remain structured argv.
 - No claim that extracting crates makes third-party plugins safe. The sidecar,
   capability and signing work is a separate phase.
+
+
+

@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 //! Generic Windows HID game-controller input adapter.
 //!
 //! The adapter enumerates Windows HID top-level collections that identify
@@ -75,7 +77,7 @@ const MAX_REPORTS_PER_DEVICE: usize = 8;
 
 /// A connected HID game controller.
 #[derive(Clone, Debug)]
-pub(crate) struct DeviceInfo {
+pub struct DeviceInfo {
     /// Stable-enough identity for a saved binding: `vendor:product:serial`
     /// (lowercase hex) when the HID serial number is present, otherwise
     /// `vendor:product:interface-path`. Bounded to 512 printable bytes.
@@ -96,7 +98,7 @@ pub(crate) struct DeviceInfo {
 
 /// One button transition observed in an input report.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ButtonEvent {
+pub struct ButtonEvent {
     pub device_key: String,
     pub usage: u16,
     pub pressed: bool,
@@ -104,7 +106,7 @@ pub(crate) struct ButtonEvent {
 
 /// Poll-based gamepad monitor owned by the service accept-loop thread.
 #[derive(Default)]
-pub(crate) struct Monitor {
+pub struct Monitor {
     /// Open controller collections, bounded by [`MAX_DEVICES`].
     pads: Vec<OpenPad>,
     /// Most recent pressed usage per device key, bounded by [`MAX_DEVICES`].
@@ -119,13 +121,13 @@ unsafe impl Send for Monitor {}
 
 impl Monitor {
     /// Creates an inert monitor. No devices are opened until `refresh`/`poll`.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Rescans HID interfaces, opens the gamepad collections, and returns the
     /// currently connected devices. Call this on the accept-loop thread.
-    pub(crate) fn refresh(&mut self) -> Vec<DeviceInfo> {
+    pub fn refresh(&mut self) -> Vec<DeviceInfo> {
         let paths = match hid_interface_paths() {
             Ok(paths) => paths,
             Err(_) => {
@@ -168,7 +170,7 @@ impl Monitor {
 
     /// Reads pending input reports without blocking for long (bounded by
     /// [`POLL_BUDGET_MS`]), updates button state, and returns the transitions.
-    pub(crate) fn poll(&mut self) -> Vec<ButtonEvent> {
+    pub fn poll(&mut self) -> Vec<ButtonEvent> {
         let mut events: Vec<ButtonEvent> = Vec::new();
         if self.pads.is_empty() {
             return events;
@@ -242,7 +244,7 @@ impl Monitor {
 
     /// The most recent pressed button per device, for a UI "press a button to
     /// learn it" flow. Timestamps are milliseconds since the Unix epoch.
-    pub(crate) fn latest_pressed(&self) -> Vec<(String, u16, u64)> {
+    pub fn latest_pressed(&self) -> Vec<(String, u16, u64)> {
         let mut entries: Vec<(String, u16, u64)> = Vec::new();
         for (key, usage, timestamp) in &self.latest {
             match entries.iter().position(|(existing, _, _)| existing == key) {

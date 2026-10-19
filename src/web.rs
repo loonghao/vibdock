@@ -1014,7 +1014,10 @@ fn accept_loop(
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut apps = crate::resident_apps::Registry::start(token.is_some());
     let mut shortcuts = ShortcutRegistry::start(token.is_some());
-    let mut hardware = crate::hardware::Hardware::start(token.is_some());
+    let hardware_dir = crate::service::state_dir().unwrap_or_default();
+    let hardware_mic = crate::windows::capture_endpoint_containing("au05");
+    let mut hardware =
+        crate::hardware::Hardware::start(token.is_some(), hardware_dir, hardware_mic);
     let commands = crate::actions::CommandRegistry::start();
     let mut actions = crate::actions::Registry::start(token.is_some(), commands);
     #[cfg(windows)]
@@ -1036,6 +1039,7 @@ fn accept_loop(
         hardware.ensure_defaults(&shortcuts.device_bindings(), &action_buttons);
     }
     let mut feedback = ActionFeedback::default();
+    let plugins = crate::plugins::Registry::start();
     // The indicator is opt-in, resolved from the documented environment
     // variable. When it is off, no overlay thread starts and no window is ever
     // created, so the default is observationally identical to the service as
@@ -1176,6 +1180,7 @@ fn accept_loop(
         let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
+            || path == "/api/plugins"
             || path == "/api/pad/execute"
             || is_hardware_action_route(&path)
             || path.starts_with("/api/apps/actions/")
@@ -1216,6 +1221,8 @@ fn accept_loop(
         let (mut code, mut mime, mut payload) =
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
+            } else if path == "/api/plugins" {
+                plugins_route(&routed_request, token.is_some(), &plugins)
             } else if path == "/api/pad/execute" {
                 pad_execute_route(&routed_request, token.is_some(), &actions, &mut feedback)
             } else if is_hardware_action_route(&path) {
@@ -2402,6 +2409,28 @@ fn shortcuts_route(
 /// Hardware detection and explicit re-provisioning.
 /// Hardware action bindings and the local command table.
 #[allow(clippy::too_many_arguments)]
+/// Read-only built-in plugin registry for Settings and agent clients.
+fn plugins_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    plugins: &crate::plugins::Registry,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    if request.method != Method::Get || request.path != "/api/plugins" {
+        return (
+            405,
+            "application/json",
+            serde_json::json!({"error":"Use GET /api/plugins"}).to_string(),
+        );
+    }
+    (200, "application/json", plugins.view().to_string())
+}
+
 /// Executes one saved action binding from the Pad view.
 ///
 /// The browser submits only an id; it cannot submit a step list. This keeps the
@@ -2923,7 +2952,7 @@ mod resident_api_tests {
         let host = format!("127.0.0.1:{}", crate::service::port());
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
-        let mut hardware = crate::hardware::Hardware::start(false);
+        let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let actions = crate::actions::Registry::empty_for_test(
             crate::actions::CommandRegistry::empty_for_test(),
         );
@@ -3002,7 +3031,7 @@ mod resident_api_tests {
         let host = format!("127.0.0.1:{}", crate::service::port());
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
-        let mut hardware = crate::hardware::Hardware::start(false);
+        let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let actions = crate::actions::Registry::empty_for_test(
             crate::actions::CommandRegistry::empty_for_test(),
         );
@@ -3034,7 +3063,7 @@ mod resident_api_tests {
     fn hardware_routes_require_authentication_and_origin() {
         let host = format!("127.0.0.1:{}", crate::service::port());
         let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
-        let mut hardware = crate::hardware::Hardware::start(false);
+        let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let feedback = ActionFeedback::default();
         let actions = crate::actions::Registry::empty_for_test(
             crate::actions::CommandRegistry::empty_for_test(),
@@ -3119,7 +3148,7 @@ mod resident_api_tests {
         let mut actions = crate::actions::Registry::empty_for_test(
             crate::actions::CommandRegistry::empty_for_test(),
         );
-        let mut hardware = crate::hardware::Hardware::start(false);
+        let mut hardware = crate::hardware::Hardware::start(false, std::path::PathBuf::new(), None);
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut devices = || serde_json::json!({"devices":[]});
@@ -3194,6 +3223,34 @@ mod resident_api_tests {
         assert_eq!(code, 200);
         let value: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(value["bindings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn plugin_registry_requires_authentication_and_lists_builtins() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let plugins = crate::plugins::Registry::start();
+        let mut request = Request {
+            method: Method::Get,
+            path: "/api/plugins",
+            host: Some(&host),
+            origin: None,
+            authorized: false,
+            body: "",
+            body_rejected: false,
+        };
+        assert_eq!(plugins_route(&request, true, &plugins).0, 401);
+        request.authorized = true;
+        request.origin = Some("https://attacker.invalid");
+        assert_eq!(plugins_route(&request, true, &plugins).0, 403);
+        request.origin = None;
+        let (code, _, body) = plugins_route(&request, true, &plugins);
+        assert_eq!(code, 200);
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(value["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|plugin| plugin["id"] == "ulanzi.au05"));
     }
 
     #[test]

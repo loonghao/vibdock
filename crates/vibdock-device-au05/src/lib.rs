@@ -14,24 +14,57 @@
 //! Other platforms keep the same value types and a stub that reports hardware
 //! control as unavailable, so the service, CLI and page share one contract.
 
-use crate::au05::{self, Button};
-use crate::hotkey::Hotkey;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use vibdock_au05::{self as au05, Button};
+use vibdock_input::hotkey::Hotkey;
+
+/// Atomic replacement for the small hardware store. The host passes the state
+/// directory in, so this crate does not depend on the service crate.
+fn atomic_write(path: &PathBuf, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))?;
+    std::fs::create_dir_all(dir)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp = dir.join(format!(
+        ".{}.{}.{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("hardware"),
+        std::process::id(),
+        stamp
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let written = file.write_all(contents).and_then(|_| file.sync_all());
+    drop(file);
+    let result = written.and_then(|_| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
 
 /// One saved binding that should be carried by an AU05 button.
 #[derive(Clone, Debug)]
-pub(crate) struct HardwareBinding {
+pub struct HardwareBinding {
     /// Saved shortcut id, used only to join adapter state back into the page.
-    pub(crate) binding_id: String,
+    pub binding_id: String,
     /// Display label of the bound application.
-    pub(crate) binding_label: String,
+    pub binding_label: String,
     /// Zero-based device button index (`0..=2`).
-    pub(crate) button: u8,
+    pub button: u8,
     /// Canonical chord text shown to the user.
-    pub(crate) trigger_text: String,
+    pub trigger_text: String,
     /// Parsed chord written into the firmware.
-    pub(crate) trigger: Hotkey,
+    pub trigger: Hotkey,
 }
 
 /// A chord written straight into the device firmware, with no host hotkey.
@@ -40,11 +73,11 @@ pub(crate) struct HardwareBinding {
 /// `Ctrl + Win` for an input method's voice shortcut. The button emits a real
 /// hardware key chord; the service neither registers nor dispatches anything.
 #[derive(Clone, Debug)]
-pub(crate) struct DirectEntry {
-    pub(crate) button: u8,
-    pub(crate) chord: String,
-    pub(crate) label: Option<String>,
-    pub(crate) entries: Vec<crate::au05::KeyEntry>,
+pub struct DirectEntry {
+    pub button: u8,
+    pub chord: String,
+    pub label: Option<String>,
+    pub entries: Vec<vibdock_au05::KeyEntry>,
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -94,10 +127,12 @@ impl DirectStore {
     }
 
     #[cfg_attr(test, allow(dead_code))]
-    fn load() -> Self {
-        let path = crate::service::state_dir()
-            .map(|dir| dir.join("hardware.json"))
-            .unwrap_or_default();
+    fn load(state_dir: PathBuf) -> Self {
+        let path = if state_dir.as_os_str().is_empty() {
+            PathBuf::new()
+        } else {
+            state_dir.join("hardware.json")
+        };
         let mut store = Self {
             path,
             revision: 0,
@@ -324,7 +359,7 @@ impl DirectStore {
                 "label": entry.label,
             })).collect::<Vec<_>>(),
         });
-        if crate::service::atomic_write(&self.path, stored.to_string().as_bytes()).is_err() {
+        if atomic_write(&self.path, stored.to_string().as_bytes()).is_err() {
             return (
                 500,
                 json!({"error":"Could not save hardware shortcuts; previous state is unchanged"}),
@@ -384,43 +419,46 @@ struct LastOutcome {
 }
 
 /// Provisioning state for the three device buttons, owned by the service loop.
-pub(crate) struct Hardware {
+pub struct Hardware {
     enabled: bool,
     last: std::collections::BTreeMap<u8, LastOutcome>,
     last_direct: std::collections::BTreeMap<u8, LastOutcome>,
     direct: DirectStore,
     cached: Option<(std::time::Instant, Detection)>,
+    microphone: Option<String>,
 }
 
 impl Hardware {
-    pub(crate) fn start(enabled: bool) -> Self {
+    pub fn start(enabled: bool, state_dir: PathBuf, microphone: Option<String>) -> Self {
         #[cfg(test)]
         let direct = DirectStore::empty_for_test();
+        let _ = state_dir;
         #[cfg(not(test))]
-        let direct = DirectStore::load();
+        let direct = DirectStore::load(state_dir);
         Self {
             enabled,
             last: std::collections::BTreeMap::new(),
             last_direct: std::collections::BTreeMap::new(),
             direct,
             cached: None,
+            microphone,
         }
     }
 
     /// Saves one direct firmware chord. The caller must reject a button that
     /// also carries an application binding.
-    pub(crate) fn configure_direct(&mut self, body: &str) -> (u16, Value) {
+    pub fn configure_direct(&mut self, body: &str) -> (u16, Value) {
         self.direct.set(body)
     }
 
     /// Removes one direct firmware chord.
-    pub(crate) fn remove_direct(&mut self, body: &str) -> (u16, Value) {
+    pub fn remove_direct(&mut self, body: &str) -> (u16, Value) {
         self.direct.remove(body)
     }
 
     /// Write one registered trigger chord into a button without touching the
     /// application/direct binding tables. Used by hardware action bindings.
-    pub(crate) fn write_trigger(
+    pub fn write_trigger(
         &mut self,
         button: u8,
         hotkey: &Hotkey,
@@ -455,7 +493,7 @@ impl Hardware {
     }
 
     /// Direct chords currently configured, for cross-mode conflict checks.
-    pub(crate) fn direct_chords(&self) -> Vec<Hotkey> {
+    pub fn direct_chords(&self) -> Vec<Hotkey> {
         self.direct
             .entries()
             .iter()
@@ -464,7 +502,7 @@ impl Hardware {
     }
 
     /// Buttons currently carrying a direct chord.
-    pub(crate) fn direct_buttons(&self) -> Vec<u8> {
+    pub fn direct_buttons(&self) -> Vec<u8> {
         self.direct
             .entries()
             .iter()
@@ -477,11 +515,7 @@ impl Hardware {
     /// Returns true when defaults were seeded and a write was attempted. A
     /// button that already has an application shortcut keeps that binding; the
     /// default chord only fills untouched buttons.
-    pub(crate) fn ensure_defaults(
-        &mut self,
-        bindings: &[HardwareBinding],
-        action_buttons: &[u8],
-    ) -> bool {
+    pub fn ensure_defaults(&mut self, bindings: &[HardwareBinding], action_buttons: &[u8]) -> bool {
         if !self.direct.seed_defaults {
             return false;
         }
@@ -501,7 +535,7 @@ impl Hardware {
     }
 
     /// True when a direct firmware chord currently names this button.
-    pub(crate) fn direct_configured(&self, button: u8) -> bool {
+    pub fn direct_configured(&self, button: u8) -> bool {
         self.direct.has_button(button)
     }
 
@@ -510,7 +544,7 @@ impl Hardware {
     /// Such a chord would be captured by the global hotkey registration as
     /// well as emitted to the foreground application, so the two modes must
     /// not share it.
-    pub(crate) fn direct_conflicts_with_trigger(&self, trigger: &Hotkey) -> bool {
+    pub fn direct_conflicts_with_trigger(&self, trigger: &Hotkey) -> bool {
         self.direct.entries().iter().any(|entry| {
             Hotkey::parse(&entry.chord)
                 .ok()
@@ -521,7 +555,7 @@ impl Hardware {
     /// Re-detect the device and write every saved binding, then return the
     /// current status view. Buttons that no longer have a binding in this set
     /// but were provisioned by an earlier sync are cleared.
-    pub(crate) fn provision(&mut self, bindings: &[HardwareBinding]) -> Value {
+    pub fn provision(&mut self, bindings: &[HardwareBinding]) -> Value {
         if !self.enabled {
             return self.view(bindings);
         }
@@ -533,7 +567,7 @@ impl Hardware {
     }
 
     /// Clear one button after its binding was removed.
-    pub(crate) fn clear_button(&mut self, button: u8) -> std::result::Result<(), String> {
+    pub fn clear_button(&mut self, button: u8) -> std::result::Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
@@ -554,7 +588,7 @@ impl Hardware {
     }
 
     /// Current status view. This never writes to the device.
-    pub(crate) fn view(&mut self, bindings: &[HardwareBinding]) -> Value {
+    pub fn view(&mut self, bindings: &[HardwareBinding]) -> Value {
         let detection = if self.enabled {
             self.detection()
         } else {
@@ -664,7 +698,7 @@ impl Hardware {
             Ok(Some(found)) => Detection {
                 connected: true,
                 product: Some(found.product),
-                microphone: crate::windows::capture_endpoint_containing("au05"),
+                microphone: self.microphone.clone(),
                 error: None,
             },
             Ok(None) => Detection::not_found(),
@@ -1106,7 +1140,7 @@ mod windows_impl {
         pub(super) fn provision_entries(
             &mut self,
             button: Button,
-            entries: &[crate::au05::KeyEntry],
+            entries: &[vibdock_au05::KeyEntry],
         ) -> std::result::Result<(), String> {
             // A heartbeat is harmless and gives a sleeping vendor channel one
             // more chance to answer before the real write is attempted.
@@ -1349,9 +1383,13 @@ mod direct_tests {
     use super::DirectStore;
 
     fn store() -> (DirectStore, std::path::PathBuf) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         let dir = std::env::temp_dir().join(format!(
-            "vibdock-hardware-test-{}",
-            crate::service::generate_token().expect("token")
+            "vibdock-hardware-test-{}-{stamp}",
+            std::process::id()
         ));
         std::fs::create_dir(&dir).expect("temp dir");
         (
@@ -1471,10 +1509,11 @@ mod direct_tests {
             last_direct: std::collections::BTreeMap::new(),
             direct,
             cached: None,
+            microphone: None,
         };
-        let ctrl_win = crate::hotkey::Hotkey::parse("Ctrl + Win").unwrap();
+        let ctrl_win = vibdock_input::hotkey::Hotkey::parse("Ctrl + Win").unwrap();
         assert!(hardware.direct_conflicts_with_trigger(&ctrl_win));
-        let other = crate::hotkey::Hotkey::parse("Ctrl + Alt + F1").unwrap();
+        let other = vibdock_input::hotkey::Hotkey::parse("Ctrl + Alt + F1").unwrap();
         assert!(!hardware.direct_conflicts_with_trigger(&other));
     }
 
@@ -1493,13 +1532,14 @@ mod direct_tests {
             last_direct: std::collections::BTreeMap::new(),
             direct,
             cached: None,
+            microphone: None,
         };
         let binding = super::HardwareBinding {
             binding_id: "a".repeat(64),
             binding_label: "Codex".to_string(),
             button: 1,
             trigger_text: "Ctrl + Alt + Shift + F9".to_string(),
-            trigger: crate::hotkey::Hotkey::parse("Ctrl + Alt + Shift + F9").unwrap(),
+            trigger: vibdock_input::hotkey::Hotkey::parse("Ctrl + Alt + Shift + F9").unwrap(),
         };
         assert!(hardware.ensure_defaults(&[binding], &[]));
         assert!(!hardware.direct.has_button(1));

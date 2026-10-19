@@ -26,12 +26,14 @@ pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
 #[cfg(windows)]
-mod gamepad_windows;
+pub(crate) use vibdock_device_gamepad as gamepad_windows;
 // Gesture and combo recognition live in the platform-independent input crate;
 // the Windows gesture monitor will construct them when the profile layer lands.
 #[allow(unused_imports)]
 pub(crate) use vibdock_input::{combo, gesture};
-mod hardware;
+// AU05 HID provisioning is a device crate; the host passes its state directory
+// and microphone label so the adapter has no service dependency.
+pub(crate) use vibdock_device_au05 as hardware;
 mod instance_proof;
 mod integrations;
 #[cfg(all(test, not(target_os = "macos")))]
@@ -50,6 +52,7 @@ mod macos_worker;
 #[allow(dead_code)]
 #[path = "macos_worker.rs"]
 mod macos_worker_tests;
+mod plugins;
 #[cfg(windows)]
 mod shortcut_cli;
 #[cfg(feature = "stt")]

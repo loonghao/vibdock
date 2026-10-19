@@ -1517,6 +1517,8 @@ dependencies = [
  "sha2",
  "sherpa-onnx",
  "vibdock-au05",
+ "vibdock-device-au05",
+ "vibdock-device-gamepad",
  "vibdock-input",
  "vibdock-plugin-api",
  "windows 0.61.3",
@@ -1527,6 +1529,23 @@ name = "vibdock-au05"
 version = "0.1.0"
 dependencies = [
  "vibdock-input",
+]
+
+[[package]]
+name = "vibdock-device-au05"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "vibdock-au05",
+ "vibdock-input",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "vibdock-device-gamepad"
+version = "0.1.0"
+dependencies = [
+ "windows 0.61.3",
 ]
 
 [[package]]

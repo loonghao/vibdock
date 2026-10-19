@@ -1,0 +1,19 @@
+[package]
+name = "vibdock-device-au05"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Windows Ulanzi AU05 Vibe Key HID adapter and firmware provisioning."
+
+[lib]
+name = "vibdock_device_au05"
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = "1"
+vibdock-au05 = { path = "../vibdock-au05" }
+vibdock-input = { path = "../vibdock-input" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_Foundation"] }
