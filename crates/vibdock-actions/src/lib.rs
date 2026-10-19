@@ -830,7 +830,7 @@ impl Registry {
             self.revision += 1;
             (200, self.view())
         }
-        #[cfg(any(not(windows), test))]
+        #[cfg(test)]
         {
             if let Err(error) = self.persist(&bindings) {
                 return (500, json!({"error":error}));

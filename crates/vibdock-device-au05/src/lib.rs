@@ -397,6 +397,7 @@ impl Detection {
         }
     }
 
+    #[cfg(windows)]
     fn not_found() -> Self {
         Self {
             connected: false,
@@ -425,6 +426,8 @@ pub struct Hardware {
     last_direct: std::collections::BTreeMap<u8, LastOutcome>,
     direct: DirectStore,
     cached: Option<(std::time::Instant, Detection)>,
+    // Only Windows detection attaches the configured endpoint to a device.
+    #[cfg_attr(not(windows), allow(dead_code))]
     microphone: Option<String>,
 }
 

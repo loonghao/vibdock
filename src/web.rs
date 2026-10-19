@@ -1016,7 +1016,10 @@ fn accept_loop(
     let mut shortcuts = ShortcutRegistry::start(token.is_some());
     let state_dir = crate::service::state_dir().unwrap_or_default();
     let hardware_dir = state_dir.clone();
+    #[cfg(windows)]
     let hardware_mic = crate::windows::capture_endpoint_containing("au05");
+    #[cfg(not(windows))]
+    let hardware_mic = None;
     let mut hardware =
         crate::hardware::Hardware::start(token.is_some(), hardware_dir, hardware_mic);
     let commands = crate::actions::CommandRegistry::start(state_dir.clone());
@@ -2393,7 +2396,7 @@ fn shortcuts_route(
     }
     #[cfg(not(windows))]
     {
-        let _ = (apps, config);
+        let _ = (apps, config, actions);
         match (request.method, request.path) {
             (Method::Get, "/api/shortcuts") => (
                 200,
@@ -2554,14 +2557,22 @@ fn actions_route(
                 direct_buttons: hardware.direct_buttons(),
                 direct_chords: hardware.direct_chords(),
             };
+            #[cfg(windows)]
             let mut used_references = Vec::new();
+            #[cfg(windows)]
             let mut resolve = |reference: &str| -> Option<(String, String)> {
                 let (executable, label, _) = apps.resolve_application(reference)?;
                 used_references.push(reference.to_string());
                 Some((executable, label))
             };
+            #[cfg(not(windows))]
+            let mut resolve = |_: &str| -> Option<(String, String)> {
+                let _ = &apps;
+                None
+            };
             let (code, mut view) = actions.add(request.body, &reserved, &mut resolve);
             if code == 200 {
+                #[cfg(windows)]
                 for reference in used_references {
                     apps.consume_application(&reference);
                 }
