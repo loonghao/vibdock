@@ -18,8 +18,8 @@ its firmware. VibDock captures global trigger chords and dispatches to saved
 applications, but a user who does not run Studio has no way to make a physical
 button carry a trigger.
 
-This feature removes the Studio dependency for those three buttons and covers
-two different jobs:
+This feature removes the Studio dependency for those three buttons. It has two
+provisioning modes, and a separate higher layer can also run action sequences:
 
 1. **Application-binding mode.** A saved per-application shortcut names a
    device button. VibDock writes that binding's registered trigger chord into
@@ -31,6 +31,12 @@ two different jobs:
    button emits the keys itself; VibDock is not involved. This exists for
    chords Windows will not let VibDock register (notably `Ctrl + Win`) and for
    bare keys such as `Enter` or `Escape` that cannot be a registered trigger.
+
+A **hardware action binding** is a third claimant on a button: the service
+generates and registers a trigger, writes it into the button, and runs an
+ordered step sequence on press. It is documented in
+[hardware action sequences](hardware-actions.md); this document covers the two
+chord-provisioning modes and the button exclusivity rules shared by all three.
 
 On first run with no saved `hardware.json`, the service writes a built-in
 default layout using the direct mode: button 1 = `Ctrl + Win` (微信语音, WeChat
@@ -239,18 +245,22 @@ one per managed button, each with a canonical chord and an optional label.
 - Direct edits use the current `revision`: a stale revision returns `409`, an
   unknown field `400`, and unavailable storage `503`.
 
-Per-button exclusivity: a button carries either an application binding or a
-direct chord, never both. The service refuses the second kind with `409`:
+Per-button exclusivity: a button carries an application binding, a direct
+chord, or a hardware action, never more than one. The service refuses the later
+claimant with `409`:
 
 - adding an application binding to a button that has a direct chord:
   "That Vibe Key button already has a direct chord; clear it first."
 - saving a direct chord on a button that has an application binding:
   "That Vibe Key button already has an application shortcut; remove it first."
+- adding either an application binding or a direct chord to a button that has a
+  hardware action is refused by that route; adding an action to a button that
+  already has either one is also refused.
 
-If both appear anyway (for example two hand-edited files), the status view
-reports `failed` with a conflict message and provisioning writes neither value
-for that button; the device keeps its previous content until the conflict is
-resolved.
+If an application binding and a direct chord appear together anyway (for
+example two hand-edited files), the status view reports `failed` with a conflict
+message and provisioning writes neither value for that button; the device keeps
+its previous content until the conflict is resolved.
 
 When an application binding is removed but a direct chord exists on the same
 button (possible only through inconsistent hand-edited state), clearing the
@@ -327,10 +337,12 @@ will act on the emitted chord. The service reports application dispatch as
 
 The per-button `state` and, when configured, the separate `direct_state` share
 one vocabulary. `direct_state` is `null` when the button has no direct chord;
-the combined `state` is `unbound` when the button has neither kind.
+the combined `state` is `unbound` when the button has neither an application
+binding nor a direct chord. A hardware action binding is not represented in this
+hardware object at all; its `armed`/`error` state comes from `GET /api/actions`.
 
 - `unbound` (combined `state` only): neither an application binding nor a
-  direct chord names the button.
+  direct chord names the button (a hardware action may still exist).
 - `pending`: a binding names it and the device is connected, but this service
   instance has not completed a write and readback for it yet. The button may
   still emit a chord stored by an earlier session.
@@ -370,22 +382,27 @@ hardware sync/direct responses), newest last, at most 20 entries:
 ```json
 {"sequence":7,"at":1790000000000,"source":"vibe_key","label":"Codex",
  "trigger":"Ctrl + Alt + Shift + F10","dispatch":"Ctrl + Shift + Space",
- "device_button":1,"state":"DISPATCHED","error":null}
+ "device_button":1,"state":"DISPATCHED","error":null,"detail":null}
 ```
 
 - `sequence` shares the `last_action` counter and advances per completed
   trigger.
 - `at` is milliseconds since the Unix epoch.
 - `source` is `vibe_key` (an application binding that names a button),
-  `application_shortcut` (an application binding without a button), or
-  `microphone` (the global microphone toggle binding).
-- `label` is the saved binding label for application sources and the configured
-  microphone endpoint id for `microphone`; `trigger` is the registered trigger;
-  `dispatch` is the injected chord for an application binding and `null` for a
-  microphone action. `device_button` is zero-based and non-null only for
-  `vibe_key`.
+  `application_shortcut` (an application binding without a button),
+  `action_binding` (a hardware action on an AU05 button), `gamepad` (a hardware
+  action on a gamepad button), or `microphone` (the global microphone toggle
+  binding).
+- `label` is the saved binding/action name for application and action sources,
+  and the configured microphone endpoint id for `microphone`; `trigger` is the
+  registered trigger; `dispatch` is the injected chord for an application
+  binding and `null` otherwise. `device_button` is zero-based and non-null only
+  for `vibe_key` and AU05 `action_binding` events.
 - `state` is the completed receipt (`DISPATCHED` for an application dispatch,
-  `LIVE`/`MUTED` for a microphone readback), or `null` with `error` set.
+  `LIVE`/`MUTED` for a microphone readback, `DONE` for a successful hardware
+  action), or `null` with `error` set.
+- `detail` is the completed action-step summary for `action_binding` and
+  `gamepad` events, and `null` for the other sources.
 
 The page shows the newest six entries in 最近触发 and mirrors the newest one in
 the status line. The log exists only for the life of the service instance; a
@@ -394,8 +411,10 @@ application did.
 
 Direct firmware chords do not appear in this log. The device emits them without
 a host hotkey, so VibDock never sees the press; their effect is observable only
-in the target application. Application-binding buttons do appear because their
-trigger is registered globally and captured.
+in the target application. Application-binding buttons appear because their
+trigger is registered globally and captured. AU05 action bindings also appear
+(their generated trigger is registered); gamepad actions appear without a
+trigger. See [hardware action sequences](hardware-actions.md) for step details.
 
 ## Adapter boundary
 
@@ -555,6 +574,8 @@ The manual checklist and remaining evidence are in the
 
 - [OpenVibeKey](https://github.com/palaemonboy/OpenVibeKey), MIT-licensed
   independent Vibe Key implementation used to cross-check the wire format.
+- [Hardware action sequences](hardware-actions.md), the button → ordered-step
+  layer that also claims AU05 buttons.
 - [Vibe Key direct bindings in the README](../../README.md#vibe-key-au05-direct-bindings-windows-source)
 - [AU05 acceptance record](../testing/au05-acceptance.md)
 - [Resident software contract](../resident-software.md)

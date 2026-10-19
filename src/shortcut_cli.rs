@@ -475,8 +475,8 @@ fn hardware_unbind(args: &[String]) -> Result<()> {
     let view = control.hardware()?;
     let revision = view["direct"]["revision"].as_u64().unwrap_or(0);
     let saved = control.unbind_hardware(json!({"revision": revision, "button": button - 1}))?;
+    let _ = saved;
     println!("Cleared the direct chord on Vibe Key button {button}.");
-    print_direct_result(&saved, button - 1);
     Ok(())
 }
 

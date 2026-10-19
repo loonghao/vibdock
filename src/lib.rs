@@ -14,6 +14,7 @@ mod app_session_windows;
 mod app_shortcuts;
 // AU05 Vibe Key vendor protocol. Windows-only in production; kept platform
 // independent so the wire format is testable on every build host.
+mod actions;
 mod au05;
 mod browser_auth;
 // Platform adapter that provisions the AU05 buttons. The stub reports
@@ -24,6 +25,8 @@ mod dictation;
 pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
+#[cfg(windows)]
+mod gamepad_windows;
 mod hardware;
 mod instance_proof;
 mod integrations;

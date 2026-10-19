@@ -6,6 +6,7 @@
 .route-editor{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:24px 0}.route-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}.route-fields>div,.editor{min-width:0}.route-fields label{margin-top:0}.route-editor h2{margin-bottom:8px}.route-editor p{margin:8px 0;color:var(--muted)}.route-editor .actions{margin-top:16px}.route-note{font-size:12px}.capabilities{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.capabilities span{font-size:12px;color:var(--muted);padding:6px 10px;background:var(--bg);border-radius:5px}button:disabled{opacity:.45;cursor:not-allowed}button:disabled:hover{border-color:var(--line)}.rows>p{padding:20px;color:var(--muted)}kbd{overflow-wrap:anywhere}body[data-mode=service] .workspace{grid-template-columns:minmax(240px,.8fr) minmax(300px,1.2fr)}body[data-mode=service] .device-stage,body[data-mode=service] .device-area>.panel-title,body[data-mode=service] .device-area>.hint,body[data-mode=service] #selectedKey,body[data-mode=service] #revert,body[data-mode=service] .foot{display:none}body[data-mode=service] .svcbind{margin-top:0;padding-top:0;border:0}body[data-mode=service] .svcbind h2{font-size:17px}body[data-mode=service] .svcbind .row{display:block;padding:16px 0}body[data-mode=service] .svcbind kbd{display:block;color:var(--text);margin-top:8px;font-size:14px}body[data-mode=service] .editor h2{margin-top:0!important}#sbStatus[data-state=live]{color:var(--live)}#sbStatus[data-state=error]{color:var(--bad)}#appBindingStatus[data-kind=error]{color:var(--bad)}@media(max-width:1000px){body[data-mode=service] .workspace{grid-template-columns:1fr}}@media(max-width:600px){.route-fields{grid-template-columns:1fr;gap:16px}.route-editor{padding:18px}.route-editor .actions button{flex:1}.app-row{gap:12px}main{padding:20px 16px}.capture{flex-wrap:wrap}.capture input{flex:1;min-width:150px}.brand-subtitle{display:none}}
 .software-avatar{position:relative;display:inline-grid;place-items:center;width:44px;height:44px;flex:none!important;background:var(--bg);border-radius:10px}.software-avatar img{width:28px;height:28px;object-fit:contain}.software-badge{position:absolute;right:-4px;bottom:-3px;display:grid;place-items:center;width:18px;height:18px;border:2px solid var(--panel);border-radius:50%;background:#626966;color:white;font-size:10px;font-weight:700}.software-avatar[data-state=muted] .software-badge{background:var(--bad);color:#241512}.software-avatar[data-state=playing] .software-badge,.software-avatar[data-state=running] .software-badge{background:var(--live);color:#12241d}.software-avatar[data-state=idle] .software-badge{background:var(--amber);color:#211b12}
 #hardwareCard{padding:20px 24px}#hardwareCard h2{font-size:16px}#hardwareCard .rows{margin-top:12px}#hardwareCard .row{padding:14px 16px}#hardwareCard .row p{margin-top:4px}#hardwareCard .row>.tag{flex:none;align-self:flex-start}#hardwareCard .status[data-kind=ok]{color:var(--live)}.tag[data-state=live]{color:var(--live);border-color:var(--live)}.tag[data-state=bad]{color:var(--bad);border-color:var(--bad)}.tag[data-state=off]{color:var(--muted);border-color:var(--line)}
+#actionCard{padding:20px 24px;margin-top:28px}#actionCard h2{font-size:16px}#actionCard h3{font-size:14px;margin:20px 0 8px}#actionCard .rows{margin-top:12px}#actionCard .row{padding:14px 16px}#actionCard .row p{margin-top:4px}#actionCard .status[data-kind=ok]{color:var(--live)}#actionCard .status[data-kind=error]{color:var(--bad)}#actionCard .status[data-kind=idle]{color:var(--muted)}#actionEditor{padding:20px;margin:18px 0 0;background:var(--bg)}#actionEditor[hidden]{display:none}#actionEditor .actions{margin-top:0}.action-steps{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.action-step{padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:8px}.action-step-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.action-step-head strong{font-size:14px}.action-step-controls{margin-top:0;gap:6px}.action-step-controls button{padding:6px 10px;font-size:12px}.action-step-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:10px}.action-step-fields label{margin-top:0}.action-step-add{padding:16px;border:1px dashed var(--line);border-radius:8px}.action-step-add .route-fields{gap:16px}.action-step-add .actions{margin-top:12px;align-items:center}#actionListNote{margin-top:12px}#actionCommandsNote{margin-top:12px}@media(max-width:600px){.action-step-fields{grid-template-columns:1fr}}
 </style>
 <header><div class="brand"><img class="brand-logo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI+Cjx0aXRsZT5WaWJEb2NrIHN5bWJvbCDigJQgdmVjdG9yIHJlY29uc3RydWN0aW9uIG9mIHNlbGVjdGVkIGNvbmNlcHQ8L3RpdGxlPgo8ZGVmcz48bWFzayBpZD0idm9pY2UiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjAiIHk9IjAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0id2hpdGUiLz48ZyBmaWxsPSJub25lIiBzdHJva2U9ImJsYWNrIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yNTYgMTI3VjM5MiIgc3Ryb2tlLXdpZHRoPSI0MCIvPjxwYXRoIGQ9Ik0xNSAyOTFIMTU0UTE3OCAyOTEgMTc4IDI2N1YyMjkiIHN0cm9rZS13aWR0aD0iMzIiLz48cGF0aCBkPSJNMzM0IDMzOFYyNjhRMzM0IDI0NSAzNTggMjQ1SDQ5NyIgc3Ryb2tlLXdpZHRoPSIzMiIvPjwvZz48L21hc2s+PC9kZWZzPgo8cGF0aCBmaWxsPSIjRDRGNkU4IiBtYXNrPSJ1cmwoI3ZvaWNlKSIgZD0iTTI4MSA0OCA0NjQgMjMxUTQ4OSAyNTYgNDY0IDI4MUwyODEgNDY0UTI1NiA0ODkgMjMxIDQ2NEw0OCAyODFRMjMgMjU2IDQ4IDIzMUwyMzEgNDhRMjU2IDIzIDI4MSA0OFoiLz4KPC9zdmc+Cg==" alt="VibDock 标志" width="38" height="38"><div>Vib<span>Dock</span></div><small class="brand-subtitle">本地交互工作台</small></div><span class="conn" id="conn" data-state="unknown">检查服务</span></header>
 <div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">快捷键</button><button data-view="audio" aria-selected="false">音频设备</button><button data-view="apps" aria-selected="false">应用与麦克风</button><button data-view="feedback" aria-selected="false">状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>后台绑定与<br>浏览器草稿分开保存</small></nav><main>
@@ -59,6 +60,26 @@
 <div class="route-fields"><div><label for="hardwareDirectButton">按键</label><select id="hardwareDirectButton"><option value="0">按钮 1</option><option value="1">按钮 2</option><option value="2">按钮 3</option></select></div><div><label for="hardwareDirectChord">组合键/单键</label><input id="hardwareDirectChord" placeholder="Ctrl + Win 或 Enter" autocomplete="off"></div><div><label for="hardwareDirectLabel">说明（可选）</label><input id="hardwareDirectLabel" maxlength="80" placeholder="微信语音" autocomplete="off"></div></div>
 <div class="actions"><button id="hardwareDirectSave">写入直发组合键</button><button id="hardwareDirectClear">清除该按键直发</button></div>
 <p id="hardwareStatus" role="status" aria-live="polite" class="status" data-kind="idle">尚未读取 Vibe Key 状态。</p></section>
+<section class="route-editor" id="actionCard" hidden aria-labelledby="actionTitle"><h2 id="actionTitle">硬件动作（按键 → 动作序列）</h2>
+<p class="muted">把一个 Vibe Key 按钮或游戏手柄按键绑定到按顺序执行的一串动作：启动程序、发送快捷键、切换麦克风、运行本机命令或等待。动作只是发送指令，发送成功不代表目标应用已完成操作。</p>
+<p id="actionStatus" role="status" aria-live="polite" class="status" data-kind="idle">授权后读取服务保存的硬件动作。</p>
+<p class="muted" id="actionListNote"></p>
+<div id="actionList" class="rows" aria-label="已保存的硬件动作"></div>
+<div class="actions"><button id="actionRefresh">刷新</button><button id="actionSync" hidden>同步到设备</button><button class="primary" id="actionNew">新建硬件动作</button></div>
+<p class="route-note">一个 Vibe Key 按钮只能承载应用快捷键、硬件直发组合键或硬件动作中的一种。若该按钮已有应用快捷键或直发组合键，请先在上方对应卡片清除，再保存硬件动作；服务会返回具体冲突原因。AU05 的触发键由服务生成并写入设备，游戏手柄按键直接派发，不写固件也没有触发键。</p>
+<div id="actionEditor" hidden aria-labelledby="actionEditorTitle"><h2 id="actionEditorTitle">新建硬件动作</h2>
+<label for="actionName">名称</label><input id="actionName" maxlength="80" placeholder="打开 Codex 并静音" autocomplete="off">
+<div class="route-fields"><div><label for="actionSourceKind">按键来源</label><select id="actionSourceKind"><option value="au05">Vibe Key 按钮</option><option value="gamepad">游戏手柄按键</option></select></div><div id="actionSourceButtonField"><label for="actionSourceButton">Vibe Key 按钮</label><select id="actionSourceButton"><option value="0">按钮 1</option><option value="1">按钮 2</option><option value="2">按钮 3</option></select></div></div>
+<div id="actionGamepadFields" hidden><div class="route-fields"><div><label for="actionGamepadDevice">游戏手柄</label><select id="actionGamepadDevice"></select></div><div><label>学习按键</label><div class="capture"><button id="actionGamepadUse" disabled>使用这个按键</button><button id="actionGamepadRefresh">刷新手柄</button></div></div></div><p class="muted" id="actionGamepadHint" role="status" aria-live="polite">未检测到手柄（插好/配对后刷新）</p><p id="actionGamepadStatus" role="status" aria-live="polite" class="status" data-kind="idle"></p></div>
+<p class="route-note" id="actionSourceSummary" role="status" aria-live="polite"></p>
+<h3>动作步骤</h3>
+<div class="action-step-add"><div class="route-fields"><div><label for="actionStepKind">步骤类型</label><select id="actionStepKind"><option value="launch">启动应用</option><option value="send_keys">发送快捷键</option><option value="toggle_microphone">切换麦克风</option><option value="command">运行命令</option><option value="wait">等待</option></select></div><div id="actionStepLaunchField"><label for="actionStepApp">应用</label><select id="actionStepApp"></select></div><div id="actionStepKeysField" hidden><label for="actionStepKeys">快捷键</label><input id="actionStepKeys" placeholder="Ctrl + Shift + P" autocomplete="off"></div><div id="actionStepDeviceField" hidden><label for="actionStepDevice">麦克风</label><select id="actionStepDevice"></select></div><div id="actionStepCommandField" hidden><label for="actionStepCommand">本机命令</label><select id="actionStepCommand"></select></div><div id="actionStepWaitField" hidden><label for="actionStepWait">等待（毫秒）</label><input id="actionStepWait" type="number" min="0" max="10000" step="10" value="200"></div></div><div class="actions"><button id="actionStepAdd" disabled>添加步骤</button><span class="muted" id="actionStepCount">0 / 8 步</span></div><small id="actionStepAddHelp">添加后可在步骤行里修改。启动应用只能从当前识别到的运行应用中选择；麦克风和命令来自服务与本机配置。</small></div>
+<ol id="actionSteps" class="action-steps" aria-label="动作步骤"></ol>
+<div class="actions"><button class="primary" id="actionSave">保存硬件动作</button><button id="actionCancel">取消</button></div>
+<p id="actionEditorStatus" role="status" aria-live="polite" class="status" data-kind="idle">填写名称、来源和 1 到 8 个步骤后保存。</p>
+</div>
+<h3>本机命令</h3><p class="muted" id="actionCommandsNote">命令来自本机 commands.json，本页只能选择命令并填写已声明的参数，不能创建或编辑命令。</p><div class="actions"><button id="actionCommandsRefresh">刷新命令列表</button></div>
+</section>
 <h2 style="margin-top:28px">语音集成能力规划</h2><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p>
 <div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>已识别运行窗口；可用自定义触发键派发应用内快捷键。发送成功不验证语音状态，应用控制接口仍待验证。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div><div class="row"><div><strong>微信输入法</strong><p>已识别 wetype 运行窗口；快捷键由用户从客户端录入，发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div><div class="row"><div><strong>WorkBuddy</strong><p>已识别运行窗口；快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div></div>
 <div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
@@ -152,6 +173,7 @@ function updateModeLabels(){
   if(!supported&&$('target').value!=='mic')$('target').value='mic';
   updateHardwareVisibility();
   loadDevices();
+  updateActionVisibility();
 }
 // Service-backed save: the backend is the source of truth. The local draft is
 // updated only after the service confirms the write, so a failed save never
@@ -186,7 +208,7 @@ async function saveBinding(){
   }
   commit({target:$('target').value,action:$('action').value,shortcut},'已保存到本浏览器草稿；尚未写入后台配置（服务未授权）。');
 }
-document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{stopRecord();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));document.querySelectorAll('.view').forEach(v=>{v.hidden=v.id!==button.dataset.view});});
+document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{stopRecord();document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));document.querySelectorAll('.view').forEach(v=>{v.hidden=v.id!==button.dataset.view});if(button.dataset.view==='apps')refreshActions();});
 document.querySelectorAll('.hardware [data-key]').forEach(button=>button.onclick=()=>selectKey(button.dataset.key));
 $('target').onchange=()=>{actionChosen=true;refresh();};$('action').onchange=()=>{actionChosen=true;scope();markDirty();};$('device').onchange=markDirty;$('refreshDevices').onclick=loadDevices;
 $('record').onclick=()=>{if(recording){stopRecord();say('已取消录入。','idle');return}recording=true;$('record').textContent='取消录入';$('record').setAttribute('aria-pressed','true');say('请在本页按下组合键；Esc 取消，10 秒后超时。','idle');timer=setTimeout(()=>{stopRecord();say('未收到按键。可以先在 Ulanzi Studio 设置独立快捷键。','error')},10000)};
@@ -411,7 +433,7 @@ async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;
 async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
   try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});if(serviceToken!==expectedToken)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return true;}
   catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
-function startAppPoll(){refreshApps();refreshShortcuts();refreshHardware();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
+function startAppPoll(){refreshApps();refreshShortcuts();refreshHardware();refreshActions();if(!appTimer)appTimer=setInterval(refreshApps,2000);if(!actionsTimer)actionsTimer=setInterval(()=>{if($('apps').hidden===false)refreshActions();},4000);}
 
 // Per-application shortcut bindings. The browser sends an opaque application
 // reference from the latest scan; the service resolves and persists the path.
@@ -476,14 +498,14 @@ async function saveShortcut(){
   shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
   $('shortcutStatus').textContent='正在保存并注册触发键…';$('shortcutStatus').dataset.kind='idle';
   const payload={revision:shortcutsData?.revision??0,application_reference:reference,trigger,dispatch,label,scope:$('shortcutGlobal').checked?'running':'foreground'};if(deviceButton!==null)payload.device_button=deviceButton;
-  try{const response=await api('/api/shortcuts/add',{method:'POST',signal:controller.signal,body:JSON.stringify(payload)});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));const saved=JSON.parse(body);renderShortcuts(saved);if(saved&&saved.hardware)receiveHardware(saved.hardware);const hardwareFailure=saveHardwareFailure(saved,deviceButton);$('shortcutEditor').hidden=true;$('shortcutDeviceButton').value='';if(hardwareFailure){$('shortcutStatus').textContent='快捷键已保存，但 Vibe Key '+hardwareButtonLabel(deviceButton)+' 写入失败：'+hardwareFailure+'。可稍后点“同步到设备”重试。';$('shortcutStatus').dataset.kind='error';}else{$('shortcutStatus').textContent='已保存。只有目标应用位于前台时才会发送该快捷键。';$('shortcutStatus').dataset.kind='ok';}refreshApps();if(!(saved&&saved.hardware))refreshHardware();}
+  try{const response=await api('/api/shortcuts/add',{method:'POST',signal:controller.signal,body:JSON.stringify(payload)});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));const saved=JSON.parse(body);renderShortcuts(saved);if(saved&&saved.hardware)receiveHardware(saved.hardware);const hardwareFailure=saveHardwareFailure(saved,deviceButton);$('shortcutEditor').hidden=true;$('shortcutDeviceButton').value='';if(hardwareFailure){$('shortcutStatus').textContent='快捷键已保存，但 Vibe Key '+hardwareButtonLabel(deviceButton)+' 写入失败：'+hardwareFailure+'。可稍后点“同步到设备”重试。';$('shortcutStatus').dataset.kind='error';}else{$('shortcutStatus').textContent='已保存。只有目标应用位于前台时才会发送该快捷键。';$('shortcutStatus').dataset.kind='ok';}refreshApps();refreshActions();if(!(saved&&saved.hardware))refreshHardware();}
   catch(error){$('shortcutStatus').textContent='未保存：'+error.message;$('shortcutStatus').dataset.kind='error';}
   finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 async function removeShortcut(entry){
   if(shortcutBusy||!serviceToken)return;if(!confirm('删除「'+entry.label+'」的应用快捷键？'))return;
   shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
-  try{const response=await api('/api/shortcuts/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,id:entry.id})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutStatus').textContent='已删除。';$('shortcutStatus').dataset.kind='ok';refreshHardware();}
+  try{const response=await api('/api/shortcuts/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,id:entry.id})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutStatus').textContent='已删除。';$('shortcutStatus').dataset.kind='ok';refreshHardware();refreshActions();}
   catch(error){$('shortcutStatus').textContent='删除未确认：'+error.message;$('shortcutStatus').dataset.kind='error';}
   finally{clearTimeout(timeout);finishShortcutBusy();}
 }
@@ -619,12 +641,15 @@ function renderHardwareEvents(events){
     const body=appNode('div');
     const source=event&&event.source==='vibe_key'
       ?('Vibe Key · 按钮 '+(Number.isInteger(event.device_button)?event.device_button+1:1))
-      :(event&&event.source==='microphone'?'麦克风绑定':'应用快捷键');
+      :(event&&event.source==='microphone'?'麦克风绑定'
+        :(event&&event.source==='action_binding'?'硬件动作'
+          :(event&&event.source==='gamepad'?'游戏手柄':'应用快捷键')));
     body.append(appNode('strong',source+(event&&event.label?' · '+event.label:'')));
     let detail='';
     try{detail=event&&event.at?new Date(event.at).toLocaleTimeString():'';}catch{}
     if(event&&event.trigger)detail+=(detail?' · ':'')+'触发 '+event.trigger;
     if(event&&event.dispatch)detail+=(detail?' · ':'')+'发送 '+event.dispatch;
+    if(event&&event.detail)detail+=(detail?' · ':'')+event.detail;
     body.append(appNode('p',detail||'无详细信息'));
     const text=event&&event.state?event.state:(event&&event.error?'失败：'+event.error:'未知');
     const tag=appNode('span',text);tag.className='tag';tag.dataset.state=event&&event.state?'live':'error';
@@ -692,6 +717,7 @@ async function syncHardware(){
     if(!response.ok){setHardwareStatus('同步失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
     if(!isHardwarePayload(data)){setHardwareStatus('同步结果未确认：服务没有返回设备状态。','error');return;}
     receiveHardware(data);
+    refreshActions();
     const failed=(data.buttons||[]).filter(button=>button&&button.state==='failed');
     if(data.platform==='unsupported'||data.available===false||data.enabled===false){
       setHardwareStatus('此平台不支持 Vibe Key 写入。','error');
@@ -727,6 +753,7 @@ async function saveDirectHardware(){
     if(!response.ok){setHardwareStatus('写入直发快捷键失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
     if(!isHardwarePayload(data)){setHardwareStatus('写入结果未确认：服务没有返回设备状态。','error');return;}
     receiveHardware(data);
+    refreshActions();
     const entry=(data.buttons||[]).find(row=>row&&row.button===button);
     const state=entry&&(entry.direct_state||entry.state);
     if(state==='provisioned')setHardwareStatus('已写入按钮 '+(button+1)+' 并读回一致：'+chord+'。','ok');
@@ -751,6 +778,7 @@ async function clearDirectHardware(){
     if(!response.ok){setHardwareStatus('清除直发快捷键失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
     if(!isHardwarePayload(data)){setHardwareStatus('清除结果未确认：服务没有返回设备状态。','error');return;}
     receiveHardware(data);
+    refreshActions();
     setHardwareStatus('已清除按钮 '+(button+1)+' 的直发组合键。','ok');
   }catch(error){
     if(serviceToken===expectedToken)setHardwareStatus('清除直发快捷键失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
@@ -854,6 +882,7 @@ function expireBrowserSession(){
   $('hardwareCard').hidden=true;$('hardwareButtons').replaceChildren();$('hardwareEvents').replaceChildren();
   $('hardwareStatus').textContent='Vibe Key 状态未知 · 页面未授权';$('hardwareStatus').dataset.kind='idle';
   hardwareControlsBusy();
+  resetActionState();
   bindingPollStarted=false;
   $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';
   $('authRow').hidden=false;
@@ -913,6 +942,531 @@ async function tryBootstrap(){
     return authorized;
   }catch{return false;}
 }
+// ---- Hardware action sequences (AU05 buttons and gamepad buttons) --------
+// A binding is one physical control plus an ordered step list. The page only
+// composes the request: application paths and AU05 triggers stay server-owned,
+// and an AU05 save is reported as provisioned only after a firmware readback.
+const ACTION_STEP_LIMIT=8;
+const ACTION_STEP_TYPES=[['launch','启动应用'],['send_keys','发送快捷键'],['toggle_microphone','切换麦克风'],['command','运行命令'],['wait','等待']];
+let actionsData=null,actionsBusy=false,actionsTimer=null;
+let actionSteps=[],actionCommandsData=null,actionCommandsBusy=false;
+let actionGamepadDevices=null,actionGamepadLatest=null,actionGamepadChoice=null;
+let actionGamepadTimer=null,actionGamepadBusy=false,actionDevicesAttempted=false;
+function actionVisible(){return mode==='service'&&!!serviceToken;}
+function actionApplications(){return lastAppsData&&Array.isArray(lastAppsData.applications)?lastAppsData.applications:[];}
+function actionCommands(){return actionCommandsData&&Array.isArray(actionCommandsData.commands)?actionCommandsData.commands:[];}
+function actionCommandById(id){return actionCommands().find(command=>command.id===id)||null;}
+function actionDeviceName(key){const found=(Array.isArray(actionGamepadDevices)?actionGamepadDevices:[]).find(device=>device.device_key===key);return found&&found.name?found.name:'';}
+function actionViewWritable(){return !!actionsData&&actionsData.storage_writable!==false&&actionsData.platform!=='unsupported';}
+function setActionStatus(text,kind){const node=$('actionStatus');setNodeText(node,text);node.dataset.kind=kind||'idle';}
+function setActionEditorStatus(text,kind){const node=$('actionEditorStatus');setNodeText(node,text);node.dataset.kind=kind||'idle';}
+function setActionGamepadStatus(text,kind){const node=$('actionGamepadStatus');setNodeText(node,text);node.dataset.kind=kind||'idle';}
+function actionStepTypeLabel(type){const entry=ACTION_STEP_TYPES.find(item=>item[0]===type);return entry?entry[1]:'未知步骤';}
+// The server reports {"error":"..."} for a refused request. Surface that text
+// verbatim instead of guessing, and fall back to the shared helper otherwise.
+function actionErrorText(response,body){
+  try{const payload=JSON.parse(body);if(payload&&typeof payload.error==='string'&&payload.error.trim())return payload.error.trim();}catch{}
+  return serviceError(response,body||'');
+}
+function actionSourceText(source){
+  if(!source||!source.kind)return '来源未知';
+  if(source.kind==='au05')return 'Vibe Key '+hardwareButtonLabel(Number(source.button)||0);
+  if(source.kind==='gamepad'){const name=actionDeviceName(source.device_key);return '游戏手柄'+(name?' · '+name:'')+' · 按键 '+source.usage;}
+  return '来源未知';
+}
+function actionStepSummary(steps){
+  const list=Array.isArray(steps)?steps:[];
+  return list.map(step=>{
+    if(step.type==='launch')return '启动 '+(step.label||'应用');
+    if(step.type==='send_keys')return '发送 '+(step.keys||'快捷键');
+    if(step.type==='toggle_microphone')return '切换麦克风'+(step.device_id?'（'+deviceName(step.device_id)+'）':'');
+    if(step.type==='command'){const command=actionCommandById(step.command_id);return '运行命令 '+(command?command.label:step.command_id);}
+    if(step.type==='wait')return '等待 '+(Number.isFinite(Number(step.ms))?Number(step.ms):0)+'ms';
+    return '未知步骤';
+  }).join(' → ')||'无步骤';
+}
+function updateActionVisibility(){
+  const visible=actionVisible();
+  $('actionCard').hidden=!visible;
+  if(!visible){resetActionState();return;}
+  if(!actionsData)setActionStatus('正在读取硬件动作…','idle');
+  renderActionList();
+  actionControlsBusy();
+  if(!actionsData&&!actionsBusy)refreshActions();
+}
+function resetActionState(){
+  actionsData=null;actionsBusy=false;actionCommandsData=null;actionSteps=[];
+  actionGamepadDevices=null;actionGamepadLatest=null;actionGamepadChoice=null;
+  actionGamepadBusy=false;actionDevicesAttempted=false;
+  stopActionGamepadPoll();
+  if(actionsTimer){clearInterval(actionsTimer);actionsTimer=null;}
+  if($('actionEditor'))$('actionEditor').hidden=true;
+  if($('actionList'))$('actionList').replaceChildren();
+  if($('actionListNote'))setNodeText($('actionListNote'),'');
+  setActionStatus('硬件动作状态未知 · 页面未授权','idle');
+  actionControlsBusy();
+}
+function actionControlsBusy(){
+  const visible=actionVisible(),writable=visible&&actionViewWritable();
+  if($('actionNew'))$('actionNew').disabled=!writable||actionsBusy;
+  if($('actionRefresh'))$('actionRefresh').disabled=!visible||actionsBusy;
+  if($('actionSync'))$('actionSync').disabled=!writable||actionsBusy;
+  if($('actionSave'))$('actionSave').disabled=!visible||actionsBusy;
+  if($('actionCancel'))$('actionCancel').disabled=actionsBusy;
+  if($('actionCommandsRefresh'))$('actionCommandsRefresh').disabled=!visible||actionCommandsBusy;
+  updateActionStepAddState();
+}
+function renderActionList(view){
+  if(view&&Array.isArray(view.bindings))actionsData=view;
+  const data=actionsData,list=$('actionList');
+  if(!list)return;
+  list.replaceChildren();
+  const bindings=data&&Array.isArray(data.bindings)?data.bindings:[];
+  setNodeText($('actionListNote'),data?('已保存 '+bindings.length+' / '+(Number.isSafeInteger(data.limit)?data.limit:16)+' 条硬件动作'+(data.platform==='unsupported'?'；此平台不支持硬件动作。':data.storage_writable===false?'；服务存储不可写，只能查看。':'。')):'');
+  if(data&&data.error)setActionStatus('读取硬件动作失败：'+data.error,'error');
+  else if(data&&$('actionStatus').dataset.kind!=='error'&&$('actionStatus').dataset.kind!=='ok')setActionStatus(bindings.length?'按键触发后会按顺序执行步骤；发送结果不会被当作目标应用的状态。':'尚未保存硬件动作。选择来源、添加步骤后保存。','idle');
+  if(!bindings.length)list.append(appNode('p',data?'尚未保存硬件动作。':'等待读取服务保存的硬件动作。'));
+  for(const binding of bindings){
+    const row=appNode('div');row.className='row action-row';row.dataset.id=binding.id||'';
+    const body=appNode('div');
+    body.append(appNode('strong',binding.name||'未命名动作'));
+    body.append(appNode('p','来源：'+actionSourceText(binding.source)));
+    body.append(appNode('p',binding.trigger?'触发键 '+binding.trigger:'直连按键：手柄直接派发，没有触发键'));
+    body.append(appNode('p','步骤：'+actionStepSummary(binding.steps)));
+    const state=appNode('span',binding.armed?'已启用':(binding.error?'未启用：'+binding.error:'未启用'));state.className='tag';state.dataset.state=binding.armed?'live':'bad';
+    const remove=appNode('button','删除');remove.disabled=actionsBusy||!data||data.storage_writable===false;remove.onclick=()=>removeAction(binding);
+    row.append(body,state,remove);list.append(row);
+  }
+  const sync=$('actionSync');
+  if(sync)sync.hidden=!bindings.some(binding=>binding&&binding.source&&binding.source.kind==='au05');
+  actionControlsBusy();
+  if(bindings.some(binding=>binding&&binding.source&&binding.source.kind==='gamepad')&&!actionGamepadDevices&&!actionDevicesAttempted&&!actionGamepadBusy)refreshActionDevices({once:true});
+}
+async function refreshActions(options){
+  if(!actionVisible()||actionsBusy||document.hidden)return;
+  const manual=!!(options&&options.manual);
+  actionsBusy=true;actionControlsBusy();
+  if(manual)setActionStatus('正在读取硬件动作…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
+  try{
+    const response=await api('/api/actions',{signal:controller.signal});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const body=await response.text();
+    if(!response.ok){setActionStatus('读取硬件动作失败：'+actionErrorText(response,body),'error');return;}
+    let data=null;try{data=JSON.parse(body);}catch{data=null;}
+    if(!data||typeof data!=='object'||!Array.isArray(data.bindings)){setActionStatus('服务没有返回硬件动作列表。','error');return;}
+    actionsData=data;renderActionList();
+    if(manual&&!data.error)setActionStatus('已读取 '+data.bindings.length+' 条硬件动作。','ok');
+  }catch(error){
+    if(serviceToken===expectedToken)setActionStatus('无法读取硬件动作：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);actionsBusy=false;actionControlsBusy();}
+}
+function openActionEditor(){
+  if(!actionVisible()||actionsBusy||!actionViewWritable())return;
+  resetActionDraft();
+  $('actionEditor').hidden=false;
+  renderActionCommandsNote();
+  updateActionStepAddFields();
+  loadActionCommands();
+  if(!captureDevices.length)loadDevices().then(updateActionStepAddFields);
+  if(!lastAppsData)refreshApps();
+  setNodeText($('actionGamepadStatus'),'');
+  $('actionName').focus();
+}
+function closeActionEditor(){
+  $('actionEditor').hidden=true;
+  stopActionGamepadPoll();
+  resetActionDraft();
+}
+function resetActionDraft(){
+  actionSteps=[];actionGamepadChoice=null;actionGamepadLatest=null;
+  $('actionName').value='';
+  $('actionSourceKind').value='au05';
+  $('actionSourceButton').value='0';
+  $('actionStepKind').value='launch';
+  $('actionStepKeys').value='';
+  $('actionStepWait').value='200';
+  setActionGamepadStatus('','idle');
+  setActionEditorStatus('填写名称、来源和 1 到 8 个步骤后保存。','idle');
+  renderActionSource();
+  renderActionSteps();
+}
+function actionGamepadPolling(){return actionVisible()&&$('apps').hidden===false&&!$('actionEditor').hidden&&$('actionSourceKind').value==='gamepad';}
+function startActionGamepadPoll(){
+  if(!actionGamepadPolling()){stopActionGamepadPoll();return;}
+  if(actionGamepadTimer)return;
+  refreshActionDevices();
+  actionGamepadTimer=setInterval(()=>{if(!actionGamepadPolling()){stopActionGamepadPoll();return;}refreshActionDevices();},500);
+}
+function stopActionGamepadPoll(){if(actionGamepadTimer){clearInterval(actionGamepadTimer);actionGamepadTimer=null;}}
+function renderActionSource(){
+  const kind=$('actionSourceKind').value==='gamepad'?'gamepad':'au05';
+  $('actionSourceButtonField').hidden=kind!=='au05';
+  $('actionGamepadFields').hidden=kind!=='gamepad';
+  renderActionSourceSummary();
+  if(kind==='gamepad'){startActionGamepadPoll();renderActionGamepad();}
+  else stopActionGamepadPoll();
+}
+function renderActionSourceSummary(){
+  const node=$('actionSourceSummary');if(!node)return;
+  if($('actionSourceKind').value!=='gamepad'){
+    setNodeText(node,'来源：Vibe Key '+hardwareButtonLabel(Number($('actionSourceButton').value)||0)+'。保存后由服务生成一个不冲突的触发键并写入该按键。');
+    return;
+  }
+  if(actionGamepadChoice)setNodeText(node,'来源：'+(actionDeviceName(actionGamepadChoice.device_key)||'游戏手柄')+' · 按键 usage '+actionGamepadChoice.usage+'。手柄按键直接派发：不写固件、没有触发键，也不按前台应用判断。');
+  else setNodeText(node,'尚未选定手柄按键：连接手柄，按一下要绑定的按键，再点“使用这个按键”。');
+}
+function renderActionGamepad(){
+  if($('actionEditor').hidden)return;
+  const select=$('actionGamepadDevice'),devices=Array.isArray(actionGamepadDevices)?actionGamepadDevices:[],use=$('actionGamepadUse');
+  if(!devices.length){
+    select.replaceChildren(new Option('未检测到手柄',''));
+    select.dataset.options='[]';select.disabled=true;
+    actionGamepadLatest=null;
+    setNodeText($('actionGamepadHint'),'未检测到手柄（插好/配对后刷新）');
+    use.disabled=true;
+    return;
+  }
+  const key=JSON.stringify(devices.map(device=>[device.device_key,device.name,device.connected]));
+  if(select.dataset.options!==key){
+    const previous=select.value;
+    select.replaceChildren(...devices.map(device=>new Option(device.name||device.device_key,device.device_key)));
+    select.dataset.options=key;
+    select.value=devices.some(device=>device.device_key===previous)?previous:devices[0].device_key;
+  }
+  select.disabled=false;
+  const device=devices.find(item=>item.device_key===select.value)||devices[0];
+  const latest=device&&device.latest_button&&Number.isSafeInteger(device.latest_button.usage)?device.latest_button:null;
+  actionGamepadLatest=latest&&device?{device_key:device.device_key,usage:latest.usage}:null;
+  if(!latest){
+    setNodeText($('actionGamepadHint'),'已检测到 '+(device.name||'手柄')+'；按一下要绑定的手柄按键，这里会显示 usage。');
+    use.disabled=true;
+  }else{
+    setNodeText($('actionGamepadHint'),'最近按下的按键：usage '+latest.usage+'（'+(device.name||device.device_key)+'）。点“使用这个按键”选中。');
+    use.disabled=false;
+  }
+}
+async function refreshActionDevices(options){
+  if(!actionVisible()||actionGamepadBusy||document.hidden)return;
+  const once=!!(options&&options.once);
+  if(once&&(actionDevicesAttempted||actionGamepadDevices))return;
+  if(!once&&!actionGamepadPolling())return;
+  actionGamepadBusy=true;
+  if(once)actionDevicesAttempted=true;
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
+  try{
+    const response=await api('/api/actions/gamepads',{signal:controller.signal});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const body=await response.text();
+    if(!response.ok){if(!once)setActionGamepadStatus('读取手柄失败：'+actionErrorText(response,body),'error');return;}
+    let data=null;try{data=JSON.parse(body);}catch{data=null;}
+    actionGamepadDevices=data&&Array.isArray(data.devices)?data.devices:[];
+    if(once){renderActionList();if(!$('actionEditor').hidden&&$('actionSourceKind').value==='gamepad')renderActionGamepad();}
+    else renderActionGamepad();
+  }catch(error){
+    if(!once&&serviceToken===expectedToken)setActionGamepadStatus('读取手柄失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);actionGamepadBusy=false;}
+}
+function useLearnedGamepadButton(){
+  if(!actionGamepadLatest){setActionGamepadStatus('还没有收到手柄按键：先按一下手柄上的按钮，等待 hint 显示 usage。','error');return;}
+  actionGamepadChoice={device_key:actionGamepadLatest.device_key,usage:actionGamepadLatest.usage,label:'Button '+actionGamepadLatest.usage};
+  renderActionSourceSummary();
+  setActionGamepadStatus('已选择 '+(actionDeviceName(actionGamepadChoice.device_key)||'游戏手柄')+' · 按键 usage '+actionGamepadChoice.usage+'。','ok');
+}
+async function loadActionCommands(){
+  if(!actionVisible()||actionCommandsBusy)return;
+  actionCommandsBusy=true;actionControlsBusy();
+  const note=$('actionCommandsNote');
+  setNodeText(note,'正在读取本机命令列表…');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
+  try{
+    const response=await api('/api/actions/commands',{signal:controller.signal});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const body=await response.text();
+    if(!response.ok){actionCommandsData=null;setNodeText(note,'读取本机命令失败：'+actionErrorText(response,body)+'。命令来自本机 commands.json。');return;}
+    let data=null;try{data=JSON.parse(body);}catch{data=null;}
+    if(!data||!Array.isArray(data.commands)){actionCommandsData=null;setNodeText(note,'服务没有返回命令列表。');return;}
+    actionCommandsData=data;
+    renderActionCommandsNote();
+    if(!$('actionEditor').hidden)updateActionStepAddFields();
+  }catch(error){
+    if(serviceToken===expectedToken)setNodeText(note,'读取本机命令失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'));
+  }finally{clearTimeout(timeout);actionCommandsBusy=false;actionControlsBusy();}
+}
+function renderActionCommandsNote(){
+  const note=$('actionCommandsNote');if(!note)return;
+  if(!actionCommandsData){setNodeText(note,'命令来自本机 commands.json，本页只能选择命令并填写已声明的参数，不能创建或编辑命令。');return;}
+  if(actionCommandsData.error){setNodeText(note,'命令列表不可用：'+actionCommandsData.error+'。命令来自本机 commands.json，本页不能编辑。');return;}
+  setNodeText(note,'命令来自本机 commands.json，本页只能选择命令并填写已声明的参数，不能创建或编辑命令。已读取 '+actionCommands().length+' 条命令'+(typeof actionCommandsData.note==='string'&&actionCommandsData.note?'；'+actionCommandsData.note:'')+'。');
+}
+function updateActionStepAddFields(){
+  const kind=$('actionStepKind').value;
+  for(const [id,type] of [['actionStepLaunchField','launch'],['actionStepKeysField','send_keys'],['actionStepDeviceField','toggle_microphone'],['actionStepCommandField','command'],['actionStepWaitField','wait']]){const field=$(id);if(field)field.hidden=kind!==type;}
+  if(kind==='launch'){
+    const select=$('actionStepApp'),apps=actionApplications(),key=JSON.stringify(apps.map(app=>[app.selection_id,app.name]));
+    if(select.dataset.options!==key){
+      const previous=select.value;
+      select.replaceChildren(...(apps.length?apps.map(app=>new Option(app.name,app.selection_id)):[new Option('没有识别到运行应用（打开目标软件后刷新）','')]));
+      select.dataset.options=key;
+      if(apps.some(app=>app.selection_id===previous))select.value=previous;
+    }
+    select.disabled=!apps.length;
+  }else if(kind==='toggle_microphone'){
+    const select=$('actionStepDevice'),key=JSON.stringify(captureDevices.map(device=>[device.id,device.name]));
+    if(select.dataset.options!==key){
+      const previous=select.value;
+      select.replaceChildren(...(captureDevices.length?captureDevices.map(device=>new Option(device.name||device.id,device.id)):[new Option('尚未读取到麦克风（授权后刷新音频设备）','')]));
+      select.dataset.options=key;
+      if(captureDevices.some(device=>device.id===previous))select.value=previous;
+    }
+    select.disabled=!captureDevices.length;
+  }else if(kind==='command'){
+    const select=$('actionStepCommand'),commands=actionCommands(),key=JSON.stringify(commands.map(command=>[command.id,command.label]));
+    if(select.dataset.options!==key){
+      const previous=select.value;
+      select.replaceChildren(...(commands.length?commands.map(command=>new Option(command.label||command.id,command.id)):[new Option('尚未读取到命令（先配置 commands.json）','')]));
+      select.dataset.options=key;
+      if(commands.some(command=>command.id===previous))select.value=previous;
+    }
+    select.disabled=!commands.length;
+  }else if(kind==='wait'&&!$('actionStepWait').value)$('actionStepWait').value='200';
+  updateActionStepAddState();
+}
+function updateActionStepAddState(){
+  const button=$('actionStepAdd');if(!button)return;
+  button.disabled=!actionVisible()||actionsBusy||actionSteps.length>=ACTION_STEP_LIMIT;
+  setNodeText($('actionStepCount'),actionSteps.length+' / '+ACTION_STEP_LIMIT+' 步');
+  setNodeText($('actionStepAddHelp'),actionSteps.length>=ACTION_STEP_LIMIT?'已达到 8 步上限；删除或调整步骤后可继续添加。':'添加后可在步骤行里修改。启动应用只能从当前识别到的运行应用中选择；麦克风和命令来自服务与本机配置。');
+}
+function actionStepField(labelText,control){const wrap=appNode('label',labelText);wrap.append(control);return wrap;}
+function moveActionStep(index,delta){
+  const target=index+delta;
+  if(target<0||target>=actionSteps.length)return;
+  const moved=actionSteps.splice(index,1)[0];actionSteps.splice(target,0,moved);
+  renderActionSteps();
+}
+function renderActionSteps(){
+  const list=$('actionSteps');if(!list)return;
+  list.replaceChildren();
+  if(!actionSteps.length)list.append(appNode('p','尚未添加步骤。一个动作需要 1 到 8 步，按顺序执行。'));
+  actionSteps.forEach((step,index)=>list.append(actionStepRow(step,index)));
+  updateActionStepAddState();
+}
+function actionStepRow(step,index){
+  const row=appNode('div');row.className='action-step';row.dataset.index=String(index);
+  const head=appNode('div');head.className='action-step-head';head.append(appNode('strong',(index+1)+' · '+actionStepTypeLabel(step.type)));
+  const controls=appNode('div');controls.className='actions action-step-controls';
+  const up=appNode('button','上移');up.disabled=index===0;up.setAttribute('aria-label','第 '+(index+1)+' 步上移');up.onclick=()=>moveActionStep(index,-1);
+  const down=appNode('button','下移');down.disabled=index===actionSteps.length-1;down.setAttribute('aria-label','第 '+(index+1)+' 步下移');down.onclick=()=>moveActionStep(index,1);
+  const remove=appNode('button','删除');remove.setAttribute('aria-label','删除第 '+(index+1)+' 步');remove.onclick=()=>{actionSteps.splice(index,1);renderActionSteps();setActionEditorStatus('已删除第 '+(index+1)+' 步。','idle');};
+  controls.append(up,down,remove);head.append(controls);
+  const fields=appNode('div');fields.className='action-step-fields';
+  if(step.type==='launch'){
+    const select=appNode('select'),apps=actionApplications(),options=apps.map(app=>new Option(app.name,app.selection_id));
+    if(!apps.some(app=>app.selection_id===step.application_reference))options.unshift(new Option('已保存应用不可用 · '+(step.label||step.application_reference),step.application_reference));
+    select.append(...options);select.value=step.application_reference;
+    select.onchange=()=>{const app=apps.find(item=>item.selection_id===select.value);step.application_reference=select.value;step.label=app?app.name:step.label;};
+    fields.append(actionStepField('应用',select));
+  }else if(step.type==='send_keys'){
+    const input=appNode('input');input.type='text';input.placeholder='Ctrl + Shift + P';input.autocomplete='off';input.value=step.keys||'';input.oninput=()=>{step.keys=input.value;};
+    fields.append(actionStepField('发送到前台应用的快捷键',input));
+  }else if(step.type==='toggle_microphone'){
+    const select=appNode('select');select.append(...captureDevices.map(device=>new Option(device.name||device.id,device.id)));
+    if(!captureDevices.some(device=>device.id===step.device_id)){const missing=new Option('已保存设备不可用 · '+step.device_id,step.device_id);missing.disabled=true;select.append(missing);}
+    select.value=step.device_id;select.onchange=()=>{step.device_id=select.value;};
+    fields.append(actionStepField('麦克风',select));
+  }else if(step.type==='command'){
+    const select=appNode('select'),commands=actionCommands(),command=actionCommandById(step.command_id);
+    select.append(...commands.map(item=>new Option(item.label||item.id,item.id)));
+    if(!command)select.append(new Option('命令不可用 · '+step.command_id,step.command_id));
+    select.value=step.command_id;
+    select.onchange=()=>{step.command_id=select.value;step.parameters={};renderActionSteps();};
+    fields.append(actionStepField('本机命令',select));
+    for(const parameter of (command&&Array.isArray(command.parameters)?command.parameters:[])){
+      const input=appNode('input');input.type='text';input.value=step.parameters[parameter.name]||'';
+      if(Number.isInteger(parameter.max_length)&&parameter.max_length>0)input.maxLength=parameter.max_length;
+      input.oninput=()=>{step.parameters[parameter.name]=input.value;};
+      fields.append(actionStepField((parameter.label||parameter.name)+(parameter.required?'（必填）':'（可选）'),input));
+    }
+  }else if(step.type==='wait'){
+    const input=appNode('input');input.type='number';input.min='0';input.max='10000';input.step='10';input.value=String(step.ms||0);
+    input.oninput=()=>{const value=Number(input.value);step.ms=Number.isFinite(value)?Math.max(0,Math.min(10000,Math.round(value))):0;};
+    fields.append(actionStepField('等待（毫秒，0–10000）',input));
+  }
+  row.append(head,fields);return row;
+}
+function actionNewStep(kind){
+  if(kind==='launch'){
+    const app=actionApplications().find(item=>item.selection_id===$('actionStepApp').value);
+    if(!app){setActionEditorStatus('请选择一个当前识别到的应用；列表为空时先打开目标软件，等待应用列表刷新。','error');return null;}
+    return {type:'launch',application_reference:app.selection_id,label:app.name};
+  }
+  if(kind==='send_keys'){
+    const keys=$('actionStepKeys').value.trim();
+    if(!keys){setActionEditorStatus('请填写要发送给前台应用的快捷键，例如 Ctrl + Shift + P。','error');return null;}
+    return {type:'send_keys',keys};
+  }
+  if(kind==='toggle_microphone'){
+    const deviceId=$('actionStepDevice').value;
+    if(!captureDevices.some(device=>device.id===deviceId)){setActionEditorStatus('请选择一个已读取到的麦克风设备。','error');return null;}
+    return {type:'toggle_microphone',device_id:deviceId};
+  }
+  if(kind==='command'){
+    const command=actionCommandById($('actionStepCommand').value);
+    if(!command){setActionEditorStatus('请选择一个本机命令；列表为空时先在本机 commands.json 配置后刷新命令列表。','error');return null;}
+    return {type:'command',command_id:command.id,parameters:{}};
+  }
+  const value=Number($('actionStepWait').value),ms=Number.isFinite(value)?Math.max(0,Math.min(10000,Math.round(value))):0;
+  return {type:'wait',ms};
+}
+function addActionStep(){
+  if(!actionVisible()||actionsBusy)return;
+  if(actionSteps.length>=ACTION_STEP_LIMIT){setActionEditorStatus('一个动作最多 8 步。','error');return;}
+  const step=actionNewStep($('actionStepKind').value);
+  if(!step)return;
+  actionSteps.push(step);renderActionSteps();
+  setActionEditorStatus('已添加第 '+actionSteps.length+' 步：'+actionStepTypeLabel(step.type)+'。','idle');
+}
+function actionStepPayload(step){
+  if(step.type==='launch')return {type:'launch',application_reference:step.application_reference,args:[]};
+  if(step.type==='send_keys')return {type:'send_keys',keys:String(step.keys||'').trim()};
+  if(step.type==='toggle_microphone')return {type:'toggle_microphone',device_id:step.device_id};
+  if(step.type==='command'){
+    const parameters={};
+    for(const [name,value] of Object.entries(step.parameters||{}))parameters[name]=String(value==null?'':value);
+    return {type:'command',command_id:step.command_id,parameters};
+  }
+  const value=Number(step.ms),ms=Number.isFinite(value)?Math.max(0,Math.min(10000,Math.round(value))):0;
+  return {type:'wait',ms};
+}
+function actionStepsError(){
+  for(let index=0;index<actionSteps.length;index+=1){
+    const step=actionSteps[index],prefix='第 '+(index+1)+' 步：';
+    if(step.type==='launch'&&!step.application_reference)return prefix+'请选择应用。';
+    if(step.type==='send_keys'&&!String(step.keys||'').trim())return prefix+'请填写快捷键。';
+    if(step.type==='toggle_microphone'&&!captureDevices.some(device=>device.id===step.device_id))return prefix+'麦克风设备不可用，请重新选择。';
+    if(step.type==='command'){
+      const command=actionCommandById(step.command_id);
+      if(!command)return prefix+'请选择一个本机命令。';
+      const missing=(command.parameters||[]).find(parameter=>parameter.required&&!String((step.parameters||{})[parameter.name]||'').trim());
+      if(missing)return prefix+'请填写命令参数「'+(missing.label||missing.name)+'」。';
+    }
+    if(step.type==='wait'){const value=Number(step.ms);if(!Number.isFinite(value)||value<0||value>10000)return prefix+'等待时间必须在 0 到 10000 毫秒之间。';}
+  }
+  return '';
+}
+function actionSourcePayload(){
+  const bindings=actionsData&&Array.isArray(actionsData.bindings)?actionsData.bindings:[];
+  if($('actionSourceKind').value!=='gamepad'){
+    const button=Number($('actionSourceButton').value);
+    if(!Number.isInteger(button)||button<0||button>2)return {error:'请选择 Vibe Key 按钮 1、2 或 3。'};
+    const taken=bindings.find(binding=>binding.source&&binding.source.kind==='au05'&&Number(binding.source.button)===button);
+    if(taken)return {error:'Vibe Key '+hardwareButtonLabel(button)+' 已绑定硬件动作「'+(taken.name||'')+'」；请先删除旧动作或选择别的按钮。'};
+    return {payload:{kind:'au05',button}};
+  }
+  if(!actionGamepadChoice)return {error:'请先连接手柄、按一下要绑定的按键，再点“使用这个按键”。'};
+  const taken=bindings.find(binding=>binding.source&&binding.source.kind==='gamepad'&&binding.source.device_key===actionGamepadChoice.device_key&&Number(binding.source.usage)===actionGamepadChoice.usage);
+  if(taken)return {error:'这个手柄按键已绑定硬件动作「'+(taken.name||'')+'」；请先删除旧动作或学习别的按键。'};
+  return {payload:{kind:'gamepad',device_key:actionGamepadChoice.device_key,usage:actionGamepadChoice.usage,label:actionGamepadChoice.label||('Button '+actionGamepadChoice.usage)}};
+}
+async function saveAction(){
+  if(!actionVisible()){setActionEditorStatus('保存失败：页面未授权，请从托盘重新打开配置。','error');return;}
+  if(actionsBusy)return;
+  const name=$('actionName').value.trim();
+  if(!name){setActionEditorStatus('请填写动作名称。','error');$('actionName').focus();return;}
+  if(actionSteps.length<1){setActionEditorStatus('至少添加 1 个步骤。','error');return;}
+  if(actionSteps.length>ACTION_STEP_LIMIT){setActionEditorStatus('一个动作最多 8 步。','error');return;}
+  const issue=actionStepsError();
+  if(issue){setActionEditorStatus(issue,'error');return;}
+  const source=actionSourcePayload();
+  if(!source.payload){setActionEditorStatus(source.error,'error');return;}
+  const payload={revision:actionsData?actionsData.revision:0,name,source:source.payload,steps:actionSteps.map(actionStepPayload)};
+  actionsBusy=true;actionControlsBusy();
+  setActionEditorStatus('正在保存硬件动作…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+  let refreshAfterSave=false;
+  try{
+    const response=await api('/api/actions/add',{method:'POST',signal:controller.signal,body:JSON.stringify(payload)});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const body=await response.text();
+    if(!response.ok){setActionEditorStatus('未保存：'+actionErrorText(response,body),'error');return;}
+    let saved=null;try{saved=JSON.parse(body);}catch{saved=null;}
+    const hardwareFailure=saved&&saved.hardware&&saved.hardware.state==='failed'?(saved.hardware.error||'设备未读回写入值'):'';
+    const provisioned=!!(saved&&saved.hardware&&saved.hardware.state==='provisioned');
+    const button=Number.isInteger(saved&&saved.hardware&&saved.hardware.button)?saved.hardware.button:null;
+    closeActionEditor();
+    if(saved&&Array.isArray(saved.bindings)){actionsData=saved;renderActionList();refreshHardware();}else refreshAfterSave=true;
+    if(hardwareFailure)setActionStatus('动作已保存，但 Vibe Key '+(button===null?'按键':hardwareButtonLabel(button))+' 写入失败：'+hardwareFailure+'。服务已保存动作，可稍后点“同步到设备”重试。','error');
+    else if(provisioned)setActionStatus('已保存硬件动作「'+name+'」，触发键已写入 Vibe Key 并读回一致。','ok');
+    else setActionStatus('已保存硬件动作「'+name+'」'+(source.payload.kind==='gamepad'?'；手柄按键直接派发，不写固件。':'。'),'ok');
+  }catch(error){
+    setActionEditorStatus('未保存：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);actionsBusy=false;actionControlsBusy();if(refreshAfterSave)refreshActions();}
+}
+async function removeAction(binding){
+  if(!actionVisible()||actionsBusy||!binding)return;
+  if(!confirm('删除硬件动作「'+(binding.name||'')+'」？'))return;
+  actionsBusy=true;actionControlsBusy();setActionStatus('正在删除硬件动作…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  let refreshAfterRemove=false;
+  try{
+    const response=await api('/api/actions/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:actionsData?actionsData.revision:0,id:binding.id})});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const body=await response.text();
+    if(!response.ok){setActionStatus('删除未确认：'+actionErrorText(response,body),'error');return;}
+    let saved=null;try{saved=JSON.parse(body);}catch{saved=null;}
+    const hardwareFailure=saved&&saved.hardware&&saved.hardware.state==='failed'?(saved.hardware.error||'设备未读回写入值'):'';
+    if(saved&&Array.isArray(saved.bindings)){actionsData=saved;renderActionList();refreshHardware();}else refreshAfterRemove=true;
+    if(hardwareFailure)setActionStatus('动作已删除，但 Vibe Key 按钮状态未确认：'+hardwareFailure+'。','error');
+    else setActionStatus('已删除硬件动作「'+(binding.name||'')+'」。','ok');
+  }catch(error){
+    setActionStatus('删除未确认：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);actionsBusy=false;actionControlsBusy();if(refreshAfterRemove)refreshActions();}
+}
+async function syncActions(){
+  if(!actionVisible()||actionsBusy)return;
+  const bindings=actionsData&&Array.isArray(actionsData.bindings)?actionsData.bindings:[];
+  if(!bindings.some(binding=>binding.source&&binding.source.kind==='au05')){setActionStatus('没有需要写入设备的 AU05 硬件动作。','idle');return;}
+  actionsBusy=true;actionControlsBusy();setActionStatus('正在把 AU05 触发键写入设备…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+  let refreshAfterSync=false;
+  try{
+    const response=await api('/api/actions/sync',{method:'POST',signal:controller.signal,body:'{}'});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const body=await response.text();
+    if(!response.ok){setActionStatus('同步失败：'+actionErrorText(response,body),'error');return;}
+    let saved=null;try{saved=JSON.parse(body);}catch{saved=null;}
+    if(saved&&Array.isArray(saved.bindings)){actionsData=saved;renderActionList();}else refreshAfterSync=true;
+    const results=saved&&Array.isArray(saved.hardware)?saved.hardware:[];
+    const failed=results.filter(result=>result&&result.state==='failed');
+    if(!results.length)setActionStatus('同步完成：没有可写入设备的 AU05 绑定。','idle');
+    else if(failed.length)setActionStatus('同步完成，但 '+failed.length+' 个 Vibe Key 按钮写入失败：'+(failed[0].error||'设备未读回写入值')+'。','error');
+    else setActionStatus('已同步到设备：'+results.length+' 个 AU05 触发键均已读回一致。','ok');
+    refreshHardware();
+  }catch(error){
+    setActionStatus('同步失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);actionsBusy=false;actionControlsBusy();if(refreshAfterSync)refreshActions();}
+}
+$('actionNew').onclick=openActionEditor;
+$('actionRefresh').onclick=()=>{actionDevicesAttempted=false;refreshActions({manual:true});loadActionCommands();};
+$('actionSync').onclick=syncActions;
+$('actionCancel').onclick=()=>{closeActionEditor();setActionStatus('已取消新建硬件动作。','idle');};
+$('actionSave').onclick=saveAction;
+$('actionCommandsRefresh').onclick=()=>loadActionCommands();
+$('actionSourceKind').onchange=renderActionSource;
+$('actionSourceButton').onchange=renderActionSourceSummary;
+$('actionGamepadDevice').onchange=()=>{actionGamepadChoice=null;renderActionSourceSummary();refreshActionDevices();};
+$('actionGamepadRefresh').onclick=()=>{actionGamepadDevices=null;actionDevicesAttempted=false;refreshActionDevices();};
+$('actionGamepadUse').onclick=useLearnedGamepadButton;
+$('actionStepKind').onchange=updateActionStepAddFields;
+$('actionStepAdd').onclick=addActionStep;
+
 renderBindings();loadEditor();
 probe().then(async ()=>{
   if(mode!=='service')return;

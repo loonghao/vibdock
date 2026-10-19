@@ -114,9 +114,18 @@ with no host hotkey, no dispatch, and no application-target check. It is how the
 first-run defaults are written (`Ctrl + Win` 微信语音, `Enter` 回车, `Escape`
 取消, skipping buttons that already have an application binding) and how
 `Ctrl + Win` reaches an input method that ignores injected input. A button
-carries either an application binding or a direct chord, never both, and a
-direct chord is never observed in the recent-trigger log. See
+carries an application binding, a direct chord, or a hardware action, never more
+than one, and a direct chord is never observed in the recent-trigger log. See
 [AU05 direct bindings](design/au05-direct-bindings.md).
+
+Hardware action bindings (`actions.json`, schema 1, up to 16) map one AU05
+button or HID gamepad button to 1-8 ordered steps: launch an application, send a
+chord, toggle an explicit microphone, run a local command from `commands.json`,
+or wait. An AU05 action gets a generated trigger, registered and written into
+firmware; a gamepad action has no trigger and no firmware write. Steps execute
+in order and stop at the first failure, with the result in the recent-trigger
+log; there is no action-execute endpoint and no voice start/stop. See
+[hardware action sequences](design/hardware-actions.md).
 
 Registration happens before the file is committed, and the previous set is
 restored on registration or persistence failure. At startup, a trigger that

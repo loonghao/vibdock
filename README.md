@@ -9,7 +9,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. Current Windows source also recognises running window applications independently of their audio sessions and can save up to eight per-application shortcut bindings that dispatch a user-supplied chord only when the bound executable owns the foreground window. The same source can write chords directly into the three Ulanzi AU05 Vibe Key buttons over the device's vendor HID interface, so per-application buttons no longer depend on Ulanzi Studio. A first-run default layout writes firmware-emitted `Ctrl + Win` (WeChat voice), `Enter`, and `Escape` to the three buttons, and the same direct-chord mode can carry other chords and bare keys that VibDock cannot register itself; a recent-trigger log shows captured application-bound presses. The first-run defaults, the three default buttons' host behaviour, and a physical application-bound press were checked on a real AU05 on 2026-10-19; Studio coexistence, device replacement, power-cycle persistence, and sleep/wake recovery remain open. These source features are not a new published release. The remaining physical-device items, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. Current Windows source also recognises running window applications independently of their audio sessions and can save up to eight per-application shortcut bindings that dispatch a user-supplied chord only when the bound executable owns the foreground window. The same source can write chords directly into the three Ulanzi AU05 Vibe Key buttons over the device's vendor HID interface, so per-application buttons no longer depend on Ulanzi Studio. A first-run default layout writes firmware-emitted `Ctrl + Win` (WeChat voice), `Enter`, and `Escape` to the three buttons, and the same direct-chord mode can carry other chords and bare keys that VibDock cannot register itself; a recent-trigger log shows captured application-bound presses. The same source can also map one AU05 button or HID gamepad button to an ordered **hardware action** sequence (launch, send keys, toggle microphone, local command, wait); the AU05 write path for that layer has a live add/write/readback/remove check plus a physical wait-step execution; gamepad hardware remains unverified. The first-run defaults, the three default buttons' host behaviour, and a physical application-bound press were checked on a real AU05 on 2026-10-19; Studio coexistence, device replacement, power-cycle persistence, and sleep/wake recovery remain open. These source features are not a new published release. The remaining physical-device items, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline predates the desktop and microphone-association changes. New candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
@@ -21,7 +21,7 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 
 | Platform | Published v0.1.0 | Pending source |
 | --- | --- | --- |
-| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, tray-first Settings, persistent software/microphone associations, exact-session playback controls, direct AU05 provisioning with first-run defaults and direct firmware chords, dual-entry archive |
+| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, tray-first Settings, persistent software/microphone associations, exact-session playback controls, direct AU05 provisioning with first-run defaults and direct firmware chords, AU05/gamepad hardware action sequences, dual-entry archive |
 | Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
 | macOS Apple silicon | Design preview | Native .app, menu bar/Dock and floating panel, persistent application list/icons/running state, authenticated local configuration; audio and global shortcuts unsupported |
 
@@ -136,7 +136,7 @@ Current Windows source can provision the three round buttons of an Ulanzi AU05
 Vibe Key directly, without installing or running Ulanzi Studio. The resident
 service talks to the device's vendor HID collection (VID `0xFFF1`, PID `0x00DD`,
 usage page `0xFFFC`, report ID `0x55`) and writes chords into the buttons'
-firmware settings. There are two modes:
+firmware settings. There are three ways a managed button can be used:
 
 - **Application binding** — a saved per-application shortcut names a Vibe Key
   button; its registered trigger is written into that button. Pressing the
@@ -148,6 +148,10 @@ firmware settings. There are two modes:
   itself and VibDock is not involved. This is how the default layout works and
   is needed for `Ctrl + Win` (which Windows will not let VibDock register) and
   for bare keys such as `Enter` and `Esc`.
+- **Hardware action** — the service runs an ordered step sequence when the
+  button is pressed: an AU05 action gets a generated, registered trigger that is
+  written into the button; a gamepad action is fed directly by the HID monitor.
+  See [hardware action sequences](docs/design/hardware-actions.md).
 
 `provisioned` is only reported after the shortcut slot and the fixed-function
 slot are read back and match, so it means the device returned exactly the
@@ -205,11 +209,12 @@ is empty does not re-seed the defaults.
 7. Use **同步到设备** after a service restart, wake-up, or reconnect to
    re-detect the device and rewrite all saved buttons.
 
-At most one saved item (application binding or direct chord) may name each
-button, and at most eight application bindings are saved in total. A direct
-chord equal to a registered trigger is rejected, and a new trigger equal to a
-direct chord is rejected, so a firmware-emitted chord can never also feed the
-global hotkey table. Only the three round buttons (device slots 0-2) are managed; the knob, the built-in
+At most one saved item — an application binding, a direct chord, or a hardware
+action — may name each button, and at most eight application bindings are saved
+in total. A direct chord equal to a registered trigger is rejected, and a new
+trigger equal to a direct chord is rejected, so a firmware-emitted chord can
+never also feed the global hotkey table. Only the three round buttons (device
+slots 0-2) are managed; the knob, the built-in
 microphone, lighting, standby timers and every other device setting are never
 written. A written chord lives in the device firmware, so the button keeps
 emitting it while VibDock is not running; it then reaches the foreground
@@ -221,12 +226,14 @@ application like any other keyboard input.
 in-memory log (newest last, at most 20) of completed triggers, and the page shows
 the newest six in **最近触发** plus the latest one in the status line. Each entry
 carries `sequence`, `at` (milliseconds since the Unix epoch), `source`
-(`vibe_key`, `application_shortcut`, or `microphone`), `label`, `trigger`,
-`dispatch`, `device_button`, `state`, and `error`. For application sources
-`label` is the saved binding label; for `microphone` it is the configured
-endpoint id. It records that VibDock received a registered trigger and what it
-sent; `DISPATCHED` still does not mean the application acted. The log is cleared
-on service restart.
+(`vibe_key`, `application_shortcut`, `action_binding`, `gamepad`, or
+`microphone`), `label`, `trigger`, `dispatch`, `device_button`, `state`,
+`error`, and `detail`. For application sources `label` is the saved binding
+label; for `microphone` it is the configured endpoint id; for action and gamepad
+sources it is the action name, the success `state` is `DONE`, and `detail`
+describes the completed steps. It records that VibDock received a registered
+trigger and what it sent; `DISPATCHED` still does not mean the application
+acted. The log is cleared on service restart.
 
 Direct firmware chords never appear in this log: the device emits them without a
 host hotkey, so VibDock never sees the press. Confirm their effect in the target
@@ -239,6 +246,9 @@ Two layouts are supported:
 - **One button per agent:** clear the direct chords, then bind each button to
   an application with its own trigger. The intended example is Codex/ChatGPT,
   DeepSeek Harness (`dsh`), and WorkBuddy.
+- **One button per action sequence:** clear the button and save a hardware
+  action instead, which can launch, send keys, toggle a microphone, run a local
+  command, or wait. See the section below.
 
 | Vibe Key button | Target | Recognised executable | Example trigger |
 | --- | --- | --- | --- |
@@ -310,12 +320,13 @@ GET  /api/config                           (includes last_action and recent_acti
 A direct chord accepts a chord or a bare key (except bare `Win`); `chord` and an
 optional `label` are stored in `hardware.json`. `device_button` is optional and
 accepts `0`, `1`, `2`, or `null`; an explicit `null` means no button. A button
-cannot hold both an application binding and a direct chord: the second save
-returns `409` until the other is cleared. The hardware status object contains
-`schema_version`, `platform`, `available`, `enabled`, `connected`, `device`,
-`buttons` (with `direct_chord`, `direct_label`, `direct_state`, `direct_error`),
-`direct` (`revision`, `entries`, `limit`, `storage_writable`, `error`), `error`,
-`studio_note`, and `recent_actions`.
+cannot hold an application binding, a direct chord, and a hardware action at
+once: the later save returns `409` until the other is cleared. The hardware
+status object contains `schema_version`, `platform`, `available`, `enabled`,
+`connected`, `device`, `buttons` (with `direct_chord`, `direct_label`,
+`direct_state`, `direct_error`), `direct` (`revision`, `entries`, `limit`,
+`storage_writable`, `error`), `error`, `studio_note`, and `recent_actions`. It
+does not list hardware action bindings; their state comes from `/api/actions`.
 
 ### Provisioning states
 
@@ -342,7 +353,9 @@ same labels; `direct_state` is `null` when no direct chord is configured.
 
 When both an application binding and a direct chord name one button, the
 combined `state` reports `failed` with a conflict message and provisioning skips
-that button.
+that button. A hardware action binding is a third claimant: it is refused at
+save time when the button already has an application shortcut or a direct
+chord, and `/api/actions` reports its own `armed`/`error` state.
 
 **Quit Ulanzi Studio while VibDock owns the device.** Studio may hold or talk on
 the same vendor collection; VibDock does not detect Studio or coordinate with
@@ -359,7 +372,17 @@ defaults (written and read back; entry bytes `83 01 83 08`, `02 28`, `02 29`),
 the three default buttons producing WeChat voice / `Enter` / `Escape`, a
 physical application-bound press appearing in 最近触发 with its
 button/label/trigger/dispatch and `DISPATCHED`, and the negative `Ctrl + Win`
-injection result above.
+injection result above. Also on 2026-10-19 an AU05 hardware action with a `wait`
+step was added through the authenticated API, received the generated trigger
+`Ctrl + Alt + Shift + F1`, was written into the device firmware and read back
+(`provisioned`), then removed and the default direct layout restored. A physical
+press of the action-bound button executed the `wait` step and appeared in
+`recent_actions` as `source: "action_binding"`, `state: "DONE"`, and
+`detail: "waited 120 ms"`. The first physical attempts produced no host keys
+until the 2.4G receiver was replugged, which restored the device's
+keyboard-forward channel; the vendor configuration channel had stayed
+responsive. The hardware action layer and its full limits are in
+[hardware action acceptance](docs/testing/hardware-actions-acceptance.md).
 
 Still unverified:
 
@@ -375,6 +398,203 @@ Still unverified:
 
 The dated evidence and the full manual checklist are in the
 [AU05 acceptance record](docs/testing/au05-acceptance.md).
+
+## 硬件动作 / hardware action sequences (Windows source)
+
+A saved **hardware action** maps one physical control to an ordered list of 1-8
+steps. It is a separate layer above the two AU05 provisioning modes and works
+with either an AU05 button or a HID gamepad button:
+
+- an **AU05 button** (`0`-`2`): the service generates an otherwise-unused
+  `Ctrl + Alt + Shift + F1`-`F12` trigger, registers it globally, and writes it
+  into the button's firmware with the same readback verification; the press runs
+  the steps.
+- a **HID gamepad button**: identified by `device_key` + button usage, fed by
+  the Windows HID monitor. Nothing is written to firmware and no trigger is
+  registered.
+
+Up to 16 actions are saved. One AU05 button can carry only one of application
+shortcut, direct chord, or hardware action. Actions do **not** add AI
+application voice start/stop; a voice workflow is composed from `launch` +
+`wait` + `send_keys` (and optionally `toggle_microphone`). The service executes
+steps in order and **stops at the first failure**; earlier steps are not rolled
+back. There is no HTTP endpoint that executes a saved action: execution happens
+only when the physical control fires.
+
+### Setup
+
+1. Start the launcher and open Settings > **应用与麦克风**. The **硬件动作（按键
+   → 动作序列）** card is available in authorized service mode and hidden in the
+   read-only preview.
+2. Free the button first. A default AU05 button carries a direct chord and a
+   previously used button may carry an application shortcut; clear that direct
+   chord (清除该按键直发 / `hardware-unbind`) or remove the application binding,
+   otherwise saving the action returns a conflict (`409`).
+3. Click 新建硬件动作, name it, and choose the source: **Vibe Key 按钮** (按钮
+   1-3) or **游戏手柄按键**. For a gamepad, connect it, press the button to learn
+   `latest_button`, and click 使用这个按键. Gamepad bindings have no trigger.
+4. Add 1-8 steps, reordering or deleting them as needed:
+   - **启动应用** — only applications from the current recognition scan; the
+     browser sends an opaque reference, never a path.
+   - **发送快捷键** — a modifier-plus-key chord injected into the foreground
+     application.
+   - **切换麦克风** — an explicit microphone endpoint, verified by a mute
+     readback.
+   - **运行命令** — a command from local `commands.json` plus its declared
+     parameters.
+   - **等待** — 0-10000 ms.
+
+   The action editor shows the command source and cannot create or edit command
+   definitions.
+5. Save. For an AU05 source the generated trigger is registered and written into
+   the button; `provisioned` means both firmware slots read back identically. A
+   firmware failure keeps the saved action and shows a warning; **同步到设备**
+   retries. Gamepad actions save without any firmware write.
+6. Press the control. Success and failure appear in **最近触发** as
+   `source: action_binding` or `gamepad`. On success the entry's `state` is
+   `DONE` and `detail` describes the completed steps; on failure `state` is
+   `null`, `error` names the failing step, and `detail` is `null`. Direct
+   firmware chords still never appear there.
+
+### Step types
+
+| Step | Fields | What it does | What success means |
+| --- | --- | --- | --- |
+| `launch` | `application_reference` (resolved server-side), optional `args` | spawns the executable with argv | the process started (pid in `detail`); the application is not verified as ready |
+| `send_keys` | `keys` | parses the chord and injects it into the current foreground application | Windows accepted the input; the application may ignore it |
+| `toggle_microphone` | `device_id` | toggles that exact microphone and reads the mute state back | a verified mute state; affects every application using the endpoint |
+| `command` | `command_id`, `parameters` | expands the local command definition and spawns executable + argv | the process started; no shell is involved |
+| `wait` | `ms` (0-10000) | sleeps | the wait elapsed; it blocks the service loop |
+
+### Combined example
+
+One button can start a multi-step workflow. For example, with button 1 freed:
+
+| # | Step | Payload |
+| --- | --- | --- |
+| 1 | launch | Codex from the recognition scan |
+| 2 | wait | 1000 ms |
+| 3 | toggle_microphone | the saved microphone endpoint |
+| 4 | send_keys | `Ctrl + Shift + Space` (Codex's own voice shortcut) |
+| 5 | wait | 500 ms |
+| 6 | launch | WorkBuddy |
+
+This is a **workflow composition, not voice integration**: VibDock cannot verify
+that Codex started voice or accepted the chord, and the microphone toggle affects
+all applications using that endpoint. AI application `start_voice`, `end_voice`
+and `input_routing` remain `not_implemented`.
+
+### Local commands (`commands.json`)
+
+Commands are structured local configuration, not request text. The page can only
+select a command and fill its declared parameters; there is no API that creates
+commands or submits a shell string. `GET /api/actions/commands` returns the
+sanitized definitions (id, label, parameters) without executable paths or argv.
+
+Example `commands.json` in `%LOCALAPPDATA%\VibDock\commands.json` (replace the
+executable with an existing local program):
+
+```json
+{
+  "schema_version": 1,
+  "revision": 0,
+  "commands": [
+    {
+      "id": "notify",
+      "label": "发送通知",
+      "executable": "C:\\Tools\\vibdock\\notify.exe",
+      "args": ["--title", "{title}", "--body", "{body}"],
+      "parameters": [
+        {"name": "title", "label": "标题", "required": true, "max_length": 60},
+        {"name": "body", "label": "正文", "required": false, "max_length": 200}
+      ]
+    }
+  ]
+}
+```
+
+The service validates that the executable is a local path, that every `{name}`
+placeholder is declared, and that values are strings no longer than
+`max_length` (1-256, default 120) without control characters. At execution it
+replaces placeholders per fixed argv entry and spawns the executable with argv —
+never through a shell command line. A user who points a command at a shell
+interpreter locally is making a deliberate local-configuration choice; that is a
+`commands.json` trust boundary, not an arbitrary-shell API.
+
+### API
+
+The authenticated API uses the same bearer, `Host` and `Origin` rules as the
+other `/api` routes:
+
+```text
+GET  /api/actions
+GET  /api/actions/commands
+GET  /api/actions/gamepads
+POST /api/actions/add
+     {"revision":0,"name":"打开 Codex 并静音",
+      "source":{"kind":"au05","button":0},
+      "steps":[{"type":"launch","application_reference":"<fresh reference>"},
+               {"type":"wait","ms":1000},
+               {"type":"send_keys","keys":"Ctrl + Shift + Space"},
+               {"type":"toggle_microphone","device_id":"<endpoint id>"}]}
+POST /api/actions/remove                    {"revision":1,"id":"<64 hex>"}
+POST /api/actions/sync                      {}
+```
+
+`GET /api/actions` returns `revision`, `bindings` (id, name, source, trigger,
+steps, armed, error), `limit` (16), `storage_writable`, and errors. A gamepad
+source has no trigger. `GET /api/actions/gamepads` returns current HID gamepads
+with `device_key`, name, vendor/product ids, `button_usages`, `connected`, and
+the learning-only `latest_button`. `GET /api/actions/commands` returns the
+sanitized command definitions. An AU05 add response may carry a top-level
+`hardware` object `{button, state, error}`; `POST /api/actions/sync` rewrites
+every AU05 action trigger and returns a `hardware` array of
+`{id, button, state, error}`. There is no action-execute endpoint.
+
+Generated AU05 action triggers avoid the microphone trigger, application
+triggers, direct chords, and other action triggers; if all twelve chords are in
+use the save fails with `409`. They are **not** checked against application
+*dispatch* chords, so a dispatch chord equal to an action trigger would also be
+captured by VibDock; choose triggers and dispatch chords accordingly.
+
+### Gamepad identity and limits
+
+The gamepad adapter enumerates HID top-level collections on the Generic Desktop
+page with usage `0x04`, `0x05`, or `0x08`. Button usages are normally the HID
+Button page `0x09`, with the Generic Desktop page `0x01` accepted as a fallback;
+a device uses one consistent page. The monitor runs on the service accept-loop
+thread and rescans about every two seconds, and each `/api/actions/gamepads`
+request also refreshes the list; the page polls that endpoint only while the
+action editor has a gamepad source selected. `latest_button` is for learning
+only.
+
+A gamepad binding's identity is `vvvv:pppp:serial` when the device exposes a
+serial, otherwise `vvvv:pppp:interface-path`, with a collision suffix for
+duplicate units. Devices without a serial may not follow a replaced unit.
+**No physical gamepad was detected by Windows on the acceptance host**, so
+this adapter has compilation and unit-test evidence only; the page shows the
+empty state and waits for a pad.
+
+### Verified and not verified
+
+Live evidence on 2026-10-19: an AU05 action binding with a `wait` step was added
+through the authenticated API, received trigger `Ctrl + Alt + Shift + F1`, was
+written into the device firmware and read back (`provisioned`), then removed; the
+default direct layout was restored. A physical press of the action-bound button
+executed the step and appeared as `source: "action_binding"`, `state: "DONE"`,
+`detail: "waited 120 ms"`. The host saw no device keys during the first attempts
+until the receiver was replugged (keyboard-forward channel recovery). UI
+validation used `node --check`, the existing DOM test, and a DOM harness for
+action flows — not a physical pointer run.
+
+Still unverified: a full
+launch → send keys → toggle microphone chain on hardware; gamepad live
+input/learning (no device on the host); live command execution with substituted
+arguments; stop-at-first-failure on hardware; sleep/wake; Ulanzi Studio
+coexistence; hosted CI with hardware. The full record and manual checklist are in
+[hardware action acceptance](docs/testing/hardware-actions-acceptance.md), and
+the design is in
+[hardware action sequences](docs/design/hardware-actions.md).
 
 ## Local speech-to-text (optional native build)
 

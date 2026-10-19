@@ -301,6 +301,7 @@ fn record_application_shortcut_event(
                 dispatch: Some(&details.dispatch),
                 device_button: details.device_button,
                 target: target.as_deref(),
+                detail: None,
             },
             result,
         ),
@@ -312,6 +313,7 @@ fn record_application_shortcut_event(
                 dispatch: None,
                 device_button: None,
                 target: target.as_deref(),
+                detail: None,
             },
             result,
         ),
@@ -356,6 +358,102 @@ fn run_bound_action(state: &Config) -> std::result::Result<String, String> {
 #[cfg(not(windows))]
 fn run_bound_action(_state: &Config) -> std::result::Result<String, String> {
     Err("Bound actions require the Windows audio adapter.".into())
+}
+
+/// Executes one ordered hardware action binding.
+///
+/// Steps run in order and execution stops at the first failure, so a failed
+/// launch cannot be followed by a microphone change the user did not expect.
+/// Success reports what each step did; it never claims that a launched
+/// application finished starting, or that a sent chord was acted on.
+#[cfg(windows)]
+fn run_action_steps(
+    steps: &[crate::actions::Step],
+    commands: &crate::actions::CommandRegistry,
+) -> std::result::Result<String, String> {
+    use crate::actions::Step;
+    let mut completed = Vec::with_capacity(steps.len());
+    for (index, step) in steps.iter().enumerate() {
+        let kind = match step {
+            Step::Launch { .. } => "launch",
+            Step::SendKeys { .. } => "send_keys",
+            Step::ToggleMicrophone { .. } => "toggle_microphone",
+            Step::Command { .. } => "command",
+            Step::Wait { .. } => "wait",
+        };
+        let outcome: std::result::Result<String, String> = match step {
+            Step::Launch {
+                label,
+                executable,
+                args,
+            } => std::process::Command::new(executable)
+                .args(args)
+                .spawn()
+                .map(|child| format!("launched {label} (pid {})", child.id()))
+                .map_err(|error| format!("launch {label} failed: {error}")),
+            Step::SendKeys { parsed, .. } => {
+                match crate::windows::dispatch_to_foreground_app(parsed) {
+                    Ok(crate::windows::DispatchDisposition::Dispatched) => {
+                        Ok("sent the chord to the foreground application".to_string())
+                    }
+                    Ok(crate::windows::DispatchDisposition::FocusChanged) => Err(
+                        "the foreground window changed while sending; the chord may have gone \
+                         to another application"
+                            .to_string(),
+                    ),
+                    Err(error) => Err(error),
+                }
+            }
+            Step::ToggleMicrophone { device_id } => crate::service::run_device_action(
+                crate::service::DeviceAction::Toggle,
+                Some(device_id),
+            )
+            .and_then(|result| match result {
+                crate::service::ActionResult::MuteState { muted, .. } => Ok(if muted {
+                    "toggled the microphone to muted".to_string()
+                } else {
+                    "toggled the microphone to live".to_string()
+                }),
+                _ => Err("The microphone action did not read back a mute state.".to_string()),
+            }),
+            Step::Command {
+                command_id,
+                parameters,
+            } => commands
+                .expand(command_id, parameters)
+                .and_then(|(executable, args)| {
+                    std::process::Command::new(executable)
+                        .args(args)
+                        .spawn()
+                        .map(|child| format!("ran command {command_id} (pid {})", child.id()))
+                        .map_err(|error| format!("command {command_id} failed: {error}"))
+                }),
+            Step::Wait { ms } => {
+                std::thread::sleep(std::time::Duration::from_millis(u64::from(*ms)));
+                Ok(format!("waited {ms} ms"))
+            }
+        };
+        match outcome {
+            Ok(detail) => completed.push(detail),
+            Err(error) => {
+                return Err(format!(
+                    "step {}/{} ({kind}) failed: {error}",
+                    index + 1,
+                    steps.len()
+                ))
+            }
+        }
+    }
+    Ok(completed.join("; "))
+}
+
+/// Placeholder for platforms with no process or input adapter.
+#[cfg(not(windows))]
+fn run_action_steps(
+    _steps: &[crate::actions::Step],
+    _commands: &crate::actions::CommandRegistry,
+) -> std::result::Result<String, String> {
+    Err("Hardware actions require the Windows service.".into())
 }
 
 /// Renders the configuration together with how its binding actually stands.
@@ -438,6 +536,7 @@ struct TriggerEvent<'a> {
     dispatch: Option<&'a str>,
     device_button: Option<u8>,
     target: Option<&'a str>,
+    detail: Option<&'a str>,
 }
 
 impl ActionFeedback {
@@ -499,6 +598,7 @@ impl ActionFeedback {
             "device_button": event.device_button,
             "state": state,
             "error": error,
+            "detail": event.detail,
         }));
         const MAX_RECENT: usize = 20;
         while self.recent.len() > MAX_RECENT {
@@ -881,6 +981,24 @@ fn serve_server(
     result
 }
 
+/// Exact hardware-action routes.
+///
+/// This must not use a broad `/api/actions` prefix: the older microphone and
+/// playback action routes (`/api/actions/devices`, `/status`, `/mute`,
+/// `/unmute`, `/toggle`, `/echo`) live under the same prefix and are handled by
+/// the general router.
+fn is_hardware_action_route(path: &str) -> bool {
+    path == "/api/actions"
+        || matches!(
+            path,
+            "/api/actions/add"
+                | "/api/actions/remove"
+                | "/api/actions/sync"
+                | "/api/actions/commands"
+                | "/api/actions/gamepads"
+        )
+}
+
 /// Serves requests until the listener stops, tracking config mutations.
 ///
 /// `binding` is the live global hotkey registration, owned here so it is
@@ -897,11 +1015,25 @@ fn accept_loop(
     let mut apps = crate::resident_apps::Registry::start(token.is_some());
     let mut shortcuts = ShortcutRegistry::start(token.is_some());
     let mut hardware = crate::hardware::Hardware::start(token.is_some());
+    let commands = crate::actions::CommandRegistry::start();
+    let mut actions = crate::actions::Registry::start(token.is_some(), commands);
+    #[cfg(windows)]
+    let mut gamepads = crate::gamepad_windows::Monitor::new();
+    #[cfg(windows)]
+    let mut next_gamepad_refresh = std::time::Instant::now();
     // First run only: seed and write button 1 = Ctrl+Win, 2 = Enter, 3 = Esc.
     // A button that already has an application shortcut keeps it instead. The
     // read-only design preview never writes device configuration.
     if token.is_some() {
-        hardware.ensure_defaults(&shortcuts.device_bindings());
+        let action_buttons: Vec<u8> = actions
+            .bindings()
+            .iter()
+            .filter_map(|binding| match binding.source {
+                crate::actions::Source::Au05Button(button) => Some(button),
+                crate::actions::Source::Gamepad { .. } => None,
+            })
+            .collect();
+        hardware.ensure_defaults(&shortcuts.device_bindings(), &action_buttons);
     }
     let mut feedback = ActionFeedback::default();
     // The indicator is opt-in, resolved from the documented environment
@@ -912,6 +1044,48 @@ fn accept_loop(
     let mut overlay_cursor = OverlayCursor::default();
     loop {
         apps.poll();
+        // Gamepads are polled on the accept-loop thread. A two-second rescan
+        // keeps hot-plugged pads appearing without a blocking device thread.
+        #[cfg(windows)]
+        {
+            if token.is_some() {
+                if std::time::Instant::now() >= next_gamepad_refresh {
+                    gamepads.refresh();
+                    next_gamepad_refresh =
+                        std::time::Instant::now() + std::time::Duration::from_secs(2);
+                }
+                for event in gamepads.poll() {
+                    if !event.pressed {
+                        continue;
+                    }
+                    if let Some(binding) = actions.gamepad_binding(&event.device_key, event.usage) {
+                        let name = binding.name.clone();
+                        let steps = binding.steps.clone();
+                        let result = run_action_steps(&steps, actions.commands());
+                        if let Err(error) = &result {
+                            eprintln!("ERROR: the gamepad action failed: {error}");
+                        }
+                        let detail = result.as_ref().ok().cloned();
+                        let recorded = result
+                            .as_ref()
+                            .map(|_| "DONE".to_string())
+                            .map_err(Clone::clone);
+                        feedback.record_event(
+                            TriggerEvent {
+                                source: "gamepad",
+                                label: Some(&name),
+                                trigger: None,
+                                dispatch: None,
+                                device_button: None,
+                                target: None,
+                                detail: detail.as_deref(),
+                            },
+                            recorded,
+                        );
+                    }
+                }
+            }
+        }
         // Deliver any hotkey press that arrived since the last request. One
         // drain serves the microphone binding and every application binding:
         // draining per id would consume and discard the others.
@@ -931,9 +1105,38 @@ fn accept_loop(
                         dispatch: None,
                         device_button: None,
                         target: state.device_id.as_deref(),
+                        detail: None,
                     },
                     result,
                 );
+            } else if id >= crate::actions::HOTKEY_ID_BASE {
+                if let Some((name, steps)) = actions.fired(id) {
+                    let (trigger, button) = actions
+                        .describe(id)
+                        .map(|(_, trigger, button)| (trigger, button))
+                        .unwrap_or((None, None));
+                    let result = run_action_steps(&steps, actions.commands());
+                    if let Err(error) = &result {
+                        eprintln!("ERROR: the hardware action failed: {error}");
+                    }
+                    let detail = result.as_ref().ok().cloned();
+                    let recorded = result
+                        .as_ref()
+                        .map(|_| "DONE".to_string())
+                        .map_err(Clone::clone);
+                    feedback.record_event(
+                        TriggerEvent {
+                            source: "action_binding",
+                            label: Some(&name),
+                            trigger: trigger.as_deref(),
+                            dispatch: None,
+                            device_button: button,
+                            target: None,
+                            detail: detail.as_deref(),
+                        },
+                        recorded,
+                    );
+                }
             } else if let Some((result, target)) =
                 application_shortcut_result(&shortcuts, &apps, id)
             {
@@ -973,7 +1176,7 @@ fn accept_loop(
         let path = received.path.clone();
         let administrator = service::authorized(&received.headers, token.as_deref());
         let browser_scope = path == "/api/config"
-            || path.starts_with("/api/actions/")
+            || is_hardware_action_route(&path)
             || path.starts_with("/api/apps/actions/")
             || path.starts_with("/api/shortcuts")
             || path.starts_with("/api/hardware")
@@ -1012,6 +1215,21 @@ fn accept_loop(
         let (mut code, mut mime, mut payload) =
             if method == Method::Post && path == "/instance/challenge" {
                 instance_challenge_route(&routed_request, token.as_deref())
+            } else if is_hardware_action_route(&path) {
+                #[cfg(windows)]
+                let mut gamepad_devices = || gamepad_devices_json(&mut gamepads);
+                #[cfg(not(windows))]
+                let mut gamepad_devices = || serde_json::json!({"devices":[]});
+                actions_route(
+                    &routed_request,
+                    token.is_some(),
+                    &mut actions,
+                    &mut hardware,
+                    &mut apps,
+                    &shortcuts,
+                    &mut gamepad_devices,
+                    state,
+                )
             } else if path.starts_with("/api/apps") {
                 apps_route(&routed_request, token.is_some(), &mut apps, principal)
             } else if path.starts_with("/api/hardware") {
@@ -1022,6 +1240,7 @@ fn accept_loop(
                     &shortcuts,
                     &feedback,
                     state,
+                    &actions,
                 )
             } else if path.starts_with("/api/shortcuts") {
                 shortcuts_route(
@@ -1030,6 +1249,7 @@ fn accept_loop(
                     &mut apps,
                     &mut shortcuts,
                     &mut hardware,
+                    &actions,
                     state,
                     principal,
                 )
@@ -1045,18 +1265,25 @@ fn accept_loop(
             };
         if is_config_write && code == 200 && payload == COMMIT_SENTINEL {
             // A microphone trigger equal to a saved dispatch chord would make
-            // VibDock capture the very key it injects for an application.
-            let dispatch_conflict = service::validate_patch(body)
+            // VibDock capture the very key it injects for an application; an
+            // action-binding trigger must stay unique as well.
+            let requested_hotkey = service::validate_patch(body)
                 .ok()
                 .and_then(|patch| patch.hotkey)
-                .flatten()
-                .is_some_and(|hotkey| shortcuts.blocks_trigger(&hotkey));
-            if dispatch_conflict {
+                .flatten();
+            let dispatch_conflict = requested_hotkey
+                .as_deref()
+                .is_some_and(|hotkey| shortcuts.blocks_trigger(hotkey));
+            let action_conflict = requested_hotkey
+                .as_deref()
+                .and_then(|hotkey| crate::hotkey::Hotkey::parse(hotkey).ok())
+                .is_some_and(|hotkey| actions.conflicts_with_trigger(&hotkey));
+            if dispatch_conflict || action_conflict {
                 code = 409;
                 mime = "application/json";
                 payload = serde_json::json!({
                     "error": "hotkey_activation_failed",
-                    "message": "That shortcut is used as an application dispatch target; choose another.",
+                    "message": "That shortcut is already used as an application dispatch target or by another VibDock binding; choose another.",
                 })
                 .to_string();
             } else {
@@ -1451,6 +1678,7 @@ mod tests {
                 dispatch: Some("Ctrl + Win"),
                 device_button: Some(0),
                 target: Some("微信输入法"),
+                detail: None,
             },
             Ok("DISPATCHED".into()),
         );
@@ -1474,6 +1702,7 @@ mod tests {
                     dispatch: Some("Ctrl + Shift + Space"),
                     device_button: None,
                     target: None,
+                    detail: None,
                 },
                 Err("not the foreground window".into()),
             );
@@ -2011,12 +2240,14 @@ fn with_hardware(
 /// from a scan it just received, and this route resolves that reference on the
 /// service side. The microphone trigger is passed in so a new app trigger can
 /// never silently steal the existing binding.
+#[allow(clippy::too_many_arguments)]
 fn shortcuts_route(
     request: &Request<'_>,
     token_configured: bool,
     apps: &mut crate::resident_apps::Registry,
     shortcuts: &mut ShortcutRegistry,
     hardware: &mut crate::hardware::Hardware,
+    actions: &crate::actions::Registry,
     config: &Config,
     _principal: Option<&str>,
 ) -> Routed {
@@ -2055,6 +2286,13 @@ fn shortcuts_route(
                             serde_json::json!({"error":"That Vibe Key button already has a direct chord; clear it first."}).to_string(),
                         );
                     }
+                    if actions.has_button(button) {
+                        return (
+                            409,
+                            "application/json",
+                            serde_json::json!({"error":"That Vibe Key button already has a hardware action; remove it first."}).to_string(),
+                        );
+                    }
                 }
                 let application = reference
                     .as_deref()
@@ -2071,6 +2309,28 @@ fn shortcuts_route(
                             409,
                             "application/json",
                             serde_json::json!({"error":"That trigger equals a direct Vibe Key chord; clear the direct chord or choose another trigger."}).to_string(),
+                        );
+                    }
+                    if actions.conflicts_with_trigger(&trigger) {
+                        return (
+                            409,
+                            "application/json",
+                            serde_json::json!({"error":"That trigger is already used by a hardware action; choose another trigger."}).to_string(),
+                        );
+                    }
+                }
+                // An injected dispatch chord equal to an action trigger would
+                // also run that hardware action. Keep the two namespaces apart.
+                if let Some(dispatch) = parsed
+                    .as_ref()
+                    .and_then(|value| value["dispatch"].as_str())
+                    .and_then(|dispatch| crate::hotkey::Hotkey::parse(dispatch).ok())
+                {
+                    if actions.conflicts_with_trigger(&dispatch) {
+                        return (
+                            409,
+                            "application/json",
+                            serde_json::json!({"error":"That dispatch chord equals a hardware action trigger; choose another dispatch chord."}).to_string(),
                         );
                     }
                 }
@@ -2137,6 +2397,163 @@ fn shortcuts_route(
 }
 
 /// Hardware detection and explicit re-provisioning.
+/// Hardware action bindings and the local command table.
+#[allow(clippy::too_many_arguments)]
+fn actions_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    actions: &mut crate::actions::Registry,
+    hardware: &mut crate::hardware::Hardware,
+    apps: &mut crate::resident_apps::Registry,
+    shortcuts: &ShortcutRegistry,
+    devices: &mut dyn FnMut() -> serde_json::Value,
+    config: &Config,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    match (request.method, request.path) {
+        (Method::Get, "/api/actions") => (200, "application/json", actions.view().to_string()),
+        (Method::Get, "/api/actions/commands") => (
+            200,
+            "application/json",
+            actions.commands().view().to_string(),
+        ),
+        (Method::Get, "/api/actions/gamepads") => {
+            let devices = devices();
+            (200, "application/json", devices.to_string())
+        }
+        (Method::Post, "/api/actions/add") => {
+            let reserved = crate::actions::Reserved {
+                mic_hotkey: config
+                    .hotkey
+                    .as_deref()
+                    .and_then(|hotkey| crate::hotkey::Hotkey::parse(hotkey).ok()),
+                app_triggers: shortcuts.triggers(),
+                app_dispatch_chords: shortcuts.dispatch_chords(),
+                app_buttons: shortcuts
+                    .device_bindings()
+                    .iter()
+                    .map(|binding| binding.button)
+                    .collect(),
+                direct_buttons: hardware.direct_buttons(),
+                direct_chords: hardware.direct_chords(),
+            };
+            let mut used_references = Vec::new();
+            let mut resolve = |reference: &str| -> Option<(String, String)> {
+                let (executable, label, _) = apps.resolve_application(reference)?;
+                used_references.push(reference.to_string());
+                Some((executable, label))
+            };
+            let (code, mut view) = actions.add(request.body, &reserved, &mut resolve);
+            if code == 200 {
+                for reference in used_references {
+                    apps.consume_application(&reference);
+                }
+                if let Some(binding) = view["bindings"]
+                    .as_array()
+                    .and_then(|bindings| bindings.last())
+                    .cloned()
+                {
+                    if binding["source"]["kind"] == "au05" {
+                        let button = binding["source"]["button"]
+                            .as_u64()
+                            .and_then(|button| u8::try_from(button).ok());
+                        let trigger = binding["trigger"].as_str();
+                        if let (Some(button), Some(trigger)) = (button, trigger) {
+                            let outcome = crate::hotkey::Hotkey::parse(trigger)
+                                .map_err(|error| error.to_string())
+                                .and_then(|hotkey| hardware.write_trigger(button, &hotkey));
+                            view["hardware"] = match outcome {
+                                Ok(()) => serde_json::json!({
+                                    "button": button,
+                                    "state": "provisioned",
+                                    "error": null,
+                                }),
+                                Err(error) => serde_json::json!({
+                                    "button": button,
+                                    "state": "failed",
+                                    "error": error,
+                                }),
+                            };
+                        }
+                    }
+                }
+            }
+            (code, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/actions/remove") => {
+            let id = serde_json::from_str::<serde_json::Value>(request.body)
+                .ok()
+                .and_then(|value| value["id"].as_str().map(str::to_string));
+            let button = id.as_deref().and_then(|id| actions.button_for_id(id));
+            let (code, mut view) = actions.remove(request.body);
+            if code == 200 {
+                if let Some(button) = button {
+                    if let Err(error) = hardware.clear_button(button) {
+                        view["hardware"] = serde_json::json!({
+                            "button": button,
+                            "state": "failed",
+                            "error": error,
+                        });
+                    }
+                }
+            }
+            (code, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/actions/sync") => {
+            let mut results = Vec::new();
+            for binding in actions.bindings().to_vec() {
+                if let crate::actions::Source::Au05Button(button) = binding.source {
+                    if let Some(trigger) = binding.trigger.as_deref() {
+                        let outcome = crate::hotkey::Hotkey::parse(trigger)
+                            .map_err(|error| error.to_string())
+                            .and_then(|hotkey| hardware.write_trigger(button, &hotkey));
+                        results.push(match outcome {
+                            Ok(()) => serde_json::json!({"id":binding.id,"button":button,"state":"provisioned","error":null}),
+                            Err(error) => serde_json::json!({"id":binding.id,"button":button,"state":"failed","error":error}),
+                        });
+                    }
+                }
+            }
+            let mut view = actions.view();
+            view["hardware"] = serde_json::Value::Array(results);
+            (200, "application/json", view.to_string())
+        }
+        _ => (
+            404,
+            "application/json",
+            serde_json::json!({"error":"Unknown action route"}).to_string(),
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn gamepad_devices_json(monitor: &mut crate::gamepad_windows::Monitor) -> serde_json::Value {
+    let latest: std::collections::BTreeMap<String, (u16, u64)> = monitor
+        .latest_pressed()
+        .into_iter()
+        .map(|(device_key, usage, at)| (device_key, (usage, at)))
+        .collect();
+    let devices = monitor.refresh();
+    serde_json::json!({
+        "devices": devices.iter().map(|device| serde_json::json!({
+            "device_key": device.device_key,
+            "name": device.name,
+            "vendor_id": format!("{:04x}", device.vendor_id),
+            "product_id": format!("{:04x}", device.product_id),
+            "button_usages": device.button_usages,
+            "connected": device.connected,
+            "latest_button": latest.get(&device.device_key).map(|(usage, at)| {
+                serde_json::json!({"usage": usage, "at": at})
+            }),
+        })).collect::<Vec<_>>(),
+    })
+}
+
 fn hardware_route(
     request: &Request<'_>,
     token_configured: bool,
@@ -2144,6 +2561,7 @@ fn hardware_route(
     shortcuts: &ShortcutRegistry,
     feedback: &ActionFeedback,
     config: &Config,
+    actions: &crate::actions::Registry,
 ) -> Routed {
     if let Some(rejection) = validate_request(request, token_configured) {
         return rejection;
@@ -2184,6 +2602,13 @@ fn hardware_route(
                         serde_json::json!({"error":"That Vibe Key button already has an application shortcut; remove it first."}).to_string(),
                     );
                 }
+                if actions.has_button(button) {
+                    return (
+                        409,
+                        "application/json",
+                        serde_json::json!({"error":"That Vibe Key button already has a hardware action; remove it first."}).to_string(),
+                    );
+                }
             }
             // A direct chord that equals a registered trigger would be
             // captured by VibDock as well as emitted by the device, creating a
@@ -2200,7 +2625,10 @@ fn hardware_route(
                         .as_deref()
                         .and_then(|saved| crate::hotkey::Hotkey::parse(saved).ok())
                         .is_some_and(|saved| saved == parsed);
-                    if mic_conflict || shortcuts.conflicts_with_trigger(&parsed.as_string()) {
+                    if mic_conflict
+                        || shortcuts.conflicts_with_trigger(&parsed.as_string())
+                        || actions.conflicts_with_trigger(&parsed)
+                    {
                         return (
                             409,
                             "application/json",
@@ -2416,6 +2844,9 @@ mod resident_api_tests {
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut hardware = crate::hardware::Hardware::start(false);
+        let actions = crate::actions::Registry::empty_for_test(
+            crate::actions::CommandRegistry::empty_for_test(),
+        );
         let config = Config::default();
         for (path, method) in [
             ("/api/shortcuts", Method::Get),
@@ -2438,6 +2869,7 @@ mod resident_api_tests {
                     &mut apps,
                     &mut shortcuts,
                     &mut hardware,
+                    &actions,
                     &config,
                     Some("fixture-principal")
                 )
@@ -2453,6 +2885,7 @@ mod resident_api_tests {
                     &mut apps,
                     &mut shortcuts,
                     &mut hardware,
+                    &actions,
                     &config,
                     Some("fixture-principal")
                 )
@@ -2476,6 +2909,7 @@ mod resident_api_tests {
                 &mut apps,
                 &mut shortcuts,
                 &mut hardware,
+                &actions,
                 &config,
                 Some("fixture-principal")
             )
@@ -2489,6 +2923,9 @@ mod resident_api_tests {
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut hardware = crate::hardware::Hardware::start(false);
+        let actions = crate::actions::Registry::empty_for_test(
+            crate::actions::CommandRegistry::empty_for_test(),
+        );
         let request = Request {
             method: Method::Post,
             path: "/api/shortcuts/add",
@@ -2505,6 +2942,7 @@ mod resident_api_tests {
                 &mut apps,
                 &mut shortcuts,
                 &mut hardware,
+                &actions,
                 &Config::default(),
                 Some("fixture-principal")
             )
@@ -2518,6 +2956,9 @@ mod resident_api_tests {
         let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
         let mut hardware = crate::hardware::Hardware::start(false);
         let feedback = ActionFeedback::default();
+        let actions = crate::actions::Registry::empty_for_test(
+            crate::actions::CommandRegistry::empty_for_test(),
+        );
         for (path, method) in [
             ("/api/hardware", Method::Get),
             ("/api/hardware/sync", Method::Post),
@@ -2540,7 +2981,8 @@ mod resident_api_tests {
                     &mut hardware,
                     &shortcuts,
                     &feedback,
-                    &Config::default()
+                    &Config::default(),
+                    &actions
                 )
                 .0,
                 401
@@ -2554,7 +2996,8 @@ mod resident_api_tests {
                     &mut hardware,
                     &shortcuts,
                     &feedback,
-                    &Config::default()
+                    &Config::default(),
+                    &actions
                 )
                 .0,
                 403
@@ -2576,6 +3019,7 @@ mod resident_api_tests {
             &shortcuts,
             &feedback,
             &Config::default(),
+            &actions,
         );
         assert_eq!(code, 200);
         assert_eq!(mime, "application/json");
@@ -2587,5 +3031,88 @@ mod resident_api_tests {
         // its editor even when no device is attached.
         assert_eq!(value["direct"]["revision"], 0);
         assert!(value["direct"]["entries"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn action_routes_require_authentication_and_origin() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let mut actions = crate::actions::Registry::empty_for_test(
+            crate::actions::CommandRegistry::empty_for_test(),
+        );
+        let mut hardware = crate::hardware::Hardware::start(false);
+        let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
+        let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let mut devices = || serde_json::json!({"devices":[]});
+        let config = Config::default();
+        for (path, method) in [
+            ("/api/actions", Method::Get),
+            ("/api/actions/add", Method::Post),
+            ("/api/actions/remove", Method::Post),
+            ("/api/actions/commands", Method::Get),
+            ("/api/actions/gamepads", Method::Get),
+            ("/api/actions/sync", Method::Post),
+        ] {
+            let mut request = Request {
+                method,
+                path,
+                host: Some(&host),
+                origin: None,
+                authorized: false,
+                body: "{}",
+                body_rejected: false,
+            };
+            assert_eq!(
+                actions_route(
+                    &request,
+                    true,
+                    &mut actions,
+                    &mut hardware,
+                    &mut apps,
+                    &shortcuts,
+                    &mut devices,
+                    &config,
+                )
+                .0,
+                401
+            );
+            request.authorized = true;
+            request.origin = Some("https://attacker.invalid");
+            assert_eq!(
+                actions_route(
+                    &request,
+                    true,
+                    &mut actions,
+                    &mut hardware,
+                    &mut apps,
+                    &shortcuts,
+                    &mut devices,
+                    &config,
+                )
+                .0,
+                403
+            );
+        }
+        let request = Request {
+            method: Method::Get,
+            path: "/api/actions",
+            host: Some(&host),
+            origin: None,
+            authorized: true,
+            body: "",
+            body_rejected: false,
+        };
+        let (code, _, body) = actions_route(
+            &request,
+            true,
+            &mut actions,
+            &mut hardware,
+            &mut apps,
+            &shortcuts,
+            &mut devices,
+            &config,
+        );
+        assert_eq!(code, 200);
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(value["bindings"].as_array().unwrap().is_empty());
     }
 }

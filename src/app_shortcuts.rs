@@ -424,6 +424,22 @@ impl Registry {
             .and_then(|entry| entry.device_button)
     }
 
+    /// Parsed triggers of all saved application bindings.
+    pub(crate) fn triggers(&self) -> Vec<Hotkey> {
+        self.entries
+            .iter()
+            .filter_map(|entry| Hotkey::parse(&entry.trigger).ok())
+            .collect()
+    }
+
+    /// Parsed dispatch chords of all saved application bindings.
+    pub(crate) fn dispatch_chords(&self) -> Vec<Hotkey> {
+        self.entries
+            .iter()
+            .filter_map(|entry| Hotkey::parse(&entry.dispatch).ok())
+            .collect()
+    }
+
     /// Describes the binding addressed by one fired hotkey id.
     ///
     /// Used only to label a recent-trigger event; it carries no executable

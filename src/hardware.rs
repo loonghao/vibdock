@@ -413,32 +413,91 @@ impl Hardware {
         self.direct.set(body)
     }
 
+    /// Removes one direct firmware chord.
+    pub(crate) fn remove_direct(&mut self, body: &str) -> (u16, Value) {
+        self.direct.remove(body)
+    }
+
+    /// Write one registered trigger chord into a button without touching the
+    /// application/direct binding tables. Used by hardware action bindings.
+    pub(crate) fn write_trigger(
+        &mut self,
+        button: u8,
+        hotkey: &Hotkey,
+    ) -> std::result::Result<(), String> {
+        if !self.enabled {
+            return Err("Hardware control requires the authenticated Windows service.".into());
+        }
+        #[cfg(windows)]
+        {
+            let detection = {
+                self.cached = None;
+                self.detection()
+            };
+            if !detection.connected {
+                return Err(detection
+                    .error
+                    .unwrap_or_else(|| "AU05 is not connected.".to_string()));
+            }
+            let index =
+                Button::from_index(button).ok_or("Unknown AU05 button index.".to_string())?;
+            let mut device = windows_impl::Device::open()?;
+            device.provision(index, hotkey)?;
+            self.last.remove(&button);
+            self.cached = None;
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (button, hotkey);
+            Err("AU05 hardware control requires Windows.".into())
+        }
+    }
+
+    /// Direct chords currently configured, for cross-mode conflict checks.
+    pub(crate) fn direct_chords(&self) -> Vec<Hotkey> {
+        self.direct
+            .entries()
+            .iter()
+            .filter_map(|entry| Hotkey::parse(&entry.chord).ok())
+            .collect()
+    }
+
+    /// Buttons currently carrying a direct chord.
+    pub(crate) fn direct_buttons(&self) -> Vec<u8> {
+        self.direct
+            .entries()
+            .iter()
+            .map(|entry| entry.button)
+            .collect()
+    }
+
     /// Applies the built-in button layout on a first run.
     ///
     /// Returns true when defaults were seeded and a write was attempted. A
     /// button that already has an application shortcut keeps that binding; the
     /// default chord only fills untouched buttons.
-    pub(crate) fn ensure_defaults(&mut self, bindings: &[HardwareBinding]) -> bool {
+    pub(crate) fn ensure_defaults(
+        &mut self,
+        bindings: &[HardwareBinding],
+        action_buttons: &[u8],
+    ) -> bool {
         if !self.direct.seed_defaults {
             return false;
         }
         self.direct.seed_defaults = false;
-        let app_buttons: std::collections::BTreeSet<u8> =
+        let mut reserved: std::collections::BTreeSet<u8> =
             bindings.iter().map(|binding| binding.button).collect();
+        reserved.extend(action_buttons.iter().copied());
         self.direct
             .entries
-            .retain(|entry| !app_buttons.contains(&entry.button));
+            .retain(|entry| !reserved.contains(&entry.button));
         let entries = self.direct.entries.clone();
         if !self.direct.path.as_os_str().is_empty() {
             let _ = self.direct.commit(entries);
         }
         self.provision(bindings);
         true
-    }
-
-    /// Removes one direct firmware chord.
-    pub(crate) fn remove_direct(&mut self, body: &str) -> (u16, Value) {
-        self.direct.remove(body)
     }
 
     /// True when a direct firmware chord currently names this button.
@@ -1442,7 +1501,7 @@ mod direct_tests {
             trigger_text: "Ctrl + Alt + Shift + F9".to_string(),
             trigger: crate::hotkey::Hotkey::parse("Ctrl + Alt + Shift + F9").unwrap(),
         };
-        assert!(hardware.ensure_defaults(&[binding]));
+        assert!(hardware.ensure_defaults(&[binding], &[]));
         assert!(!hardware.direct.has_button(1));
         assert!(hardware.direct.has_button(0));
         assert!(hardware.direct.has_button(2));
