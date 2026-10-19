@@ -134,6 +134,21 @@ Use the `controls` list for AU05 button names/rows and the `actions` list for
 integration actions. Do not hard-code button labels; read them from the manifest.
 Plugin enable/disable and third-party install are not implemented yet.
 
+## Recipe: custom manually entered / recorded chord
+
+A user may say “把按钮 2 设成 Ctrl + Shift + K”. Decide which layer they mean:
+
+- **AU05 direct firmware chord** (works regardless of foreground app):
+  `vibdock hardware-bind --button 2 --chord "Ctrl + Shift + K" --label "..."`
+- **Application shortcut** (only dispatched while the bound app is foreground):
+  `vibdock shortcut-add --app "<app>" --trigger "Ctrl + Alt + Shift + F10" --dispatch "Ctrl + Shift + K" --device-button 2`
+- **Double-click / long-press gesture**: not configurable yet; the classifier
+  exists but the sentinel-key monitor and persisted gesture bindings are not
+  wired. Explain this instead of silently using a direct chord.
+
+The onboarding prototype shows manual text input and a record button for the
+future gesture editor; that UI is not yet backed by the production service.
+
 ## Error handling
 
 | Response | Meaning | Agent action |
@@ -157,4 +172,5 @@ After a mutation:
 > Saved action `<id>`. Firmware state: `provisioned` / `failed: <error>`.
 > Press button 2 to verify; the recent log should show `action_binding` /
 > `DONE`. I have not verified that Codex itself opened.
+
 

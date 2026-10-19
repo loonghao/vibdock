@@ -17,8 +17,8 @@ the configuration from a plain-language prompt.
 | --- | --- | --- |
 | 1. Connect | receiver, power/wake, local service, detected firmware | device detected; "next" enabled |
 | 2. Template | voice workflow / coding / WeChat Input / blank | a template selected |
-| 3. Assign | three single-click rows with profile selects | all rows have a value or "unassigned" |
-| 4. Test | physical or virtual test tiles, one mark per key | all three tested, or user skips |
+| 3. Assign | a 3×3 matrix: each key has single, double and long press | each cell is a Profile, a manually entered/recorded chord, or unassigned |
+| 4. Test | one tile per configured gesture, physical or virtual | configured cells tested, or user skips |
 
 After step 4 the done screen offers **Open Workbench**, **Open Virtual Pad**, or
 **Let an agent continue**.
@@ -27,14 +27,15 @@ After step 4 the done screen offers **Open Workbench**, **Open Virtual Pad**, or
 
 | Template | Button 1 | Button 2 | Button 3 |
 | --- | --- | --- | --- |
-| Voice workflow | WeChat voice | Codex voice | DSH workspace |
-| Coding | Codex voice | DSH workspace | microphone mute |
-| WeChat Input | WeChat voice | Enter | Escape |
+| Voice workflow | single WeChat / double Codex / long DSH | single Enter | single Escape |
+| Coding | single Codex / double DSH / long mic mute | single Enter | single Escape |
+| WeChat Input | single WeChat | single Enter | single Escape |
 | Blank | unassigned | unassigned | unassigned |
 
-Templates only seed single-click assignments. Double/long press and multi-key
-combos are added later in the workbench; the wizard never claims they are active
-before the gesture layer exists.
+Templates seed a useful subset of the 9 slots. Remaining cells can be assigned in
+the wizard via Profile, manual chord, or recorded chord. Multi-key combos are
+added later in the workbench; the wizard never claims they are active before the
+gesture layer exists.
 
 ## Agent path
 
@@ -83,3 +84,6 @@ When Settings migrates to the clean workbench:
 The install/configuration semantics remain in
 [`docs/guide/installation.md`](../guide/installation.md) and
 [`docs/guide/installation.zh-CN.md`](../guide/installation.zh-CN.md).
+
+
+

@@ -86,9 +86,14 @@ AU05 / 动作相关能力目前是源码候选版本，不是新的正式发布�
 
 ## 首次配置引导
 
-我们设计了一条四步首次配置流程：连接设备、选择模板、确认三个按键、测试反馈。
+我们设计了一条四步首次配置流程：连接设备、选择模板、确认 3×3 手势矩阵、测试反馈。
 
 ![首次配置引导](assets/screenshots/onboarding.png)
+
+每个按键都提供单击、双击、长按三种手势。点任意格子可以选择 Profile、手动输入
+组合键，或直接录入按键；这就是 Workbench 使用的 3×3 手势矩阵。
+
+![手势位编辑器](assets/screenshots/onboarding-editor.png)
 
 - [安装与配置指南](docs/guide/installation.zh-CN.md)：传统安装、固件直发、
   应用快捷键、硬件动作、验证、故障排查和卸载。
@@ -165,5 +170,7 @@ MIT。VibDock 与 Ulanzi、OpenAI、DeepSeek、Tencent、WorkBuddy 均无隶属�
 产品名称仅用于描述集成目标。
 
 <p align="center"><a href="README.md">Read in English →</a></p>
+
+
 
 

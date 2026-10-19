@@ -98,9 +98,15 @@ candidate, not a new release.
 ## Guided setup
 
 A first-run flow is designed around four steps: connect the device, choose a
-template, confirm the three buttons, then test.
+template, confirm the 3×3 gesture matrix, then test.
 
 ![First-run guide](assets/screenshots/onboarding.png)
+
+Every key exposes single, double and long press. Click a cell to choose a Profile,
+type a chord manually, or record one; the grid is the same 3×3 gesture matrix used
+by the workbench.
+
+![Gesture editor](assets/screenshots/onboarding-editor.png)
 
 - [Install and configure guide](docs/guide/installation.md) — traditional setup,
   direct chords, application shortcuts, hardware actions, verification,
@@ -182,3 +188,5 @@ MIT. VibDock is independent of Ulanzi, OpenAI, DeepSeek, Tencent and WorkBuddy;
 product names are used only to describe integrations.
 
 <p align="center"><a href="README.zh-CN.md">阅读中文版 →</a></p>
+
+

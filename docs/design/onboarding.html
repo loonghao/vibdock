@@ -84,6 +84,33 @@ small{font-size:12px;color:var(--muted)}
 .map-row small{display:block;font-size:10.5px;color:var(--faint);margin-top:1px}
 .select{width:100%;border:1px solid var(--line-strong);background:#fff;border-radius:6px;padding:7px 8px;font-size:12px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8d8578 50%),linear-gradient(135deg,#8d8578 50%,transparent 50%);background-position:calc(100% - 13px) 50%,calc(100% - 8px) 50%;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
 .mapping-note{font-size:11px;color:var(--faint);line-height:1.6;margin-top:12px}
+/* gesture matrix */
+.gesture-matrix{margin-top:20px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.matrix-head,.matrix-row{display:grid;grid-template-columns:112px repeat(3,minmax(0,1fr))}
+.matrix-head{background:#fbf9f4;border-bottom:1px solid var(--line)}
+.matrix-head span{font-size:10.5px;color:var(--faint);padding:9px 11px;border-right:1px solid var(--line)}
+.matrix-head span:last-child{border-right:0}
+.matrix-row{border-bottom:1px solid var(--line)}
+.matrix-row:last-child{border-bottom:0}
+.matrix-key{display:flex;flex-direction:column;justify-content:center;padding:11px;border-right:1px solid var(--line);background:#fbf9f4}
+.matrix-key .num{font:9.5px var(--mono,monospace);color:var(--faint)}
+.matrix-key b{font-size:12.5px;font-weight:550;margin-top:2px}
+.matrix-cell{min-height:54px;border-right:1px solid var(--line);padding:8px 10px;text-align:left;background:#fff;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.matrix-cell:last-child{border-right:0}
+.matrix-cell:hover{background:var(--accent-soft)}
+.matrix-cell[data-set=true]{background:#fcf7f1}
+.matrix-cell b{font-size:11.5px;font-weight:550;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.matrix-cell small{font-size:9.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.matrix-cell[data-set=false] b{color:var(--faint);font-weight:400}
+/* slot editor */
+.mode-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;border:1px solid var(--line);border-radius:7px;padding:3px;background:#fbf9f4;margin-top:14px}
+.mode-tab{border:0;background:transparent;border-radius:5px;padding:6px;font-size:11px;color:var(--muted)}
+.mode-tab[aria-selected=true]{background:#fff;color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+.chord-row{display:flex;gap:7px;margin-top:8px}
+.chord-row input{flex:1;border:1px solid var(--line-strong);border-radius:6px;padding:8px;font-size:12px;background:#fff;min-width:0}
+.chord-row button{flex:none}
+.record-hint{font-size:10.5px;color:var(--accent);margin-top:6px;min-height:15px}
+.editor-note{font-size:10.5px;color:var(--faint);line-height:1.55;margin-top:9px}
 /* step 4 test */
 .test-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:22px}
 .test-tile{border:1px solid var(--line);background:#fff;border-radius:9px;padding:14px;text-align:left;min-height:112px;display:flex;flex-direction:column;gap:5px}
@@ -144,25 +171,33 @@ const PROFILES=[
   {id:'esc',name:'Esc / 取消'},
   {id:'empty',name:'暂不分配'}
 ];
+const GESTURES=[{id:0,name:'单击'},{id:1,name:'双击'},{id:2,name:'长按'}];
+const KEYS=['语音键','确认键','取消键'];
+const emptySlots=()=>[[ '', '', '' ],[ '', '', '' ],[ '', '', '' ]];
 const TEMPLATES=[
-  {id:'voice',name:'语音工作流',desc:'微信语音 + Codex + DSH，适合日常与 Agent 对话。',mapping:['wechat','codex','dsh']},
-  {id:'coding',name:'编程助手',desc:'Codex + DSH + 麦克风静音，专注编码。',mapping:['codex','dsh','mute']},
-  {id:'wechat',name:'微信输入法',desc:'保留最常见的聊天与确认按键。',mapping:['wechat','enter','esc']},
-  {id:'blank',name:'空白配置',desc:'从零开始，之后在 Workbench 里逐个分配。',mapping:['empty','empty','empty']}
+  {id:'voice',name:'语音工作流',desc:'微信语音、Codex、DSH 分到语音键的三种手势，其余按键保留确认/取消。',mapping:[['wechat','codex','dsh'],['enter','',''],['esc','','']]},
+  {id:'coding',name:'编程助手',desc:'Codex、DSH、麦克风静音放在语音键，专注编码。',mapping:[['codex','dsh','mute'],['enter','',''],['esc','','']]},
+  {id:'wechat',name:'微信输入法',desc:'保留最常见的聊天与确认按键。',mapping:[['wechat','',''],['enter','',''],['esc','','']]},
+  {id:'blank',name:'空白配置',desc:'从零开始，9 个动作位全部手动分配。',mapping:emptySlots()}
 ];
-const STEPS=[{n:'01',t:'连接设备'},{n:'02',t:'选择模板'},{n:'03',t:'确认按键'},{n:'04',t:'测试反馈'}];
+const STEPS=[{n:'01',t:'连接设备'},{n:'02',t:'选择模板'},{n:'03',t:'确认动作'},{n:'04',t:'测试反馈'}];
 const state={
   step:new URL(location.href).searchParams.get('step')?Number(new URL(location.href).searchParams.get('step')):1,
-  template:'voice',mapping:[...TEMPLATES[0].mapping],tested:[false,false,false],done:false,agent:new URL(location.href).searchParams.get('agent')==='1'
+  template:'voice',gestures:TEMPLATES[0].mapping.map(x=>[...x]),tested:new Set(),done:false,
+  editor:null,agent:new URL(location.href).searchParams.get('agent')==='1'
 };
+const editParam=new URL(location.href).searchParams.get('edit');
+if(editParam){const [key,gesture]=editParam.split(':').map(Number);const value=state.gestures[key][gesture];state.editor={key,gesture,mode:value?(value.startsWith('chord:')?'chord':'profile'):'profile',profile:value&&!value.startsWith('chord:')?value:'wechat',chord:value?.startsWith('chord:')?value.slice(6):'',recording:false}}
 let toastTimer=0;
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),1800)}
 function profileName(id){return (PROFILES.find(p=>p.id===id)||PROFILES[6]).name}
+function slotLabel(value){if(!value)return '未配置';if(value.startsWith('chord:'))return value.slice(6);return profileName(value)}
+function slotKind(value){if(!value)return '点击配置';if(value.startsWith('chord:'))return '手动录入';return 'Profile'}
+function configuredCount(){return state.gestures.flat().filter(Boolean).length}
 function setStep(n){state.step=Math.max(1,Math.min(4,n));state.done=false;const u=new URL(location.href);u.searchParams.set('step',state.step);history.replaceState(null,'',u);render()}
-function chooseTemplate(id){state.template=id;const t=TEMPLATES.find(x=>x.id===id);state.mapping=[...t.mapping];state.tested=[false,false,false];render()}
-function setMapping(i,value){state.mapping[i]=value;render()}
-function testKey(i){state.tested[i]=true;render();showToast('已收到反馈（原型预览）')}
+function chooseTemplate(id){state.template=id;const t=TEMPLATES.find(x=>x.id===id);state.gestures=t.mapping.map(x=>[...x]);state.tested=new Set();state.editor=null;render()}
+function testKey(key,gesture){state.tested.add(`${key}:${gesture}`);render();showToast('已收到反馈（原型预览）')}
 function finish(){state.done=true;render();showToast('配置完成（原型预览）')}
 function render(){
   document.getElementById('progress').innerHTML=STEPS.map((s,i)=>`<div class="step" aria-current="${state.step===i+1}" data-done="${state.step>i+1}"><b>${s.n}</b>${s.t}</div>`).join('');
@@ -199,29 +234,40 @@ function stepConnect(){
   </div></div>`
 }
 function stepTemplate(){
-  return `<div class="body-head"><div class="grow"><div class="kicker">Step 02</div><h1>从一个模板开始。</h1><p>模板只写入初始分配，之后可以随时在 Workbench 里改。每个按键还有单击 / 双击 / 长按和多键组合。</p></div></div>
-  <div class="templates">${TEMPLATES.map(t=>`<button class="template" data-template="${t.id}" aria-pressed="${state.template===t.id}"><span class="radio"></span><span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small><span class="keys">${t.mapping.map((m,i)=>`<span class="key-chip">0${i+1} ${esc(profileName(m))}</span>`).join('')}</span></span></button>`).join('')}</div>`
+  const flat=t=>t.mapping.flat().filter(Boolean);
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 02</div><h1>从一个模板开始。</h1><p>模板只写入初始的单键/双击/长按分配，之后可以随时在 Workbench 里改；每个按键有 3 个手势位。</p></div></div>
+  <div class="templates">${TEMPLATES.map(t=>{const values=flat(t);return `<button class="template" data-template="${t.id}" aria-pressed="${state.template===t.id}"><span class="radio"></span><span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small><span class="keys">${values.slice(0,4).map(v=>`<span class="key-chip">${esc(slotLabel(v))}</span>`).join('')}${values.length>4?`<span class="key-chip">+${values.length-4}</span>`:''}</span></span></button>`}).join('')}</div>`
 }
 function stepMapping(){
-  return `<div class="body-head"><div class="grow"><div class="kicker">Step 03</div><h1>确认三个按键做什么。</h1><p>先给单击分配动作；双击/长按和多键组合可以在 Workbench 继续加。</p></div><div class="body-actions"><button class="button quiet" id="resetMapping">恢复模板</button></div></div>
-  <div class="mapping"><div class="mini-device">${deviceSVG()}</div><div class="rows">${state.mapping.map((m,i)=>`<div class="map-row"><span class="num">0${i+1}</span><span><b>${['语音键','确认键','取消键'][i]}</b><small>单击</small></span><select class="select" data-map="${i}" aria-label="按钮 ${i+1} 的动作">${PROFILES.map(p=>`<option value="${p.id}" ${p.id===m?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`).join('')}</div></div>
-  <p class="mapping-note">一个按键可以承载应用快捷键、硬件直发组合键或硬件动作中的一种。冲突由服务端校验，向导不会覆盖已有配置。</p>`
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 03</div><h1>确认 9 个动作位。</h1><p>每个按键都可以配置单击、双击、长按；点击格子选 Profile、手动输入组合键，或留空。</p></div><div class="body-actions"><span class="kicker" style="margin-right:8px">${configuredCount()}/9 已配置</span><button class="button quiet" id="resetMapping">恢复模板</button></div></div>
+  <div class="gesture-matrix"><div class="matrix-head"><span>按键</span>${GESTURES.map(g=>`<span>${g.name}</span>`).join('')}</div>
+  ${KEYS.map((name,key)=>`<div class="matrix-row"><div class="matrix-key"><span class="num">0${key+1}</span><b>${name}</b></div>${GESTURES.map(g=>{const value=state.gestures[key][g.id];return `<button class="matrix-cell" data-edit="${key}:${g.id}" data-set="${!!value}"><b>${esc(slotLabel(value))}</b><small>${esc(slotKind(value))}</small></button>`}).join('')}</div>`).join('')}</div>
+  <p class="mapping-note">Profile 由插件提供；手动录入会保存为一条组合键。一个按键的某一种手势只能有一个动作，冲突由服务端校验。AU05 的手势需要哨兵键支持，生产接入仍在校验中。</p>`
 }
 function stepTest(){
-  return `<div class="body-head"><div class="grow"><div class="kicker">Step 04</div><h1>按一下，确认它收到了。</h1><p>可以按物理按键，也可以点下面的虚拟卡片模拟反馈；测试只记录向导结果，不写入设备。</p></div></div>
-  <div class="test-grid">${state.mapping.map((m,i)=>`<button class="test-tile" data-test="${i}" data-ok="${state.tested[i]}"><span class="num">0${i+1}</span><b>${['语音键','确认键','取消键'][i]}</b><small>${esc(profileName(m))}</small>${state.tested[i]?'<span class="mark">✓ 已收到</span>':'<span class="mark" style="color:var(--faint)">等待测试</span>'}</button>`).join('')}</div>
-  <div class="test-note">物理按键触发会进入最近触发日志；如果没有任何反应，先确认服务在运行、接收器已插好，再检查当前按键是否被直发组合键占用。</div>`
+  const cells=[];
+  KEYS.forEach((name,key)=>GESTURES.forEach(g=>{const value=state.gestures[key][g.id];const id=`${key}:${g.id}`;cells.push(`<button class="test-tile" data-test="${id}" data-ok="${state.tested.has(id)}" ${value?'':'disabled'}><span class="num">0${key+1} · ${g.name}</span><b>${esc(name)}</b><small>${value?esc(slotLabel(value)):'未配置'}</small>${state.tested.has(id)?'<span class="mark">✓ 已收到</span>':`<span class="mark" style="color:var(--faint)">${value?'等待测试':'先配置'}</span>`}</button>`)}));
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 04</div><h1>逐个确认动作位。</h1><p>点按已配置的格子模拟反馈；物理按键测试会进入最近触发日志。测试只记录向导结果，不写入设备。</p></div></div>
+  <div class="test-grid">${cells.join('')}</div>
+  <div class="test-note">没有反馈时：确认服务在运行、接收器已插好，再检查该按键是否被直发组合键或应用快捷键占用。手动录入的快捷键不会自动验证目标应用。</div>`
 }
 function doneView(){
-  return `<div class="done"><div class="done-badge">✓</div><h1>可以开始用了。</h1><p>已为 Vibe Key 准备 3 个按键配置。接下来可以在 Workbench 里添加双击 / 长按 / 多键组合，或直接把同一套 Profile 打开到 Pad 上。</p><div class="done-actions"><button class="button primary" data-action="finish">打开 Workbench</button><button class="button" data-action="pad">打开 Virtual Pad</button><button class="button quiet" id="doneAgent">让 Agent 继续配置</button></div></div>`
+  return `<div class="done"><div class="done-badge">✓</div><h1>可以开始用了。</h1><p>已为 Vibe Key 准备 ${configuredCount()} 个动作位，包含单击 / 双击 / 长按。接下来可以继续添加多键组合，或把同一套 Profile 打开到 Pad 上。</p><div class="done-actions"><button class="button primary" data-action="finish">打开 Workbench</button><button class="button" data-action="pad">打开 Virtual Pad</button><button class="button quiet" id="doneAgent">让 Agent 继续配置</button></div></div>`
+}
+function openEditor(key,gesture){
+  const value=state.gestures[key][gesture];
+  const chord=value?.startsWith('chord:')?value.slice(6):'';
+  state.editor={key,gesture,mode:value?(chord?'chord':'profile'):'none',profile:value&&!chord?value:'wechat',chord,recording:false};
+  render();
 }
 function renderModal(){
   const root=document.getElementById('modalRoot');
+  if(state.editor){root.innerHTML=editorView();return}
   if(!state.agent){root.innerHTML='';return}
   const prompt=`请用 VibDock 的 agent skill 帮我配置 Vibe Key：
-- 按钮 1 单击：微信语音
-- 按钮 2 单击：打开 Codex
-- 按钮 3 长按：打开 DeepSeek Harness
+- 按钮 1：单击微信语音，双击 Codex，长按 DeepSeek Harness
+- 按钮 2：单击回车
+- 按钮 3：单击 Esc
 
 先读取 GET /api/plugins 和 GET /api/actions，确认当前设备和已保存配置；
 不要覆盖已有绑定。每一步修改前先告诉我将写什么，完成后用 hardware-status 或 recent_actions 读回结果。`;
@@ -232,23 +278,70 @@ function renderModal(){
     <div class="modal-actions"><button class="button" data-action="copy-prompt">复制指令</button><button class="button quiet" data-action="close-agent">稍后</button></div>
   </div></div>`;
 }
+function editorView(){
+  const e=state.editor;const keyName=KEYS[e.key];const gesture=GESTURES.find(g=>g.id===e.gesture).name;
+  const tabs=[['profile','Profile'],['chord','手动快捷键'],['none','不配置']];
+  return `<div class="backdrop" data-action="close-editor"><div class="modal" role="dialog" aria-modal="true" aria-label="配置 ${keyName} ${gesture}">
+    <div class="modal-head"><div class="grow"><div class="kicker">0${e.key+1} · ${gesture}</div><h2>${keyName}</h2><small>选择 Profile，或手动输入/录入一个组合键。</small></div><button class="modal-close" data-action="close-editor" aria-label="关闭">×</button></div>
+    <div class="mode-tabs" role="tablist" aria-label="配置方式">${tabs.map(([mode,label])=>`<button class="mode-tab" data-mode="${mode}" aria-selected="${e.mode===mode}">${label}</button>`).join('')}</div>
+    ${e.mode==='profile'?`<div class="field" style="margin-top:16px"><label>执行 Profile</label><select class="select" id="slotProfile" aria-label="Profile">${PROFILES.filter(p=>p.id!=='empty').map(p=>`<option value="${p.id}" ${p.id===e.profile?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`:''}
+    ${e.mode==='chord'?`<div class="field" style="margin-top:16px"><label>组合键</label><div class="chord-row"><input id="chordInput" value="${esc(e.chord)}" placeholder="例如 Ctrl + Shift + Space" autocomplete="off" spellcheck="false"><button class="button" data-action="record-chord">${e.recording?'请按键…':'录入按键'}</button></div><div class="record-hint">${e.recording?'正在监听键盘，按 Escape 取消':'也可以直接手动输入组合键'}</div></div>`:''}
+    ${e.mode==='none'?'<p class="editor-note" style="margin-top:16px">这个手势位保持为空，不会触发任何动作。</p>':''}
+    <p class="editor-note">当前是首次配置原型；手势输入路径、持久化和固件写入还没有接到生产服务。手动录入的快捷键会作为一条本地组合键保存。</p>
+    <div class="modal-actions"><button class="button" data-action="close-editor">取消</button><button class="button primary" data-action="save-editor">保存</button></div>
+  </div></div>`;
+}
+function saveEditor(){
+  const e=state.editor;if(!e)return;
+  if(e.mode==='chord'&&!e.chord.trim()){showToast('请输入或录入组合键');return}
+  const value=e.mode==='profile'?e.profile:e.mode==='chord'?`chord:${e.chord.trim()}`:'';
+  state.gestures[e.key][e.gesture]=value;state.tested.delete(`${e.key}:${e.gesture}`);state.editor=null;render();
+  showToast('已保存动作位（原型预览，不写入设备）');
+}
+function setEditorMode(mode){if(!state.editor)return;state.editor.mode=mode;state.editor.recording=false;render()}
+function recordChord(){if(!state.editor)return;state.editor.recording=true;render();showToast('请按下组合键')}
+function chordFromEvent(e){
+  const mods=[];if(e.ctrlKey)mods.push('Ctrl');if(e.altKey)mods.push('Alt');if(e.shiftKey)mods.push('Shift');if(e.metaKey)mods.push('Win');
+  let key=e.key;if(['Control','Alt','Shift','Meta'].includes(key))return '';
+  if(key===' ')key='Space';else if(key==='Escape')key='Esc';else if(key.length===1)key=key.toUpperCase();
+  return [...mods,key].join(' + ');
+}
 document.addEventListener('click',e=>{
   if(e.target.closest('.modal')&&!e.target.closest('[data-action]'))return;
   const tpl=e.target.closest('[data-template]');if(tpl){chooseTemplate(tpl.dataset.template);return}
-  const test=e.target.closest('[data-test]');if(test){testKey(Number(test.dataset.test));return}
+  const edit=e.target.closest('[data-edit]');if(edit){const [key,gesture]=edit.dataset.edit.split(':');openEditor(Number(key),Number(gesture));return}
+  const test=e.target.closest('[data-test]');if(test){const [key,gesture]=test.dataset.test.split(':');testKey(Number(key),Number(gesture));return}
   if(e.target.closest('#resetMapping')){chooseTemplate(state.template);return}
-  if(e.target.closest('#agentButton')){state.agent=true;render();return}
-  if(e.target.closest('#doneAgent')){state.agent=true;render();return}
+  if(e.target.closest('#agentButton')||e.target.closest('#doneAgent')){state.agent=true;render();return}
   if(e.target.closest('[data-action="close-agent"]')){state.agent=false;render();return}
+  if(e.target.closest('[data-action="close-editor"]')){state.editor=null;render();return}
+  if(e.target.closest('[data-action="save-editor"]')){saveEditor();return}
   if(e.target.closest('[data-action="copy-prompt"]')){const text=document.getElementById('agentPrompt')?.textContent||'';navigator.clipboard?.writeText(text).then(()=>showToast('已复制 Agent 指令')).catch(()=>showToast('复制失败，请手动选择'));return}
+  const mode=e.target.closest('[data-mode]');if(mode){setEditorMode(mode.dataset.mode);return}
+  if(e.target.closest('[data-action="record-chord"]')){recordChord();return}
   if(e.target.closest('[data-action="finish"]')){window.location.href='prototype-clean.html';return}
   if(e.target.closest('[data-action="pad"]')){window.location.href='prototype-pad.html';return}
   if(e.target.closest('#next')){if(state.done){window.location.href='prototype-clean.html';return}if(state.step<4)setStep(state.step+1);else finish();return}
   if(e.target.closest('#back')){setStep(state.step-1);return}
 });
-document.addEventListener('change',e=>{const map=e.target.closest('[data-map]');if(map){setMapping(Number(map.dataset.map),map.value)}});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&state.agent){state.agent=false;render()}});
+document.addEventListener('change',e=>{
+  if(e.target.id==='slotProfile'&&state.editor){state.editor.mode='profile';state.editor.profile=e.target.value}
+});
+document.addEventListener('input',e=>{if(e.target.id==='chordInput'&&state.editor){state.editor.chord=e.target.value}});
+document.addEventListener('keydown',e=>{
+  if(state.editor?.recording){
+    e.preventDefault();
+    if(e.key==='Escape'){state.editor.recording=false;render();return}
+    const chord=chordFromEvent(e);
+    if(!chord)return;
+    state.editor.chord=chord;state.editor.recording=false;render();return;
+  }
+  if(e.key==='Escape'){if(state.editor){state.editor=null;render();return}if(state.agent){state.agent=false;render()}}
+});
 render();
 </script>
 </body></html>
+
+
+
 

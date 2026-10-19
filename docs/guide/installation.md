@@ -172,7 +172,7 @@ first-run design:
 
 1. connect the device;
 2. choose a template (voice workflow / coding / WeChat Input / blank);
-3. confirm the three buttons;
+3. confirm the 9 action slots (single/double/long per key; Profile, manual chord or recorded chord);
 4. test and finish.
 
 Its **Let an agent configure** action generates a copyable prompt. The page is a
@@ -236,3 +236,4 @@ vibdock service-status
 ---
 
 简体中文：[installation.zh-CN.md](installation.zh-CN.md) · Back to [README](../../README.md)
+

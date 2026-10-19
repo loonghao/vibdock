@@ -152,7 +152,7 @@ vibdock shortcut-list --json
 
 1. 连接设备；
 2. 从模板开始（语音工作流 / 编程助手 / 微信输入法 / 空白）；
-3. 确认三个按键；
+3. 确认 9 个动作位（每个按键的单击 / 双击 / 长按，可选 Profile、手动输入或录入组合键）；
 4. 测试反馈并完成。
 
 页面右上角还有“让 Agent 配置”，会生成一段可复制的 Agent 指令。当前它是静态原型，生产 Settings 还没有接入这个向导；安装路径和配置语义以本文为准。
@@ -205,4 +205,5 @@ vibdock service-status
 ---
 
 English version: [installation.md](installation.md) · 返回 [README](../../README.zh-CN.md)
+
 
