@@ -165,7 +165,7 @@ and real-device evidence limits.
 
 The current Settings page is feature-oriented; the next direction is device-first and plugin-oriented. The architecture proposal is [plugin-workbench.md](plugin-workbench.md); the crate/plugin boundary and current extraction are in [plugin-modularization.md](plugin-modularization.md). The recommended visual target is [prototype-clean.html](prototype-clean.html); the earlier three-direction explorations are in [prototype-workbench.html](prototype-workbench.html) (?variant=A|B|C). These are explorations, not production pages: they do not persist, do not call the service, and do not change any acceptance claim. The clean light layout is the visual target; A/B/C remain references for the information architecture.
 
-The gesture direction adds three slots per physical control (单击 / 双击 / 长按), so three AU05 buttons become nine actions. The timing classifier is unit-tested in crates/vibdock-input/src/gesture.rs and the multi-button matcher in crates/vibdock-input/src/combo.rs (sequences, holds, longer-sequence precedence); the Windows sentinel-key hook and profile wiring are not implemented yet. The prototype's 单击 / 双击 / 长按 tabs show the intended UI.
+The gesture direction adds three slots per physical control (单击 / 双击 / 长按), so three AU05 buttons become nine actions. The timing classifier is unit-tested in crates/vibdock-input/src/gesture.rs and the multi-button matcher in crates/vibdock-input/src/combo.rs (sequences, holds, longer-sequence precedence). AU05 single/double/long slots are now persisted in `gestures.json` and executed by the service through the `Ctrl+Alt+Shift+F10/F11/F12` sentinel poll; hook-level suppression and multi-key combos are still pending. The prototype's 单击 / 双击 / 长按 tabs match the integrated matrix.
 
 ## Virtual Pad direction
 
@@ -173,5 +173,6 @@ The same profiles can be projected as large touch-first virtual keys on a Pad or
 
 ## First-run onboarding
 
-The [onboarding.html](onboarding.html) prototype covers the guided first-run path (connect, template, assign, test) and a copyable Agent prompt. The interaction and production integration contract are in [onboarding.md](onboarding.md); it is not served by the current Settings page yet.
+The [onboarding.html](onboarding.html) prototype covers the guided first-run path (connect, template, assign, test) and a copyable Agent prompt. The service-mode Settings page now serves an integrated wizard backed by `/api/gestures`; the interaction and contract are in [onboarding.md](onboarding.md).
+
 

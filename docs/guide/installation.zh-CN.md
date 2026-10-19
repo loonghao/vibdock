@@ -144,7 +144,7 @@ vibdock shortcut-list --json
 - 多键：`1+2`、`1+2+3`、`2+3` 快按，`1+2` 长按；
 - 3 个按键 → 9 个以上动作位。
 
-当前源码有分类器和单元测试，但 Windows 哨兵键监听、持久化和生产 UI 还没有接通。**不要在发布版上承诺这些手势已经可用。** 设计稿见 [手势版工作台](../design/prototype-workbench.html) 和 [plugin workbench 文档](../design/plugin-workbench.md)。
+AU05 的单击/双击/长按已经接通：服务把 `Ctrl+Alt+Shift+F10/F11/F12` 写入按键槽位，轮询哨兵键并执行保存的动作。当前是轮询实现，不会吞掉哨兵键；多键组合仍在开发。写入前先唤醒设备，并以读回状态为准。设计稿见 [手势版工作台](../design/prototype-workbench.html) 和 [plugin workbench 文档](../design/plugin-workbench.md)。
 
 ## 9. 首次配置向导（前端引导）
 
@@ -155,7 +155,7 @@ vibdock shortcut-list --json
 3. 确认 9 个动作位（每个按键的单击 / 双击 / 长按，可选 Profile、手动输入或录入组合键）；
 4. 测试反馈并完成。
 
-页面右上角还有“让 Agent 配置”，会生成一段可复制的 Agent 指令。当前它是静态原型，生产 Settings 还没有接入这个向导；安装路径和配置语义以本文为准。
+生产 Settings 的服务模式已经接入这个向导，保存会调用认证的 `/api/gestures` 并显示固件读回失败。独立的 `docs/design/onboarding.html` 仍作为视觉参考和“让 Agent 配置”的指令来源；安装路径和配置语义以本文为准。
 
 ## 10. 用 Agent 配置
 
@@ -205,5 +205,8 @@ vibdock service-status
 ---
 
 English version: [installation.md](installation.md) · 返回 [README](../../README.zh-CN.md)
+
+
+
 
 

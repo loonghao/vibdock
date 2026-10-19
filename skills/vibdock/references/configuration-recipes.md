@@ -90,13 +90,24 @@ and explain it rather than editing internal JSON.
 
 ## Recipe: button 3 → long press / double press
 
-Not available yet. The gesture classifiers exist in `vibdock-input`, but the
-Windows sentinel-key monitor and persisted gesture bindings are not wired. Do not
-claim this can be configured; offer one of:
+AU05 single/double/long is now persisted by the service. A gesture button is
+provisioned with `Ctrl+Alt+Shift+F10/F11/F12`; the service polls that chord and
+executes the configured steps. Requirements:
 
-- a single-press action on a free button;
-- a direct firmware chord;
-- wait for the gesture issues (#63/#64) to land.
+- the button must not have a direct chord, application shortcut or generated-
+  trigger action;
+- the gesture binding is saved even if firmware readback fails — surface
+  `hardware.state` and ask the user to wake the device, then call
+  `POST /api/gestures/sync`;
+- multi-key combos are still not exposed; do not promise them.
+
+API shape:
+
+```json
+{"revision":0,"name":"静音","button":2,"gesture":"double",
+ "steps":[{"type":"toggle_microphone","device_id":"<endpoint-id>"}]}
+```
+
 
 ## Recipe: app shortcut → AU05 button
 
@@ -172,5 +183,6 @@ After a mutation:
 > Saved action `<id>`. Firmware state: `provisioned` / `failed: <error>`.
 > Press button 2 to verify; the recent log should show `action_binding` /
 > `DONE`. I have not verified that Codex itself opened.
+
 
 

@@ -7,11 +7,90 @@
 .software-avatar{position:relative;display:inline-grid;place-items:center;width:44px;height:44px;flex:none!important;background:var(--bg);border-radius:10px}.software-avatar img{width:28px;height:28px;object-fit:contain}.software-badge{position:absolute;right:-4px;bottom:-3px;display:grid;place-items:center;width:18px;height:18px;border:2px solid var(--panel);border-radius:50%;background:#626966;color:white;font-size:10px;font-weight:700}.software-avatar[data-state=muted] .software-badge{background:var(--bad);color:#241512}.software-avatar[data-state=playing] .software-badge,.software-avatar[data-state=running] .software-badge{background:var(--live);color:#12241d}.software-avatar[data-state=idle] .software-badge{background:var(--amber);color:#211b12}
 #hardwareCard{padding:20px 24px}#hardwareCard h2{font-size:16px}#hardwareCard .rows{margin-top:12px}#hardwareCard .row{padding:14px 16px}#hardwareCard .row p{margin-top:4px}#hardwareCard .row>.tag{flex:none;align-self:flex-start}#hardwareCard .status[data-kind=ok]{color:var(--live)}.tag[data-state=live]{color:var(--live);border-color:var(--live)}.tag[data-state=bad]{color:var(--bad);border-color:var(--bad)}.tag[data-state=off]{color:var(--muted);border-color:var(--line)}
 #actionCard{padding:20px 24px;margin-top:28px}#actionCard h2{font-size:16px}#actionCard h3{font-size:14px;margin:20px 0 8px}#actionCard .rows{margin-top:12px}#actionCard .row{padding:14px 16px}#actionCard .row p{margin-top:4px}#actionCard .status[data-kind=ok]{color:var(--live)}#actionCard .status[data-kind=error]{color:var(--bad)}#actionCard .status[data-kind=idle]{color:var(--muted)}#actionEditor{padding:20px;margin:18px 0 0;background:var(--bg)}#actionEditor[hidden]{display:none}#actionEditor .actions{margin-top:0}.action-steps{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.action-step{padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:8px}.action-step-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.action-step-head strong{font-size:14px}.action-step-controls{margin-top:0;gap:6px}.action-step-controls button{padding:6px 10px;font-size:12px}.action-step-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:10px}.action-step-fields label{margin-top:0}.action-step-add{padding:16px;border:1px dashed var(--line);border-radius:8px}.action-step-add .route-fields{gap:16px}.action-step-add .actions{margin-top:12px;align-items:center}#actionListNote{margin-top:12px}#actionCommandsNote{margin-top:12px}@media(max-width:600px){.action-step-fields{grid-template-columns:1fr}}
+/* First-run onboarding wizard (real /api/gestures bindings) */
+#onboardCard{margin:0 0 22px}
+#onboardCard[hidden]{display:none}
+#onboardCard h2{font-size:16px}
+#onboardCard p{margin:0;font-size:13px;line-height:1.7}
+#onboardCard .actions{align-items:center;margin-top:14px}
+#onboardCard button{min-height:44px}
+#onboardCardStatus{font-size:12px;line-height:1.6}
+.onboard-backdrop{position:fixed;inset:0;background:#0b0d0ed6;z-index:70;display:grid;place-items:center;padding:20px;overflow:auto}
+.onboard-backdrop[hidden]{display:none}
+.onboard-panel{width:min(940px,100%);max-height:calc(100vh - 40px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;box-shadow:0 24px 70px #000a}
+.onboard-head{display:flex;align-items:flex-start;gap:14px}
+.onboard-head .grow{flex:1;min-width:0}
+.onboard-head h2{font-size:20px;margin:4px 0 6px}
+.onboard-head p{margin:0;font-size:12.5px;line-height:1.65}
+.onboard-kicker{margin:0;color:var(--amber);font-size:12px;letter-spacing:.04em}
+.onboard-close{width:44px;height:44px;padding:0;font-size:20px;line-height:1;flex:none;background:transparent;border-color:var(--line);color:var(--muted)}
+.onboard-close:hover{color:var(--text);border-color:var(--amber)}
+.onboard-stepper{display:flex;gap:10px;margin:18px 0 0;padding:0;list-style:none;flex-wrap:wrap}
+.onboard-step{display:flex;align-items:center;gap:6px;min-height:34px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:12px}
+.onboard-step b{font-weight:600;font-size:11px}
+.onboard-step[data-active=true]{background:var(--amber);border-color:var(--amber);color:#211b12;font-weight:600}
+.onboard-step[data-done=true]{border-color:var(--live);color:var(--live)}
+.onboard-body{margin-top:18px;border-top:1px solid var(--line);padding-top:18px}
+.onboard-pane[hidden]{display:none}
+.onboard-pane>p{font-size:13px;color:var(--muted);line-height:1.7;margin:0 0 12px}
+.onboard-checklist{display:grid;gap:10px;margin:14px 0}
+.onboard-check{display:flex;align-items:flex-start;gap:10px;min-height:52px;padding:12px 14px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+.onboard-check .dot{margin-top:4px}
+.onboard-check b{display:block;font-size:13px;font-weight:600}
+.onboard-check small{display:block;margin-top:2px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.onboard-templates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.onboard-template{display:flex;align-items:flex-start;gap:10px;min-height:44px;padding:14px;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:10px}
+.onboard-template:hover{border-color:var(--amber)}
+.onboard-template[aria-pressed=true]{border-color:var(--amber);background:#e8bd7212}
+.onboard-template .radio{width:16px;height:16px;margin-top:2px;border:2px solid var(--muted);border-radius:50%;flex:none}
+.onboard-template[aria-pressed=true] .radio{border-color:var(--amber);background:radial-gradient(circle,var(--amber) 0 44%,transparent 46%)}
+.onboard-template b{display:block;font-size:13.5px;font-weight:600}
+.onboard-template small{display:block;margin-top:3px;font-size:12px;line-height:1.55;color:var(--muted)}
+.onboard-note{margin:12px 0;padding-left:10px;border-left:2px solid var(--line);color:var(--muted);font-size:12px;line-height:1.65}
+.onboard-note[data-kind=warn]{border-left-color:var(--amber);color:#d8c8a8}
+.onboard-note[hidden]{display:none}
+.onboard-matrix-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.onboard-matrix-head p{margin:0}
+.onboard-grid{display:grid;grid-template-columns:78px repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}
+.onboard-grid[hidden]{display:none}
+.onboard-grid-head{display:contents}
+.onboard-grid-head span{padding:0 2px 4px;font-size:12px;color:var(--muted)}
+.onboard-grid-row{display:contents}
+.onboard-matrix-label{display:flex;align-items:center;padding:0 2px;font-size:12px;color:var(--muted)}
+.onboard-cell{display:flex;flex-direction:column;justify-content:center;gap:3px;min-height:64px;padding:9px 10px;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.onboard-cell:hover{border-color:var(--amber)}
+.onboard-cell b{font-size:12.5px;font-weight:600;overflow-wrap:anywhere}
+.onboard-cell small{font-size:11px;color:var(--muted)}
+.onboard-cell[data-filled=true]{border-color:#5f5847}
+.onboard-cell[data-saved=true]{border-color:var(--live)}
+.onboard-cell[data-saved=true] b{color:var(--live)}
+.onboard-editor{margin-top:18px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.onboard-editor[hidden]{display:none}
+.onboard-editor-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.onboard-editor-head h3{margin:0;font-size:15px}
+.onboard-editor label{margin-top:12px}
+.onboard-editor .actions{margin-top:14px}
+.onboard-editor .actions button,.onboard-foot button{min-height:44px}
+.onboard-finish{margin-top:18px;padding:18px;border:1px solid var(--live);border-radius:10px;background:#83d4ba0f}
+.onboard-finish[hidden]{display:none}
+.onboard-finish h3{margin:0 0 8px;font-size:16px;color:var(--live)}
+.onboard-finish p{margin:0;font-size:13px;line-height:1.7;color:#c9d6d0}
+.onboard-finish .actions{margin-top:14px}
+.onboard-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.onboard-spacer{flex:1;min-width:8px}
+#onboardSaveStatus{margin-top:16px;font-size:12px}
+#onboardSaveStatus[data-kind=ok]{color:var(--live)}
+@media(max-width:760px){.onboard-templates{grid-template-columns:1fr}.onboard-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.onboard-grid-head{display:none}.onboard-matrix-label{grid-column:1/-1;padding-top:12px}.onboard-panel{padding:18px 14px}}
 </style>
 <header><div class="brand"><img class="brand-logo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI+Cjx0aXRsZT5WaWJEb2NrIHN5bWJvbCDigJQgdmVjdG9yIHJlY29uc3RydWN0aW9uIG9mIHNlbGVjdGVkIGNvbmNlcHQ8L3RpdGxlPgo8ZGVmcz48bWFzayBpZD0idm9pY2UiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjAiIHk9IjAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0id2hpdGUiLz48ZyBmaWxsPSJub25lIiBzdHJva2U9ImJsYWNrIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yNTYgMTI3VjM5MiIgc3Ryb2tlLXdpZHRoPSI0MCIvPjxwYXRoIGQ9Ik0xNSAyOTFIMTU0UTE3OCAyOTEgMTc4IDI2N1YyMjkiIHN0cm9rZS13aWR0aD0iMzIiLz48cGF0aCBkPSJNMzM0IDMzOFYyNjhRMzM0IDI0NSAzNTggMjQ1SDQ5NyIgc3Ryb2tlLXdpZHRoPSIzMiIvPjwvZz48L21hc2s+PC9kZWZzPgo8cGF0aCBmaWxsPSIjRDRGNkU4IiBtYXNrPSJ1cmwoI3ZvaWNlKSIgZD0iTTI4MSA0OCA0NjQgMjMxUTQ4OSAyNTYgNDY0IDI4MUwyODEgNDY0UTI1NiA0ODkgMjMxIDQ2NEw0OCAyODFRMjMgMjU2IDQ4IDIzMUwyMzEgNDhRMjU2IDIzIDI4MSA0OFoiLz4KPC9zdmc+Cg==" alt="VibDock 标志" width="38" height="38"><div>Vib<span>Dock</span></div><small class="brand-subtitle">本地交互工作台</small></div><span class="conn" id="conn" data-state="unknown">检查服务</span></header>
 <div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">快捷键</button><button data-view="audio" aria-selected="false">音频设备</button><button data-view="apps" aria-selected="false">应用与麦克风</button><button data-view="feedback" aria-selected="false">状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>后台绑定与<br>浏览器草稿分开保存</small></nav><main>
 <div class="banner" id="banner">尚未连接后台服务。当前为交互设计稿：设备、应用与会话均为演示数据，动作只预览反馈，不会真正执行。</div>
 <div class="auth" id="authRow" hidden><label for="token">本机服务令牌</label><div class="capture"><input id="token" type="password" placeholder="粘贴服务状态文件中的令牌" autocomplete="off" spellcheck="false"><button id="authorize">授权</button></div><small><b>高级排查入口。</b>正常使用请从托盘的 Settings… 打开本页，一次性引导码会自动换取会话令牌，无需复制粘贴。令牌只保留在本页内存中，不写入浏览器存储。</small><p class="field-error" id="authError" role="alert"></p></div>
+<section class="route-editor" id="onboardCard" hidden aria-labelledby="onboardCardTitle">
+<h2 id="onboardCardTitle">首次配置</h2>
+<p>用三步向导把 AU05 的三个按键 × 单击 / 双击 / 长按写入手势绑定：确认设备、选择模板、逐格调整。向导只写入手势绑定，不改动应用快捷键或硬件动作；随时可以再次打开。</p>
+<div class="actions"><button class="primary" id="onboardStart" type="button">开始首次配置</button><span class="muted" id="onboardCardStatus" role="status" aria-live="polite">尚未读取手势绑定。</span></div>
+</section>
 <section class="view" id="bindings"><div class="intro"><div><h1>配置麦克风快捷键</h1><small>指定麦克风，录入快捷键，让常用动作留在手边。</small></div><button id="setup">录入快捷键</button></div><div class="steps" id="steps"><span data-step="1" data-active="true">01 录入快捷键</span><span data-step="2">02 选择麦克风</span><span data-step="3">03 保存到本机</span></div>
 <div class="workspace"><div class="device-area"><div class="panel-title"><h2>Ulanzi Vibe Key</h2><span class="tag" id="deviceTag">设备示意 · 未连接</span></div><div class="device-stage"><div class="hardware"><small>VIBE KEY</small><div class="grille"></div><button class="dial" data-key="旋钮按下" aria-label="选择旋钮按下">↻</button><button class="key selected" data-key="语音键" aria-label="选择语音键">♩</button><button class="key" data-key="确认键" aria-label="选择确认键">✓</button><button class="key" data-key="取消键" aria-label="选择取消键">×</button></div><div class="bindings" id="bindings-list"></div></div>
 <div class="svcbind" id="svcBind"><h2>后台保存的绑定</h2><p id="sbStatus" role="status" aria-live="polite" class="muted">尚未读取运行状态。</p><p id="sbLastAction" role="status" aria-live="polite" class="muted">尚无按键执行记录。</p><p id="sbEmpty" class="muted">服务中还没有保存任何绑定。</p><div id="sbSet" hidden><div class="row"><span class="muted">麦克风</span><kbd id="sbDevice"></kbd></div><div class="row"><span class="muted">快捷键</span><kbd id="sbHotkey"></kbd></div><p class="muted">后台保存一组全局快捷键，始终控制这里明确选定的麦克风。关闭页面后仍可使用。</p></div></div>
@@ -86,6 +165,46 @@
 <section class="view" id="feedback" hidden><h1>知道按下去了，也知道生效没有。</h1><p class="muted">默认短提示不抢焦点；持续收音标识由真实状态驱动。</p>
 <div class="rows"><div class="row"><div><strong>触发已收到</strong><p>按键被识别，动作尚未执行。</p></div><button id="previewReceived">预览</button></div><div class="row"><div><strong>动作执行中</strong><p>已发出请求，等待真实状态回读。</p></div><button id="previewPending">预览</button></div><div class="row"><div><strong>已验证成功</strong><p>后台读回真实状态并确认生效。</p></div><button id="previewVerified">预览</button></div><div class="row"><div><strong>已发送但未验证</strong><p>快捷键已发出，不代表对方状态已改变。</p></div><button id="previewDispatched">预览</button></div><div class="row"><div><strong>屏幕角落提示</strong><p>显示动作、控制对象和结果，颜色之外保留文字。</p></div><button id="previewToast">预览提示</button></div><div class="row"><div><strong>呼吸边框</strong><p>可选；跟随系统减少动画设置。这里仅预览网页边框。</p></div><label class="check"><input id="border" type="checkbox">启用预览</label></div><div class="row"><div><strong>失败状态</strong><p>设备断开或动作失败时，不显示成功。</p></div><button id="previewError">预览失败</button></div></div></section>
 <footer>VIBDOCK / LOCAL SETTINGS — 示例与实时状态分别标注</footer></main></div><div class="edge" id="edge" hidden></div><div class="preview" id="toast" role="status" hidden></div>
+<div class="onboard-backdrop" id="onboardDialog" role="dialog" aria-modal="true" aria-labelledby="onboardTitle" aria-describedby="onboardSubtitle" hidden>
+<div class="onboard-panel">
+<div class="onboard-head"><div class="grow"><p class="onboard-kicker" id="onboardKicker">首次配置 · 第 1 / 3 步</p><h2 id="onboardTitle">连接 Vibe Key</h2><p id="onboardSubtitle">先确认接收器、设备与本机服务状态。本步只读取，不写入设备。</p></div><button class="onboard-close" id="onboardClose" type="button" aria-label="关闭首次配置">×</button></div>
+<ol class="onboard-stepper" id="onboardStep" aria-label="首次配置步骤"></ol>
+<div class="onboard-body">
+<div class="onboard-pane" id="onboardConnect">
+<p>插好 2.4G 接收器，给 AU05 通电，按任意按键唤醒。不需要安装 Ulanzi Studio；本步只读取状态，不会写入设备。</p>
+<p role="status" aria-live="polite"><span class="conn" id="onboardConnectState" data-state="pending">正在读取 Vibe Key 状态…</span></p>
+<div class="onboard-checklist" id="onboardChecklist" aria-label="连接检查项"></div>
+<p class="muted" id="onboardConnectDevice">正在读取设备信息…</p>
+<p class="field-error" id="onboardConnectError" role="alert"></p>
+<div class="actions"><button id="onboardConnectRefresh" type="button">刷新设备状态</button></div>
+</div>
+<div class="onboard-pane" id="onboardTemplate" hidden>
+<p>模板只填入一部分手势位，其余格子可以逐格调整，也可以从空白配置开始。启动应用与麦克风列表来自本机服务当前读取结果。</p>
+<div class="onboard-templates" id="onboardTemplates" role="group" aria-label="手势模板"></div>
+<p class="onboard-note" id="onboardTemplateNote" data-kind="warn">手动录入或模板中的快捷键会作为一条 send_keys 步骤，经由手势判定发送，不等同于固件直发组合键。</p>
+</div>
+<div class="onboard-pane" id="onboardMatrix" hidden>
+<div class="onboard-matrix-head"><p>点击格子编辑。每个手势位只能保存一个动作；已保存的手势位不会在本次向导中被覆盖。</p><span class="tag" id="onboardCount">0 / 9 已配置</span></div>
+<div class="onboard-grid" id="onboardGrid" role="group" aria-label="AU05 手势矩阵"></div>
+<p class="onboard-note" id="onboardMatrixNote">保存时先读取当前 revision，再逐个写入改动的手势位；服务会拒绝已占用或重复的按钮手势。双击窗口 300ms，长按阈值 550ms。</p>
+<div class="onboard-editor" id="onboardEditor" hidden aria-labelledby="onboardEditorTitle">
+<div class="onboard-editor-head"><h3 id="onboardEditorTitle">编辑手势位</h3><span class="tag" id="onboardEditorSlot"></span></div>
+<label for="onboardEditorMode">动作方式</label>
+<select id="onboardEditorMode"><option value="none">不配置</option><option value="keys">手动快捷键</option><option value="launch">启动应用</option><option value="mic">切换麦克风</option><option value="wait">等待</option></select>
+<div id="onboardEditorKeysField" hidden><label for="onboardChord">快捷键</label><div class="capture"><input id="onboardChord" placeholder="例如 Ctrl + Shift + Space" autocomplete="off" spellcheck="false" aria-describedby="onboardRecordHint"><button id="onboardRecord" type="button" aria-pressed="false">录入按键</button></div><p class="muted" id="onboardRecordHint">可以直接输入，也可以点“录入按键”后在本页按下组合键；按 Escape 取消。</p></div>
+<div id="onboardEditorLaunchField" hidden><label for="onboardAppSelect">应用</label><select id="onboardAppSelect"></select><p class="muted" id="onboardAppNote">只能从服务当前识别到的运行应用中选择。</p></div>
+<div id="onboardEditorMicField" hidden><label for="onboardMicSelect">麦克风</label><select id="onboardMicSelect"></select><p class="muted" id="onboardMicNote">选择明确的采集设备，不会自动回退到默认麦克风。</p></div>
+<div id="onboardEditorWaitField" hidden><label for="onboardWait">等待毫秒（0–10000）</label><input id="onboardWait" type="number" min="0" max="10000" step="10" value="200"></div>
+<p class="field-error" id="onboardEditorError" role="alert"></p>
+<div class="actions"><button class="primary" id="onboardEditorApply" type="button">确定</button><button id="onboardEditorClear" type="button">清除该格</button><button id="onboardEditorCancel" type="button">取消</button></div>
+</div>
+<div class="onboard-finish" id="onboardFinish" hidden><h3>已完成</h3><p id="onboardFinishText"></p><div class="actions"><button class="primary" id="onboardFinishClose" type="button">完成</button></div></div>
+</div>
+</div>
+<p class="status" id="onboardSaveStatus" role="status" aria-live="polite" data-kind="idle">尚未保存。</p>
+<div class="onboard-foot"><button id="onboardBack" type="button">上一步</button><div class="onboard-spacer"></div><button id="onboardLater" type="button">稍后</button><button class="primary" id="onboardNext" type="button">下一步</button><button class="primary" id="onboardSave" type="button" hidden>保存配置</button></div>
+</div>
+</div>
 <script>
 const $=id=>document.getElementById(id);
 const STORE='vibdock.design.bindings.v2';
@@ -174,6 +293,7 @@ function updateModeLabels(){
   updateHardwareVisibility();
   loadDevices();
   updateActionVisibility();
+  updateOnboardVisibility();
 }
 // Service-backed save: the backend is the source of truth. The local draft is
 // updated only after the service confirms the write, so a failed save never
@@ -889,6 +1009,7 @@ function expireBrowserSession(){
   $('authError').textContent='会话已过期或服务已重启，请从托盘重新打开配置页。';
   $('sbStatus').textContent='运行状态未知 · 页面未授权';$('sbStatus').dataset.state='unknown';
   captureDevices=[];$('device').disabled=true;updateAppBindingControls();
+  updateOnboardVisibility();
 }
 function startBindingStatusPoll(){
   if(bindingPollStarted)return;
@@ -1466,6 +1587,536 @@ $('actionGamepadRefresh').onclick=()=>{actionGamepadDevices=null;actionDevicesAt
 $('actionGamepadUse').onclick=useLearnedGamepadButton;
 $('actionStepKind').onchange=updateActionStepAddFields;
 $('actionStepAdd').onclick=addActionStep;
+
+// ---- First-run onboarding wizard (real /api/gestures bindings) ------------
+// Three steps over the authenticated gesture API: confirm the AU05, seed a
+// template, then assign the 3x3 single/double/long matrix. Every save fetches
+// the current revision first, posts one add per changed slot, and reports a
+// failed firmware write instead of claiming success. The wizard is reachable
+// only in authorized service mode; the automatic prompt needs an empty gesture
+// list and no completion marker.
+const ONBOARD_STORAGE_KEY='vibdock.onboarding.v1';
+const ONBOARD_BUTTONS=['按钮 1','按钮 2','按钮 3'];
+const ONBOARD_GESTURES=[{id:'single',name:'单击'},{id:'double',name:'双击'},{id:'long',name:'长按'}];
+const ONBOARD_STEP_TITLES=['连接设备','选择模板','确认动作'];
+const ONBOARD_TEMPLATES=[
+  {id:'voice',name:'语音工作流',desc:'按钮 1：单击微信语音、双击 Codex、长按 DeepSeek Harness；按钮 2 单击回车；按钮 3 单击 Esc。'},
+  {id:'coding',name:'编程助手',desc:'按钮 1：单击 Codex、双击 DeepSeek Harness、长按切换麦克风；按钮 2 回车；按钮 3 Esc。'},
+  {id:'wechat',name:'微信输入法',desc:'按钮 1 单击微信语音；按钮 2 回车；按钮 3 Esc。'},
+  {id:'blank',name:'空白配置',desc:'9 个手势位全部手动分配，不预填任何动作。'}
+];
+let onboardOpen=false,onboardStep=1,onboardBusy=false,onboardFinished=false;
+let onboardAutoChecked=false,onboardRecording=false,onboardRecordTimer=0;
+let onboardTemplate='voice',onboardServer=null,onboardHardware=null,onboardHardwareError='';
+let onboardCell=null,onboardSavedCount=0,onboardReturnFocus=null;
+let onboardDraft=onboardEmptyDraft();
+
+function onboardEmptyDraft(){return [0,1,2].map(()=>[null,null,null]);}
+function onboardSupported(){return mode==='service'&&!!serviceToken;}
+function onboardStoredDone(){try{return localStorage.getItem(ONBOARD_STORAGE_KEY)==='done';}catch{return false;}}
+function onboardMarkDone(){try{localStorage.setItem(ONBOARD_STORAGE_KEY,'done');return true;}catch{return false;}}
+function onboardApplications(){return lastAppsData&&Array.isArray(lastAppsData.applications)?lastAppsData.applications:[];}
+function onboardFindApp(pattern){return onboardApplications().find(app=>app&&typeof app.name==='string'&&pattern.test(app.name))||null;}
+function onboardTruncate(text,limit){let out='';let total=0;for(const character of String(text)){const code=character.codePointAt(0);const width=code<0x80?1:code<0x800?2:code<0x10000?3:4;if(total+width>limit)break;out+=character;total+=width;}return out;}
+function onboardServerMap(){const map={};const gestures=onboardServer&&Array.isArray(onboardServer.gestures)?onboardServer.gestures:[];for(const gesture of gestures){if(!gesture||!Number.isInteger(gesture.button)||typeof gesture.gesture!=='string')continue;map[gesture.button+':'+gesture.gesture]=gesture;}return map;}
+function onboardStorageWritable(){return !!onboardServer&&onboardServer.storage_writable!==false;}
+function onboardStepLabel(step){
+  if(!step||typeof step!=='object')return '';
+  if(step.type==='send_keys')return '发送 '+(step.keys||'快捷键');
+  if(step.type==='launch')return '启动 '+(step.label||'应用');
+  if(step.type==='toggle_microphone'){const device=captureDevices.find(item=>item.id===step.device_id);return '切换麦克风'+(device&&device.name?' · '+device.name:'');}
+  if(step.type==='wait'){const value=Number(step.ms);return '等待 '+(Number.isFinite(value)?value:0)+'ms';}
+  return '动作';
+}
+function onboardStepsLabel(steps){const list=Array.isArray(steps)?steps:[];if(!list.length)return '';return onboardStepLabel(list[0])+(list.length>1?' 等 '+list.length+' 步':'');}
+function onboardModeValue(type){return type==='send_keys'?'keys':type==='launch'?'launch':type==='toggle_microphone'?'mic':'wait';}
+function onboardSetStatus(text,kind){const node=$('onboardSaveStatus');if(!node)return;node.textContent=text;node.dataset.kind=kind||'idle';}
+function updateOnboardCardStatus(){
+  const node=$('onboardCardStatus');if(!node)return;
+  if(!onboardServer){setNodeText(node,'正在读取手势绑定…');return;}
+  const gestures=onboardServer.gestures||[];
+  if(!gestures.length)setNodeText(node,onboardStoredDone()?'尚未保存手势位；可以再次打开向导。':'尚未配置手势位，建议先完成首次配置。');
+  else setNodeText(node,'已保存 '+gestures.length+' / '+(Number.isSafeInteger(onboardServer.limit)?onboardServer.limit:9)+' 个手势位'+(onboardServer.storage_writable===false?'；手势存储不可写。':'。'));
+}
+async function fetchOnboardGestures(quiet){
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
+  try{
+    const response=await api('/api/gestures',{signal:controller.signal});
+    if(serviceToken!==expectedToken)return null;
+    if(response.status===401||response.status===403){expireBrowserSession();return null;}
+    const data=await readJson(response);
+    if(serviceToken!==expectedToken)return null;
+    if(!response.ok){if(!quiet)onboardSetStatus('读取手势绑定失败：'+((data&&data.error)||serviceError(response,'')),'error');return null;}
+    if(!data||!Array.isArray(data.gestures)){if(!quiet)onboardSetStatus('服务没有返回手势列表。','error');return null;}
+    onboardServer=data;updateOnboardCardStatus();return data;
+  }catch(error){
+    if(!quiet)onboardSetStatus('无法读取手势绑定：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+    return null;
+  }finally{clearTimeout(timeout);}
+}
+async function maybeAutoOpenOnboard(){
+  if(!onboardSupported()||onboardAutoChecked||onboardOpen)return;
+  onboardAutoChecked=true;
+  const data=await fetchOnboardGestures(true);
+  if(!data){
+    if(!onboardOpen&&onboardSupported()&&$('onboardCardStatus'))setNodeText($('onboardCardStatus'),'无法读取手势绑定；点“开始首次配置”重试。');
+    return;
+  }
+  if(!onboardSupported()||onboardOpen)return;
+  if(data.gestures.length)return;
+  if(onboardStoredDone())return;
+  openOnboard({auto:true,opener:$('onboardStart')});
+}
+function updateOnboardVisibility(){
+  const supported=onboardSupported();
+  const card=$('onboardCard');
+  if(card)card.hidden=!supported;
+  if(!supported){
+    if(onboardOpen)closeOnboard({silent:true});
+    if(onboardRecording)stopOnboardRecording();
+    onboardServer=null;onboardHardware=null;onboardHardwareError='';
+    onboardAutoChecked=false;onboardDraft=onboardEmptyDraft();onboardCell=null;
+    onboardFinished=false;onboardBusy=false;onboardSavedCount=0;
+    return;
+  }
+  updateOnboardCardStatus();
+  maybeAutoOpenOnboard();
+}
+function openOnboard(options){
+  if(!onboardSupported()||onboardOpen)return;
+  onboardOpen=true;onboardStep=1;onboardBusy=false;onboardFinished=false;
+  onboardSavedCount=0;onboardCell=null;onboardTemplate='voice';
+  stopOnboardRecording();
+  onboardDraft=onboardEmptyDraft();onboardHardware=null;onboardHardwareError='';
+  onboardReturnFocus=(options&&options.opener)||document.activeElement||null;
+  $('onboardDialog').hidden=false;
+  $('onboardEditorError').textContent='';$('onboardConnectError').textContent='';
+  $('onboardChord').value='';$('onboardWait').value='200';
+  renderOnboardStep();
+  onboardSetStatus(options&&options.auto?'首次运行：还没有保存任何手势位。按“下一步”选择模板，或点“稍后”。':'从连接设备开始；三步完成首次配置。','idle');
+  loadOnboardHardware();
+  fetchOnboardGestures().then(data=>{
+    if(!data||!onboardOpen)return;
+    if(onboardStep===2&&!onboardFinished)renderOnboardTemplates();
+    if(onboardStep===3&&!onboardFinished)renderOnboardMatrix();
+    renderOnboardButtons();
+  });
+  if(!lastAppsData)refreshApps();
+  if(!captureDevices.length)loadDevices();
+  $('onboardClose').focus();
+}
+function closeOnboard(options){
+  if(!onboardOpen)return;
+  onboardOpen=false;stopOnboardRecording();
+  $('onboardDialog').hidden=true;$('onboardEditor').hidden=true;$('onboardFinish').hidden=true;
+  onboardCell=null;
+  const focus=(options&&options.opener)||onboardReturnFocus;
+  onboardReturnFocus=null;
+  if(focus&&typeof focus.focus==='function'){try{focus.focus();}catch{}}
+}
+function renderOnboardStepper(){
+  const list=$('onboardStep');list.replaceChildren();
+  for(let index=0;index<3;index+=1){
+    const item=appNode('li');item.className='onboard-step';
+    item.dataset.active=String(!onboardFinished&&onboardStep===index+1);
+    item.dataset.done=String(onboardFinished||onboardStep>index+1);
+    item.append(appNode('b','0'+(index+1)),appNode('span',ONBOARD_STEP_TITLES[index]));
+    list.append(item);
+  }
+}
+function renderOnboardStep(){
+  renderOnboardStepper();
+  const finished=onboardFinished;
+  $('onboardConnect').hidden=finished||onboardStep!==1;
+  $('onboardTemplate').hidden=finished||onboardStep!==2;
+  $('onboardMatrix').hidden=!finished&&onboardStep!==3;
+  if(finished){
+    $('onboardKicker').textContent='首次配置 · 已完成';
+    $('onboardTitle').textContent='可以开始用了';
+    $('onboardSubtitle').textContent='已完成首次配置；之后可以随时从“首次配置”卡片重新打开。';
+    $('onboardGrid').hidden=true;$('onboardEditor').hidden=true;$('onboardMatrixNote').hidden=true;
+    $('onboardFinish').hidden=false;
+    setNodeText($('onboardFinishText'),'已保存 '+onboardSavedCount+' 个手势位到本机服务。按下按键试试：单击后松开，双击在 300ms 内按两次，长按按住 550ms 以上。触发记录会出现在上方 Vibe Key 卡片的“最近触发”列表里；手势发送成功不代表目标应用已执行。');
+  }else{
+    $('onboardKicker').textContent='首次配置 · 第 '+onboardStep+' / 3 步';
+    $('onboardTitle').textContent=onboardStep===1?'连接 Vibe Key':onboardStep===2?'选择模板':'确认 9 个手势位';
+    $('onboardSubtitle').textContent=onboardStep===1?'先确认接收器、设备与本机服务状态。本步只读取，不写入设备。':onboardStep===2?'模板会填入一部分手势位；微信语音使用 send_keys Ctrl + Win，经手势路径发送。':'点击格子编辑；保存时逐个写入手势位并显示固件写入结果。';
+    $('onboardFinish').hidden=true;$('onboardGrid').hidden=false;$('onboardMatrixNote').hidden=false;
+    if(onboardStep===1)renderOnboardConnect();
+    else if(onboardStep===2)renderOnboardTemplates();
+    else renderOnboardMatrix();
+  }
+  renderOnboardButtons();
+}
+function renderOnboardButtons(){
+  const busy=onboardBusy;
+  if(onboardFinished){
+    $('onboardBack').hidden=true;$('onboardNext').hidden=true;$('onboardSave').hidden=true;$('onboardLater').hidden=true;
+    $('onboardBack').disabled=true;$('onboardNext').disabled=true;$('onboardSave').disabled=true;$('onboardLater').disabled=true;
+    $('onboardClose').disabled=false;return;
+  }
+  $('onboardBack').hidden=onboardStep<=1;$('onboardNext').hidden=onboardStep===3;$('onboardSave').hidden=onboardStep!==3;$('onboardLater').hidden=false;
+  $('onboardBack').disabled=busy;$('onboardNext').disabled=busy;
+  $('onboardSave').disabled=busy||!onboardStorageWritable()||!onboardChangedSlots().length;
+  $('onboardLater').disabled=busy;$('onboardClose').disabled=busy;
+}
+function renderOnboardConnect(){
+  const data=onboardHardware,stateNode=$('onboardConnectState');
+  let text='正在读取 Vibe Key 状态…',state='pending';
+  if(data){
+    if(data.platform==='unsupported'||data.available===false||data.enabled===false){text='此平台不支持 AU05 硬件控制';state='bad';}
+    else if(data.connected===true){text='已检测到 AU05'+(data.device&&data.device.name?' · '+data.device.name:'');state='live';}
+    else{text='未检测到 AU05';state='bad';}
+  }
+  setNodeText(stateNode,text);stateNode.dataset.state=state;
+  const device=data&&data.device;
+  const checks=[
+    ['接收器 / 设备',data?(data.connected?'已连接 · 服务已枚举到 AU05 设备。':'未检测到 · '+((data.error)||'插好 2.4G 接收器并给设备通电，再点“刷新设备状态”。')):'正在读取…',data?(data.connected?'live':'bad'):'pending'],
+    ['产品与固件',device?((device.name||'AU05')+(device.vendor_id||device.product_id?' · '+(device.vendor_id||'')+(device.product_id?':'+device.product_id:''):'')+' · 固件版本'+(device.firmware?' '+device.firmware:'未由服务报告')):'未读取到设备信息',device?'live':'off'],
+    ['本机服务',onboardSupported()?'已授权 · 保存会写入本机服务。':'页面未授权，不能保存。',onboardSupported()?'live':'bad'],
+    ['手势存储',onboardServer?(onboardServer.storage_writable===false?'不可写 · 本次只能查看，不能保存。':'可写 · 已保存 '+(Array.isArray(onboardServer.gestures)?onboardServer.gestures.length:0)+' / '+(Number.isSafeInteger(onboardServer.limit)?onboardServer.limit:9)+' 个手势位。'):'正在读取手势列表…',onboardServer?(onboardServer.storage_writable===false?'bad':'live'):'pending'],
+    ['麦克风端点',device&&device.microphone?device.microphone:'未读取到匹配的麦克风端点',device&&device.microphone?'live':'off']
+  ];
+  const list=$('onboardChecklist');list.replaceChildren();
+  for(const check of checks){
+    const row=appNode('div');row.className='onboard-check';
+    const dot=appNode('span');dot.className='dot';dot.dataset.state=check[2];dot.setAttribute('aria-hidden','true');
+    const body=appNode('span');body.append(appNode('b',check[0]),appNode('small',check[1]));
+    row.append(dot,body);list.append(row);
+  }
+  setNodeText($('onboardConnectDevice'),device?('设备 '+(device.name||'AU05')+' · '+(device.vendor_id||'—')+':'+(device.product_id||'—')+(device.microphone?' · 麦克风 '+device.microphone:' · 未读取到麦克风端点')):(data?'未读取到 AU05 设备信息。':'正在读取设备信息…'));
+  setNodeText($('onboardConnectError'),onboardHardwareError||'');
+}
+async function loadOnboardHardware(){
+  if(!onboardSupported())return;
+  onboardHardwareError='';
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
+  try{
+    const response=await api('/api/hardware',{signal:controller.signal});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const data=await readJson(response);
+    if(serviceToken!==expectedToken)return;
+    if(!response.ok)onboardHardwareError='读取设备状态失败：'+((data&&data.error)||serviceError(response,''));
+    else if(!isHardwarePayload(data))onboardHardwareError='服务没有返回 Vibe Key 状态。';
+    else onboardHardware=data;
+  }catch(error){
+    onboardHardwareError='无法读取 Vibe Key 状态：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应');
+  }finally{
+    clearTimeout(timeout);
+    if(onboardOpen&&onboardStep===1&&!onboardFinished)renderOnboardConnect();
+  }
+}
+function onboardTemplateMapping(id){
+  const codex=onboardFindApp(/codex|chatgpt/i),dsh=onboardFindApp(/deepseek|harness|dsh/i),mic=captureDevices[0]||null;
+  const keys=value=>({type:'send_keys',keys:value});
+  const launch=app=>app?{type:'launch',application_reference:app.selection_id,label:app.name}:null;
+  const micStep=mic?{type:'toggle_microphone',device_id:mic.id,label:mic.name||mic.id}:null;
+  const codexStep=launch(codex)||keys('Ctrl + Shift + Space');
+  const dshStep=launch(dsh);
+  if(id==='voice')return [[keys('Ctrl + Win'),codexStep,dshStep],[keys('Enter'),null,null],[keys('Escape'),null,null]];
+  if(id==='coding')return [[codexStep,dshStep,micStep],[keys('Enter'),null,null],[keys('Escape'),null,null]];
+  if(id==='wechat')return [[keys('Ctrl + Win'),null,null],[keys('Enter'),null,null],[keys('Escape'),null,null]];
+  return onboardEmptyDraft();
+}
+function renderOnboardTemplates(){
+  const list=$('onboardTemplates');list.replaceChildren();
+  for(const template of ONBOARD_TEMPLATES){
+    const button=appNode('button');button.type='button';button.className='onboard-template';button.dataset.template=template.id;
+    button.setAttribute('aria-pressed',String(onboardTemplate===template.id));
+    const radio=appNode('span');radio.className='radio';radio.setAttribute('aria-hidden','true');
+    const body=appNode('span');body.append(appNode('b',template.name),appNode('small',template.desc));
+    button.append(radio,body);
+    button.onclick=()=>chooseOnboardTemplate(template.id);
+    list.append(button);
+  }
+  const missing=[];
+  if((onboardTemplate==='voice'||onboardTemplate==='coding')&&!onboardFindApp(/codex|chatgpt/i))missing.push('Codex 运行窗口（双击使用 Ctrl + Shift + Space 回退）');
+  if((onboardTemplate==='voice'||onboardTemplate==='coding')&&!onboardFindApp(/deepseek|harness|dsh/i))missing.push('DeepSeek Harness（长按留空）');
+  if(onboardTemplate==='coding'&&!captureDevices.length)missing.push('麦克风（长按留空）');
+  let note='手动录入或模板中的快捷键会作为一条 send_keys 步骤，经由手势判定发送，不等同于固件直发组合键。';
+  if(onboardTemplate==='voice'||onboardTemplate==='wechat')note='微信语音使用 send_keys Ctrl + Win：经手势路径发送，可能与固件直发组合键不等价，实际效果以“最近触发”为准。'+note;
+  if(missing.length)note+=' 当前未检测到：'+missing.join('、')+'；打开对应软件后可重新选择模板或手动配置。';
+  const node=$('onboardTemplateNote');
+  setNodeText(node,note);node.dataset.kind=missing.length?'warn':'idle';
+}
+function chooseOnboardTemplate(id){
+  if(onboardBusy||onboardFinished)return;
+  const template=ONBOARD_TEMPLATES.find(item=>item.id===id);if(!template)return;
+  onboardTemplate=id;
+  const mapping=onboardTemplateMapping(id),saved=onboardServerMap();
+  onboardDraft=mapping.map((row,button)=>row.map((value,index)=>saved[button+':'+ONBOARD_GESTURES[index].id]?null:value));
+  renderOnboardTemplates();renderOnboardButtons();
+  onboardSetStatus('已应用模板「'+template.name+'」；可继续逐格调整，然后点“保存配置”。','idle');
+}
+function onboardConfiguredCount(){
+  const saved=onboardServerMap();let count=0;
+  for(let button=0;button<3;button+=1)for(let index=0;index<3;index+=1){
+    if(saved[button+':'+ONBOARD_GESTURES[index].id]||onboardDraft[button][index])count+=1;
+  }
+  return count;
+}
+function renderOnboardMatrix(){
+  if(onboardFinished)return;
+  const grid=$('onboardGrid');grid.replaceChildren();grid.hidden=false;$('onboardMatrixNote').hidden=false;
+  const head=appNode('div');head.className='onboard-grid-head';
+  head.append(appNode('span',''));
+  for(const gesture of ONBOARD_GESTURES)head.append(appNode('span',gesture.name));
+  grid.append(head);
+  const saved=onboardServerMap();
+  for(let button=0;button<3;button+=1){
+    const row=appNode('div');row.className='onboard-grid-row';
+    const label=appNode('span',ONBOARD_BUTTONS[button]);label.className='onboard-matrix-label';row.append(label);
+    for(let index=0;index<3;index+=1){
+      const gesture=ONBOARD_GESTURES[index],server=saved[button+':'+gesture.id],draft=onboardDraft[button][index];
+      const cell=appNode('button');cell.type='button';cell.className='onboard-cell';
+      cell.dataset.button=String(button);cell.dataset.gesture=gesture.id;
+      const description=server?('已保存 '+onboardStepsLabel(server.steps)):draft?onboardStepLabel(draft):'未配置';
+      cell.setAttribute('aria-label',ONBOARD_BUTTONS[button]+' '+gesture.name+'：'+description+'；点击编辑');
+      cell.setAttribute('aria-haspopup','dialog');
+      if(server){cell.dataset.saved='true';cell.append(appNode('b',onboardStepsLabel(server.steps)||'已保存'),appNode('small','已保存'));}
+      else if(draft){cell.dataset.filled='true';cell.append(appNode('b',onboardStepLabel(draft)),appNode('small',draft.type==='send_keys'?'手动快捷键':draft.type==='launch'?'启动应用':draft.type==='toggle_microphone'?'切换麦克风':'等待'));}
+      else cell.append(appNode('b','未配置'),appNode('small','点击配置'));
+      cell.onclick=()=>openOnboardEditor(button,index);
+      row.append(cell);
+    }
+    grid.append(row);
+  }
+  $('onboardCount').textContent=onboardConfiguredCount()+' / 9 已配置';
+  renderOnboardEditor();
+}
+function fillOnboardAppSelect(){
+  const select=$('onboardAppSelect'),apps=onboardApplications(),key=JSON.stringify(apps.map(app=>[app.selection_id,app.name]));
+  if(select.dataset.options!==key){
+    const previous=select.value;
+    select.replaceChildren(...(apps.length?apps.map(app=>new Option(app.name,app.selection_id)):[new Option('没有识别到运行应用（打开目标软件后刷新）','')]));
+    select.dataset.options=key;
+    if(apps.some(app=>app.selection_id===previous))select.value=previous;
+  }
+  select.disabled=!apps.length;
+  setNodeText($('onboardAppNote'),apps.length?'只能从服务当前识别到的运行应用中选择。':'没有识别到运行应用；打开目标软件后刷新模板，再重新打开本向导。');
+}
+function fillOnboardMicSelect(){
+  const select=$('onboardMicSelect'),key=JSON.stringify(captureDevices.map(device=>[device.id,device.name]));
+  if(select.dataset.options!==key){
+    const previous=select.value;
+    select.replaceChildren(...(captureDevices.length?captureDevices.map(device=>new Option(device.name||device.id,device.id)):[new Option('尚未读取到麦克风（授权后刷新音频设备）','')]));
+    select.dataset.options=key;
+    if(captureDevices.some(device=>device.id===previous))select.value=previous;
+  }
+  select.disabled=!captureDevices.length;
+  setNodeText($('onboardMicNote'),captureDevices.length?'选择明确的采集设备，不会自动回退到默认麦克风。':'尚未读取到麦克风；打开“音频设备”刷新后重试。');
+}
+function updateOnboardEditorFields(){
+  const mode=$('onboardEditorMode').value;
+  $('onboardEditorKeysField').hidden=mode!=='keys';
+  $('onboardEditorLaunchField').hidden=mode!=='launch';
+  $('onboardEditorMicField').hidden=mode!=='mic';
+  $('onboardEditorWaitField').hidden=mode!=='wait';
+  if(mode==='launch')fillOnboardAppSelect();
+  if(mode==='mic')fillOnboardMicSelect();
+}
+function renderOnboardEditor(){
+  const editor=$('onboardEditor');
+  if(!onboardCell||onboardFinished){editor.hidden=true;return;}
+  editor.hidden=false;
+  const label=ONBOARD_BUTTONS[onboardCell.button]+' · '+ONBOARD_GESTURES[onboardCell.gesture].name;
+  $('onboardEditorSlot').textContent=label;
+  $('onboardEditorTitle').textContent='编辑 '+label;
+  updateOnboardEditorFields();
+}
+function openOnboardEditor(button,index){
+  if(onboardBusy||onboardFinished)return;
+  const gesture=ONBOARD_GESTURES[index],server=onboardServerMap()[button+':'+gesture.id];
+  if(server){
+    onboardSetStatus('「'+ONBOARD_BUTTONS[button]+' '+gesture.name+'」已经保存为手势'+(server.name?'「'+server.name+'」':'')+'；本次向导不会覆盖已保存的手势位。如需修改，请先在服务里删除该手势。','error');
+    return;
+  }
+  onboardCell={button,gesture:index};
+  const draft=onboardDraft[button][index];
+  $('onboardEditorMode').value=draft?onboardModeValue(draft.type):'none';
+  $('onboardEditorError').textContent='';
+  $('onboardChord').value=draft&&draft.type==='send_keys'?(draft.keys||''):'';
+  $('onboardWait').value=draft&&draft.type==='wait'?String(draft.ms):'200';
+  fillOnboardAppSelect();fillOnboardMicSelect();
+  if(draft&&draft.type==='launch'&&onboardApplications().some(app=>app.selection_id===draft.application_reference))$('onboardAppSelect').value=draft.application_reference;
+  if(draft&&draft.type==='toggle_microphone'&&captureDevices.some(device=>device.id===draft.device_id))$('onboardMicSelect').value=draft.device_id;
+  renderOnboardEditor();
+  $('onboardEditor').scrollIntoView({block:'nearest'});
+  $('onboardEditorMode').focus();
+}
+function stopOnboardRecording(){
+  onboardRecording=false;clearTimeout(onboardRecordTimer);
+  const button=$('onboardRecord');
+  if(button){button.textContent='录入按键';button.setAttribute('aria-pressed','false');}
+  setNodeText($('onboardRecordHint'),'可以直接输入，也可以点“录入按键”后在本页按下组合键；按 Escape 取消。');
+}
+function onboardChordFromEvent(event){
+  const parts=[];
+  if(event.ctrlKey)parts.push('Ctrl');
+  if(event.altKey)parts.push('Alt');
+  if(event.shiftKey)parts.push('Shift');
+  if(event.metaKey)parts.push('Win');
+  let key=event.key;
+  if(key===' ')key='Space';else if(key==='Escape')key='Esc';else if(typeof key==='string'&&key.length===1)key=key.toUpperCase();
+  parts.push(key);
+  return parts.join(' + ');
+}
+function applyOnboardEditor(){
+  if(!onboardCell||onboardBusy)return;
+  const mode=$('onboardEditorMode').value;
+  let value=null;
+  if(mode==='keys'){
+    const keys=$('onboardChord').value.trim();
+    if(!keys){$('onboardEditorError').textContent='请输入或录入快捷键。';$('onboardChord').setAttribute('aria-invalid','true');$('onboardChord').focus();return;}
+    value={type:'send_keys',keys};
+  }else if(mode==='launch'){
+    const reference=$('onboardAppSelect').value,app=onboardApplications().find(item=>item.selection_id===reference);
+    if(!reference||!app){$('onboardEditorError').textContent='请选择一个服务当前识别到的应用。';return;}
+    value={type:'launch',application_reference:app.selection_id,label:app.name};
+  }else if(mode==='mic'){
+    const deviceId=$('onboardMicSelect').value,device=captureDevices.find(item=>item.id===deviceId);
+    if(!deviceId||!device){$('onboardEditorError').textContent='请选择一个已读取到的麦克风。';return;}
+    value={type:'toggle_microphone',device_id:device.id,label:device.name||device.id};
+  }else if(mode==='wait'){
+    const ms=Number($('onboardWait').value);
+    if(!Number.isFinite(ms)||ms<0||ms>10000){$('onboardEditorError').textContent='等待时间必须在 0 到 10000 毫秒之间。';return;}
+    value={type:'wait',ms:Math.round(ms)};
+  }
+  const label=ONBOARD_BUTTONS[onboardCell.button]+' '+ONBOARD_GESTURES[onboardCell.gesture].name;
+  onboardDraft[onboardCell.button][onboardCell.gesture]=value;
+  onboardCell=null;
+  renderOnboardMatrix();
+  onboardSetStatus(value?'已更新「'+label+'」；保存后才会写入服务。':'已清除「'+label+'」。','idle');
+}
+function onboardChangedSlots(){
+  const saved=onboardServerMap(),slots=[];
+  for(let button=0;button<3;button+=1)for(let index=0;index<3;index+=1){
+    const gesture=ONBOARD_GESTURES[index];
+    if(saved[button+':'+gesture.id])continue;
+    const value=onboardDraft[button][index];
+    if(value)slots.push({button,gesture:gesture.id,index,value});
+  }
+  return slots;
+}
+function onboardStepPayload(value){
+  if(value.type==='send_keys')return {type:'send_keys',keys:String(value.keys||'').trim()};
+  if(value.type==='launch')return {type:'launch',application_reference:value.application_reference,args:[]};
+  if(value.type==='toggle_microphone')return {type:'toggle_microphone',device_id:value.device_id};
+  const ms=Number(value.ms);
+  return {type:'wait',ms:Number.isFinite(ms)?Math.max(0,Math.min(10000,Math.round(ms))):0};
+}
+function onboardGestureName(slot){
+  const value=slot.value;
+  const detail=value.type==='send_keys'?value.keys:value.type==='launch'?(value.label||'应用'):value.type==='toggle_microphone'?'切换麦克风':'等待 '+value.ms+'ms';
+  return onboardTruncate('B'+(slot.button+1)+' '+ONBOARD_GESTURES[slot.index].name+' · '+detail,78);
+}
+async function saveOnboard(){
+  if(!onboardSupported()){onboardSetStatus('保存失败：页面未授权，请从托盘重新打开配置。','error');return;}
+  if(onboardBusy||onboardFinished)return;
+  if(!onboardStorageWritable()){onboardSetStatus('保存失败：服务的手势存储当前不可写。','error');return;}
+  if(!onboardChangedSlots().length){onboardSetStatus('还没有需要保存的手势位：先在矩阵里配置至少一格，或选择模板。','error');return;}
+  onboardCell=null;$('onboardEditor').hidden=true;
+  onboardBusy=true;onboardSetStatus('正在读取当前手势 revision…','idle');renderOnboardButtons();
+  const latest=await fetchOnboardGestures();
+  if(!latest){onboardBusy=false;renderOnboardButtons();return;}
+  if(latest.storage_writable===false){onboardBusy=false;onboardSetStatus('保存失败：服务的手势存储当前不可写。','error');renderOnboardButtons();return;}
+  const slots=onboardChangedSlots();
+  if(!slots.length){onboardBusy=false;onboardSetStatus('手势列表已变化：没有剩余需要保存的手势位。','idle');renderOnboardButtons();return;}
+  let savedCount=0,failure='';
+  for(let index=0;index<slots.length;index+=1){
+    const slot=slots[index];
+    onboardSetStatus('正在保存「'+ONBOARD_BUTTONS[slot.button]+' '+ONBOARD_GESTURES[slot.index].name+'」'+(index+1)+' / '+slots.length+'…','idle');
+    // Re-read the revision immediately before every add so an external edit
+    // between two posts cannot make the next write use a stale revision.
+    const revisionView=await fetchOnboardGestures(true);
+    if(!revisionView){failure='保存中断：无法读取当前手势 revision。';break;}
+    if(revisionView.storage_writable===false){failure='保存失败：服务的手势存储当前不可写。';break;}
+    if(onboardServerMap()[slot.button+':'+slot.gesture])continue;
+    const body=JSON.stringify({revision:Number.isSafeInteger(revisionView.revision)?revisionView.revision:0,name:onboardGestureName(slot),button:slot.button,gesture:slot.gesture,steps:[onboardStepPayload(slot.value)]});
+    const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+    try{
+      const response=await api('/api/gestures/add',{method:'POST',signal:controller.signal,body});
+      if(serviceToken!==expectedToken){onboardBusy=false;return;}
+      if(response.status===401||response.status===403){onboardBusy=false;expireBrowserSession();return;}
+      const text=await response.text();
+      if(!response.ok){failure='未保存：'+actionErrorText(response,text);break;}
+      let saved=null;try{saved=JSON.parse(text);}catch{saved=null;}
+      if(!saved||!Array.isArray(saved.gestures)){failure='保存结果未确认：服务没有返回手势列表。';break;}
+      onboardServer=saved;savedCount+=1;
+      renderOnboardMatrix();updateOnboardCardStatus();
+      const hardware=saved.hardware;
+      if(hardware&&hardware.state==='failed'){
+        const buttonLabel=Number.isInteger(hardware.button)?ONBOARD_BUTTONS[hardware.button]:'按键';
+        failure='已保存手势，但 '+buttonLabel+' 固件写入失败：'+(hardware.error||'设备未读回写入值')+'。设备可能不会触发这个手势；请稍后重试或同步到设备。';
+        break;
+      }
+    }catch(error){failure='保存失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应');break;}
+    finally{clearTimeout(timeout);}
+  }
+  onboardBusy=false;
+  if(failure){onboardSetStatus(failure,'error');renderOnboardButtons();refreshHardware();return;}
+  if(savedCount<1){onboardSetStatus('没有保存任何手势位。','error');renderOnboardButtons();return;}
+  onboardSavedCount=savedCount;
+  onboardMarkDone();
+  onboardFinished=true;
+  onboardSetStatus('已保存 '+savedCount+' 个手势位。','ok');
+  renderOnboardStep();
+  $('onboardFinishClose').focus();
+  refreshHardware();refreshActions();
+}
+$('onboardStart').onclick=()=>openOnboard({opener:$('onboardStart')});
+$('onboardClose').onclick=()=>closeOnboard();
+$('onboardLater').onclick=()=>closeOnboard();
+$('onboardBack').onclick=()=>{if(onboardBusy||onboardFinished||onboardStep<=1)return;onboardStep-=1;onboardCell=null;renderOnboardStep();};
+$('onboardNext').onclick=()=>{if(onboardBusy||onboardFinished||onboardStep>=3)return;onboardStep+=1;onboardCell=null;renderOnboardStep();};
+$('onboardSave').onclick=()=>saveOnboard();
+$('onboardFinishClose').onclick=()=>{closeOnboard();toast('已完成 · Vibe Key 手势已保存');refreshHardware();refreshActions();};
+$('onboardConnectRefresh').onclick=()=>{if(onboardBusy)return;loadOnboardHardware();fetchOnboardGestures().then(data=>{if(data&&onboardOpen&&onboardStep===1&&!onboardFinished)renderOnboardConnect();});};
+$('onboardEditorMode').onchange=()=>{updateOnboardEditorFields();};
+$('onboardChord').oninput=()=>{$('onboardEditorError').textContent='';$('onboardChord').setAttribute('aria-invalid','false');};
+$('onboardEditorApply').onclick=()=>applyOnboardEditor();
+$('onboardEditorClear').onclick=()=>{
+  if(!onboardCell||onboardBusy)return;
+  const label=ONBOARD_BUTTONS[onboardCell.button]+' '+ONBOARD_GESTURES[onboardCell.gesture].name;
+  onboardDraft[onboardCell.button][onboardCell.gesture]=null;
+  onboardCell=null;renderOnboardMatrix();onboardSetStatus('已清除「'+label+'」。','idle');
+};
+$('onboardEditorCancel').onclick=()=>{onboardCell=null;renderOnboardMatrix();};
+$('onboardRecord').onclick=()=>{
+  if(onboardBusy)return;
+  if(onboardRecording){stopOnboardRecording();return;}
+  onboardRecording=true;
+  $('onboardRecord').textContent='请按键…';$('onboardRecord').setAttribute('aria-pressed','true');
+  setNodeText($('onboardRecordHint'),'正在监听键盘；按 Escape 取消，10 秒后超时。');
+  clearTimeout(onboardRecordTimer);
+  onboardRecordTimer=setTimeout(()=>{if(onboardRecording){stopOnboardRecording();$('onboardEditorError').textContent='未收到按键：请先点“录入按键”，再按组合键。';}},10000);
+};
+document.addEventListener('keydown',event=>{
+  if(!onboardOpen)return;
+  if(onboardRecording){
+    event.preventDefault();
+    if(event.key==='Escape'){stopOnboardRecording();return;}
+    if(['Control','Alt','Shift','Meta'].includes(event.key))return;
+    const chord=onboardChordFromEvent(event);
+    if(!chord)return;
+    $('onboardChord').value=chord;$('onboardChord').setAttribute('aria-invalid','false');$('onboardEditorError').textContent='';
+    stopOnboardRecording();return;
+  }
+  if(event.key==='Escape'){if(onboardBusy)return;event.preventDefault();closeOnboard();return;}
+  if(event.key==='Tab'){
+    const focusables=[];
+    try{
+      const nodes=$('onboardDialog').querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled])');
+      for(const node of nodes){if(node.closest('[hidden]'))continue;focusables.push(node);}
+    }catch{}
+    if(focusables.length){
+      const first=focusables[0],last=focusables[focusables.length-1],active=document.activeElement;
+      if(event.shiftKey&&active===first){event.preventDefault();last.focus();}
+      else if(!event.shiftKey&&active===last){event.preventDefault();first.focus();}
+    }
+  }
+});
 
 renderBindings();loadEditor();
 probe().then(async ()=>{

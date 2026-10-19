@@ -559,7 +559,35 @@ use the save fails with `409`. They are **not** checked against application
 *dispatch* chords, so a dispatch chord equal to an action trigger would also be
 captured by VibDock; choose triggers and dispatch chords accordingly.
 
-### Gamepad identity and limits
+### Gesture slots (AU05)
+
+Each AU05 button has three gesture slots: `single`, `double` and `long`. They
+are stored in `%LOCALAPPDATA%\VibDock\gestures.json` with their own revision
+and are independent of generated-trigger action bindings. A gesture button is
+provisioned with a sentinel chord instead of a direct chord:
+`Ctrl+Alt+Shift+F10`, `F11`, `F12` for buttons 1/2/3. AU05 cannot represent
+`F13`-`F15`, so the chord uses representable F10-F12 with modifiers.
+
+```text
+GET  /api/gestures
+POST /api/gestures/add     {"revision":0,"name":"Codex voice","button":0,
+                            "gesture":"double",
+                            "steps":[{"type":"send_keys","keys":"Ctrl + Shift + Space"}]}
+POST /api/gestures/remove  {"revision":1,"id":"<64 hex>"}
+POST /api/gestures/sync    {}
+```
+
+The add route rejects a button that already has a direct chord, application
+shortcut or generated-trigger action, and rejects an action trigger equal to the
+button sentinel. The response may include `hardware:{button,state,sentinel,error}`;
+a saved gesture with a failed firmware readback must not be shown as fully
+provisioned. `sync` rewrites all sentinels and returns a `hardware` array.
+
+The service polls the sentinel chord on the accept-loop thread and feeds
+press/release edges into `vibdock-input`'s classifier. Single presses resolve
+after the double window, long presses after 550 ms. The poll does **not** suppress
+the chord; a low-level hook is future work. Multi-key combos are not exposed by
+this API yet, and a button in gesture mode cannot keep a direct firmware chord.
 
 The gamepad adapter enumerates HID top-level collections on the Generic Desktop
 page with usage `0x04`, `0x05`, or `0x08`. Button usages are normally the HID
@@ -952,4 +980,6 @@ Integration evidence and shortcut ownership are tracked in [voice integration ev
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+
 

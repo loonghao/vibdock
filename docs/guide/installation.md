@@ -160,12 +160,14 @@ The intended model:
 - combos: `1+2`, `1+2+3`, `2+3`, held `1+2`;
 - 3 buttons → 9+ logical actions.
 
-The classifiers have unit tests, but the Windows sentinel-key monitor, persisted
-bindings and production UI are not wired yet. Do not claim gestures work in a
-release build. Design references: [gesture workbench](../design/prototype-workbench.html)
+AU05 single/double/long is wired: the service writes
+`Ctrl+Alt+Shift+F10/F11/F12` into the button slots, polls the sentinel chord and
+executes the saved action. The poll does not suppress the sentinel chord;
+multi-key combos are still in progress. Wake the device before a firmware write
+and trust the readback state. Design references: [gesture workbench](../design/prototype-workbench.html)
 and [plugin workbench](../design/plugin-workbench.md).
 
-## 9. First-run guide (frontend prototype)
+## 9. First-run guide
 
 [`docs/design/onboarding.html`](../design/onboarding.html) is the guided
 first-run design:
@@ -175,9 +177,11 @@ first-run design:
 3. confirm the 9 action slots (single/double/long per key; Profile, manual chord or recorded chord);
 4. test and finish.
 
-Its **Let an agent configure** action generates a copyable prompt. The page is a
-static prototype; production Settings does not serve this wizard yet. The install
-and configuration semantics above remain authoritative.
+The production Settings page now serves this wizard in service mode. Saving uses
+the authenticated `/api/gestures` API and shows a failed firmware readback instead
+of claiming success. The standalone page remains the visual reference and the
+source of the **Let an agent configure** prompt. The install and configuration
+semantics above remain authoritative.
 
 ## 10. Configure with an agent
 
@@ -236,4 +240,6 @@ vibdock service-status
 ---
 
 简体中文：[installation.zh-CN.md](installation.zh-CN.md) · Back to [README](../../README.md)
+
+
 

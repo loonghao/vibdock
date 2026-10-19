@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('plugins', 'actions', 'action-commands', 'hardware', 'config', 'pad-execute')]
+    [ValidateSet('plugins', 'actions', 'gestures', 'action-commands', 'hardware', 'config', 'pad-execute')]
     [string]$Command,
     [string]$Id
 )
@@ -18,6 +18,7 @@ $headers = @{ Authorization = "Bearer $($state.token)" }
 $result = switch ($Command) {
     'plugins' { Invoke-RestMethod -Uri "$base/api/plugins" -Headers $headers }
     'actions' { Invoke-RestMethod -Uri "$base/api/actions" -Headers $headers }
+    'gestures' { Invoke-RestMethod -Uri "$base/api/gestures" -Headers $headers }
     'action-commands' { Invoke-RestMethod -Uri "$base/api/actions/commands" -Headers $headers }
     'hardware' { Invoke-RestMethod -Uri "$base/api/hardware" -Headers $headers }
     'config' { Invoke-RestMethod -Uri "$base/api/config" -Headers $headers }
@@ -31,3 +32,4 @@ $result = switch ($Command) {
 }
 
 $result | ConvertTo-Json -Depth 12
+

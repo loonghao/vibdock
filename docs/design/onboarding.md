@@ -1,8 +1,10 @@
 # First-run onboarding
 
-Status: clickable prototype, 2026-10-19. Source:
-[`onboarding.html`](onboarding.html). The production Settings page does not serve
-this wizard yet.
+Status: clickable prototype and integrated Settings wizard, 2026-10-20.
+Source: [`onboarding.html`](onboarding.html) for the visual reference; the
+in-app wizard uses the authenticated `/api/gestures` API and writes AU05
+single/double/long slots. The standalone prototype remains useful for design
+review and the Agent prompt.
 
 ## Goal
 
@@ -84,6 +86,8 @@ When Settings migrates to the clean workbench:
 The install/configuration semantics remain in
 [`docs/guide/installation.md`](../guide/installation.md) and
 [`docs/guide/installation.zh-CN.md`](../guide/installation.zh-CN.md).
+
+
 
 
 

@@ -45,7 +45,7 @@ A user should be able to say what they want, not memorize API routes:
 | --- | --- | --- |
 | “把按钮 2 配置成打开 Codex” | read plugins/actions/hardware, resolve the Codex reference from `shortcut-apps`, then create a launch action | guess an `.exe` path or overwrite button 2 silently |
 | “把微信语音放到按钮 1” | direct firmware chord `Ctrl + Win`, confirm the button is free | use an injected chord and claim it works |
-| “按钮 3 双击静音” | explain gesture monitoring is not wired yet | pretend a double-click binding exists |
+| “按钮 3 双击静音” | create a `double` gesture binding on button 3 | pretend the display app is verified; only VibDock state is known |
 | “把 Codex 的语音键映射到按钮 2” | use an application shortcut or a hardware action with `send_keys` | claim a dispatched chord starts voice |
 | “测试一下我的配置” | read `hardware-status` and `recent_actions`; ask the user to press | fabricate a recent event |
 | “在 Pad 上执行这个动作” | `pad-execute -Id <saved-id>` | submit arbitrary steps to the Pad endpoint |
@@ -112,7 +112,7 @@ when the helper does not cover the route.
 
 | Route | Use |
 | --- | --- |
-| `GET /api/plugins` | built-in plugin manifests, capabilities, controls and actions |
+| `GET /api/gestures` | AU05 single/double/long slots, revision and limits |\n| `POST /api/gestures/add` | create one gesture slot with structured steps |\n| `POST /api/gestures/remove` | remove one gesture slot by id |\n| `POST /api/gestures/sync` | rewrite the AU05 sentinel chords |\n| `GET /api/plugins` | built-in plugin manifests, capabilities, controls and actions |
 | `GET /api/actions` | saved action bindings and revisions |
 | `GET /api/actions/commands` | sanitized local command definitions |
 | `POST /api/actions/add` | create a saved action from structured steps |
@@ -160,8 +160,9 @@ Use the authenticated action API or Settings UI. Before adding:
 
 ## Current limitations
 
-- Gesture/multi-button recognition classifiers exist, but the Windows
-  sentinel-key monitor and persisted gesture bindings are not wired yet.
+- AU05 single/double/long slots are persisted in `gestures.json` and executed by
+  the service. The monitor polls `Ctrl+Alt+Shift+F10/F11/F12`; it does not
+  suppress those chords and multi-key combos are not exposed yet.
 - The gamepad adapter is present; no live gamepad was detected on the acceptance
   host, so do not claim gamepad acceptance without a device.
 - `/pad` page, pairing and profile projection are not implemented; only
@@ -187,6 +188,7 @@ For hardware changes, run the relevant checklist in
 `docs/testing/au05-acceptance.md` or
 `docs/testing/hardware-actions-acceptance.md`, and report what was actually
 observed.
+
 
 
 

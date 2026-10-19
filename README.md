@@ -97,8 +97,10 @@ candidate, not a new release.
 
 ## Guided setup
 
-A first-run flow is designed around four steps: connect the device, choose a
-template, confirm the 3×3 gesture matrix, then test.
+A first-run flow is integrated into Settings (service mode): connect the device,
+choose a template, confirm the 3×3 gesture matrix, then save. It writes real
+AU05 gesture slots through the authenticated API and reports failed firmware
+readback instead of claiming success.
 
 ![First-run guide](assets/screenshots/onboarding.png)
 
@@ -111,9 +113,8 @@ by the workbench.
 - [Install and configure guide](docs/guide/installation.md) — traditional setup,
   direct chords, application shortcuts, hardware actions, verification,
   troubleshooting and uninstall.
-- [Interactive onboarding prototype](docs/design/onboarding.html) — clickable
-  steps and an Agent prompt; the production Settings migration is still in
-  progress.
+- [Standalone onboarding prototype](docs/design/onboarding.html) — the visual
+  reference and Agent prompt used by the in-app wizard.
 
 ## Let an agent configure it
 
@@ -152,7 +153,7 @@ the next extraction steps are tracked in the open roadmap.
 | --- | --- |
 | AU05 direct firmware bindings | Verified on a real device: defaults, readback, direct chord, physical action |
 | Hardware action sequences | Wait-step execution verified; launch/send-keys/mic/command chain implemented, full chain not live-tested |
-| Gestures and combos | Classifiers unit-tested; Windows sentinel-key monitoring and persisted bindings are in progress |
+| Gestures and combos | AU05 single/double/long slots are persisted and executed by the service; multi-key combos and hook-based suppression are still pending |
 | Gamepad | Adapter implemented; no live gamepad was available for acceptance |
 | Virtual Pad | Prototype + saved-action execution endpoint; `/pad` route and pairing pending |
 | Plugin framework | Device/action/input crates extracted; read-only built-in registry; third-party sidecar pending |
@@ -188,5 +189,7 @@ MIT. VibDock is independent of Ulanzi, OpenAI, DeepSeek, Tencent and WorkBuddy;
 product names are used only to describe integrations.
 
 <p align="center"><a href="README.zh-CN.md">阅读中文版 →</a></p>
+
+
 
 

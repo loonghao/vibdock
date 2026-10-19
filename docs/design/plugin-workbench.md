@@ -225,7 +225,7 @@ to simple buttons.
 
 **Physical detection.** The AU05 firmware stores one shortcut entry per button
 and cannot classify gestures itself. The host therefore writes a unique
-**sentinel** key (for example bare `F13`, `F14`, `F15`; the AU05 accepts them in
+**sentinel** chord (for example `Ctrl+Alt+Shift+F10`, `F11`, `F12`; the AU05 accepts F1-F12 with modifiers in
 direct mode and normal applications ignore them) into a button that is in
 gesture mode, and observes keyboard down/up events. A low-level keyboard hook
 (`WH_KEYBOARD_LL`) or Raw Input provides press/release timing; the hook consumes
@@ -317,7 +317,7 @@ Resolution rules:
    discarded rather than matched late.
 
 The AU05 sentinel approach extends directly: each active button is written with
-a different sentinel key (`F13`, `F14`, `F15`), so a keyboard hook can tell
+a different sentinel chord (`Ctrl+Alt+Shift+F10`, `F11`, `F12`), so the service monitor can tell
 which button went down and when. The same hook feeds the single-key gesture
 classifier and the multi-key matcher; the hook must not mistake the sentinels for
 ordinary typing. Holding `1+2` means observing both sentinels held; tapping
@@ -406,8 +406,9 @@ The platform-independent gesture classifier has landed as `crates/vibdock-input/
 reset and unusable timings. The multi-button matcher has landed as `crates/vibdock-input/crates/vibdock-input/src/combo.rs`
 with 10 unit tests covering sequences, order independence, longer-sequence
 precedence, holds, quick release, repeated presses and bounded timings. They are
-not wired to the service yet: the Windows keyboard hook/sentinel path, persisted
-gesture/combo bindings, profile UI and gamepad integration remain Phase 1 work.
+now partially wired: the service persists AU05 gesture slots and polls the
+sentinel path; the low-level hook/suppression, multi-key combos, profile UI and
+gamepad gestures remain Phase 1 work.
 
 ## Migration plan
 
@@ -452,6 +453,8 @@ review process have tests.
   suppresses its own keys and a missing service never fabricates a gesture.
 - The page remains usable with no device, no gamepad, no plugins installed, and
   in read-only preview mode (no authenticated calls).
+
+
 
 
 

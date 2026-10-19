@@ -86,7 +86,9 @@ AU05 / 动作相关能力目前是源码候选版本，不是新的正式发布�
 
 ## 首次配置引导
 
-我们设计了一条四步首次配置流程：连接设备、选择模板、确认 3×3 手势矩阵、测试反馈。
+首次配置流程已经接入 Settings（服务模式）：连接设备、选择模板、确认
+3×3 手势矩阵、保存。它会通过认证 API 写入真实的 AU05 手势位；固件读回失败会
+明确提示，而不是假装成功。
 
 ![首次配置引导](assets/screenshots/onboarding.png)
 
@@ -97,8 +99,7 @@ AU05 / 动作相关能力目前是源码候选版本，不是新的正式发布�
 
 - [安装与配置指南](docs/guide/installation.zh-CN.md)：传统安装、固件直发、
   应用快捷键、硬件动作、验证、故障排查和卸载。
-- [交互式首次配置原型](docs/design/onboarding.html)：可点击的步骤和 Agent
-  指令；生产 Settings 还在迁移中。
+- [独立首次配置原型](docs/design/onboarding.html)：视觉参考和 Agent 指令。
 
 ## 让 Agent 帮你配置
 
@@ -134,7 +135,7 @@ vibdock-launcher / vibdock-cli
 | --- | --- |
 | AU05 固件直发绑定 | 已在真实设备验证：默认布局、读回、直发组合键、物理动作 |
 | 硬件动作序列 | `wait` 步骤已实机验证；launch / send-keys / mic / command 链路已实现，完整链路未实机验收 |
-| 手势与多键组合 | 分类器已有单元测试；Windows 哨兵键监听与持久化仍在进行 |
+| 手势与多键组合 | AU05 的单击/双击/长按动作位已持久化并由服务执行；多键组合与钩子级按键吞掉仍在开发 |
 | 游戏手柄 | 适配器已实现；验收环境没有可用手柄 |
 | Virtual Pad | 原型 + 已保存动作执行 API；`/pad` 路由和配对未完成 |
 | 插件框架 | 设备 / 动作 / 输入 crate 已拆出；内置清单只读；第三方 sidecar 未完成 |
@@ -170,6 +171,8 @@ MIT。VibDock 与 Ulanzi、OpenAI、DeepSeek、Tencent、WorkBuddy 均无隶属�
 产品名称仅用于描述集成目标。
 
 <p align="center"><a href="README.md">Read in English →</a></p>
+
+
 
 
 
