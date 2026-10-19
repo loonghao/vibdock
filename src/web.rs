@@ -2519,14 +2519,22 @@ fn gestures_route(
                     );
                 }
             }
+            #[cfg(windows)]
             let mut used_references = Vec::new();
+            #[cfg(windows)]
             let mut resolve = |reference: &str| -> Option<(String, String)> {
                 let (executable, label, _) = apps.resolve_application(reference)?;
                 used_references.push(reference.to_string());
                 Some((executable, label))
             };
+            #[cfg(not(windows))]
+            let mut resolve = |_: &str| -> Option<(String, String)> {
+                let _ = &apps;
+                None
+            };
             let (code, mut view) = gestures.add(request.body, actions.commands(), &mut resolve);
             if code == 200 {
+                #[cfg(windows)]
                 for reference in used_references {
                     apps.consume_application(&reference);
                 }
