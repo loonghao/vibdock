@@ -13,4 +13,5 @@ path = "src/lib.rs"
 [dependencies]
 getrandom = "0.2"
 serde_json = "1"
-vibdock-input = { path = "../vibdock-input" }
+vibdock-input = { version = "0.1.0", path = "../vibdock-input" }
+
