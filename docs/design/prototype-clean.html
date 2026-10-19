@@ -253,7 +253,7 @@ const COMBOS=[
   {keys:[2,3],kind:'快按',profile:'media'},
   {keys:[1,2],kind:'长按',profile:'wechat'}
 ];
-const state={key:'b1',drawer:new URL(location.href).searchParams.get('drawer')==='1'?{keyId:'b1',gesture:'single'}:null,modal:null,recent:'按钮 1 · 单击 · 微信语音 · 12:04:22'};
+const state={key:'b1',drawer:new URL(location.href).searchParams.get('drawer')==='1'?{keyId:'b1',gesture:'single'}:null,modal:new URL(location.href).searchParams.get('plugins')==='1'?'plugins':null,recent:'按钮 1 · 单击 · 微信语音 · 12:04:22'};
 let toastTimer=0;
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function keyById(id){return KEYS.find(k=>k.id===id)}

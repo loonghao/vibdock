@@ -48,7 +48,7 @@ class PackageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="vibdock-mac-package-")
         self.root = Path(self.temp.name)
-        for name in ("README.md", "LICENSE", "Cargo.toml"):
+        for name in ("README.md", "README.zh-CN.md", "README.technical.md", "LICENSE", "Cargo.toml"):
             shutil.copy2(SOURCE / name, self.root / name)
         shutil.copytree(SOURCE / "assets", self.root / "assets")
         (self.root / "docs").mkdir()
@@ -72,7 +72,8 @@ class PackageTests(unittest.TestCase):
             names = archive.namelist()
             prefix = "VibDock.app/Contents/"
             for name in ("MacOS/vibdock", "MacOS/vibdock-launcher", "Resources/vibdock.icns",
-                         "Resources/LICENSE", "Resources/docs/note.md"):
+                         "Resources/LICENSE", "Resources/README.md", "Resources/README.zh-CN.md",
+                         "Resources/README.technical.md", "Resources/docs/note.md"):
                 self.assertIn(prefix + name, names)
             metadata = plistlib.loads(archive.read(prefix + "Info.plist"))
             self.assertEqual(metadata["CFBundleExecutable"], "vibdock-launcher")
@@ -182,3 +183,6 @@ class PackageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

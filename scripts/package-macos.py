@@ -75,7 +75,7 @@ def package(root, binary_directory, output, tag, target):
     if target not in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
         raise ValueError("Unsupported macOS target")
     root, binary_directory, output = root.resolve(), binary_directory.resolve(), output.absolute()
-    for name in ("README.md", "LICENSE", "Cargo.toml", "assets", "assets/brand", "docs"):
+    for name in ("README.md", "README.zh-CN.md", "README.technical.md", "LICENSE", "Cargo.toml", "assets", "assets/brand", "docs"):
         if (root / name).is_symlink():
             raise ValueError("Top-level package inputs must not be symlinks")
     for name in ("assets", "docs"):
@@ -98,7 +98,7 @@ def package(root, binary_directory, output, tag, target):
     resources.mkdir()
     for name in ("vibdock", "vibdock-launcher"):
         shutil.copy2(binary_directory / name, macos / name)
-    for name in ("README.md", "LICENSE"):
+    for name in ("README.md", "README.zh-CN.md", "README.technical.md", "LICENSE"):
         shutil.copy2(root / name, resources / name)
     for name in ("assets", "docs"):
         shutil.copytree(root / name, resources / name, symlinks=False)

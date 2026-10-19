@@ -8,7 +8,7 @@ workflow on all three targets and runnable offline for fixture acceptance when
 hosted Actions are unavailable.
 
 On a Windows target the archive contains BOTH entry points - the console CLI
-(vibdock.exe) and the GUI launcher (vibdock-launcher.exe) - plus README.md, LICENSE, assets, docs, and
+(vibdock.exe) and the GUI launcher (vibdock-launcher.exe) - plus README.md, README.zh-CN.md, README.technical.md, LICENSE, assets, docs, and
 packaging fails if any is missing. Each Windows executable is verified against
 its PE subsystem: the CLI must be the console subsystem (3) and the launcher the
 GUI subsystem (2), so a miscompiled launcher can never ship as a flashing
@@ -169,11 +169,13 @@ try {
         Copy-Item -LiteralPath $source -Destination $packagePath
     }
 
-    $readme = Join-Path $outputRoot 'README.md'
-    if (-not (Test-Path -LiteralPath $readme -PathType Leaf)) {
-        throw "Required release artifact is missing: $readme"
+    foreach ($readmeName in @('README.md', 'README.zh-CN.md', 'README.technical.md')) {
+        $readme = Join-Path $outputRoot $readmeName
+        if (-not (Test-Path -LiteralPath $readme -PathType Leaf)) {
+            throw "Required release artifact is missing: $readme"
+        }
+        Copy-Item -LiteralPath $readme -Destination $packagePath
     }
-    Copy-Item -LiteralPath $readme -Destination $packagePath
 
     # Preserve software license notices and all local README links, including
     # the owner's original artwork provenance and desktop acceptance limits.
@@ -236,3 +238,6 @@ finally {
         Remove-Item -Recurse -Force -LiteralPath $packagePath
     }
 }
+
+
+
