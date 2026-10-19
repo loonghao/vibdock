@@ -130,6 +130,20 @@ small{color:var(--ink-3);font-size:12px}
 .profile-card .steps-mini{display:flex;gap:4px;margin-top:auto;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--ink-2);background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font-family:var(--mono);white-space:nowrap}
 .profile-card .assign-mark{font-size:10px;color:var(--amber);font-family:var(--mono)}
+.combo-section{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.combo-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.combo-head h2{font-size:14px}
+.combo-deck{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px}
+.combo-card{border:1px solid var(--line);background:linear-gradient(180deg,var(--surface-2),rgba(24,27,30,.7));border-radius:12px;padding:11px;text-align:left;display:flex;flex-direction:column;gap:7px}
+.combo-card:hover{border-color:var(--line-strong);background:var(--surface-3)}
+.combo-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.combo-card b{font-size:12px;font-weight:550}
+.combo-keys{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.combo-key{font:9.5px var(--mono);border:1px solid var(--line-strong);background:#141719;border-radius:5px;padding:2px 5px;color:var(--ink-2)}
+.combo-arrow{color:var(--ink-3);font-size:10px}
+.combo-card p{font-size:10.5px;color:var(--ink-3);line-height:1.5}
+.combo-kind{font:9px var(--mono);border:1px solid rgba(127,211,182,.3);color:var(--jade);background:var(--jade-soft);border-radius:4px;padding:2px 5px}
+.combo-kind.hold{border-color:rgba(231,185,111,.35);color:var(--amber);background:var(--amber-soft)}
 /* inspector */
 .inspector{border-left:1px solid var(--line);background:linear-gradient(180deg,rgba(30,34,37,.55),var(--surface));padding:20px 18px 30px;overflow:auto}
 .inspector-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-bottom:15px;border-bottom:1px solid var(--line)}
@@ -325,6 +339,12 @@ const PROFILES=[
   {id:'workbuddy',name:'WorkBuddy',plugin:'workbuddy',color:'#e7a97f',desc:'启动 WorkBuddy 并开始语音。需要先安装插件。',steps:[{i:'launch',t:'启动 WorkBuddy'},{i:'mic',t:'切换麦克风'},{i:'send',t:'开始语音'}]},
   {id:'media',name:'媒体控制',plugin:'scripts',color:'#c9b98f',desc:'播放 / 暂停、上一首、下一首。',steps:[{i:'send',t:'发送媒体播放快捷键'},{i:'send',t:'发送上一首'}]}
 ];
+const COMBOS=[
+  {id:'c12',kind:'quick',name:'1 + 2 快按',controls:[1,2],profile:'codex',desc:'语音键 → 确认键，250 ms 内'},
+  {id:'c123',kind:'quick',name:'1 + 2 + 3 快按',controls:[1,2,3],profile:'dsh',desc:'三键依次快按，触发完整工作流'},
+  {id:'c23',kind:'quick',name:'2 + 3 快按',controls:[2,3],profile:'media',desc:'确认键 → 取消键，媒体控制'},
+  {id:'c12hold',kind:'hold',name:'1 + 2 长按',controls:[1,2],profile:'wechat',desc:'两键同时按住 550 ms'}
+];
 const GESTURES=[{id:'single',name:'单击',hint:'按下后立即松开'},{id:'double',name:'双击',hint:'两次按下，300 ms 内'},{id:'long',name:'长按',hint:'按住超过 550 ms'}];
 const KEYS=[{id:'button1',label:'语音键',idx:'01',icon:'mic',hint:'按住说话 / 切换语音'},{id:'button2',label:'确认键',idx:'02',icon:'check',hint:'确认 / 发送'},{id:'button3',label:'取消键',idx:'03',icon:'x',hint:'取消 / 返回'},{id:'knob',label:'旋钮',idx:'04',icon:'knob',hint:'旋转切换 profile，按下确认'}];
 
@@ -420,6 +440,15 @@ function profileDeck(){
       ${installed?'':'<span class="field-note" style="color:var(--red)">需要安装插件</span>'}
     </button>`}).join('')}</div>`
 }
+function comboDeck(){
+  return `<section class="combo-section"><div class="combo-head"><h2>多键组合</h2><small>最多 3 键 · 快按窗口 250 ms · 同时长按 550 ms</small></div>
+  <div class="combo-deck">${COMBOS.map(c=>`<button class="combo-card" data-action="noop">
+    <div class="combo-card-top"><b>${esc(c.name)}</b><span class="combo-kind ${c.kind==='hold'?'hold':''}">${c.kind==='hold'?'长按':'快按'}</span></div>
+    <div class="combo-keys">${c.controls.map(x=>`<span class="combo-key">0${x} ${KEYS[x-1].label}</span>`).join('<span class="combo-arrow">→</span>')}</div>
+    <p>${esc(c.desc)} · 执行「${esc(profile(c.profile)?.name||'')}」</p>
+  </button>`).join('')}
+  <button class="combo-card" data-action="noop" style="align-items:center;justify-content:center;border-style:dashed;color:var(--ink-3)">+ 新建组合</button></div></section>`
+}
 function inspector(selectedKey=state.key){
   const k=KEYS.find(x=>x.id===selectedKey)||KEYS[0];
   const p=assignedProfile(selectedKey);
@@ -470,6 +499,7 @@ function renderA(){
       <div class="canvas-head"><div><h1>Vibe Key 画布</h1><small>3 个按键 × 3 种手势 = 9 个动作位；点击按键，再选单击 / 双击 / 长按。</small></div><div class="spacer"></div><span class="tag amber">9 个手势槽</span><span class="tag jade"><span class="dot live"></span>固件已读回</span><button class="btn sm" data-action="open-plugin" data-plugin="au05">设备设置</button></div>
       <div class="stage"><div class="stage-device">${deviceSVG(state.key)}</div>${keyCallouts()}<div class="stage-hint">${icon('spark')} 单击 / 双击 / 长按可绑定不同 profile <button class="btn sm" data-action="auto-config">一键生成</button></div></div>
       ${profileDeck()}
+      ${comboDeck()}
     </main>
     ${inspector()}
   </div>`
@@ -496,6 +526,7 @@ function renderB(){
         <div class="meta-card"><h3>插件详情 · ${esc(focus.name)}</h3><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65">${esc(focus.desc)}</p><div class="meta-row" style="margin-top:8px"><span>版本 / 提供方</span><span>${esc(focus.version)} · ${esc(focus.vendor)}</span></div><div class="meta-row"><span>状态</span><span>${focus.status}</span></div><div class="meta-row"><span>能力</span><span>${focus.caps.join(' / ')}</span></div><button class="btn sm" style="margin-top:9px" data-action="open-plugin" data-plugin="${focus.id}">打开插件设置</button></div>
         <div class="meta-card"><h3>自动化提示</h3><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65">检测到 ${isInstalled('codex')?'Codex':''}${isInstalled('dsh')?' / DSH':''} 可用。工作台会根据设备能力和已装插件生成推荐，而不是让用户从空表单开始。</p><button class="btn sm" style="margin-top:9px" data-action="auto-config">生成推荐配置</button></div>
       </div>
+      ${comboDeck()}
     </main>
     ${inspector()}
   </div>`
@@ -516,6 +547,7 @@ function renderC(){
           <div class="profile-foot"><div class="key-badges">${keys.length?keys.map(x=>`<span class="key-badge">${esc(x)}</span>`).join(''):'<span class="field-note">未绑定按键</span>'}</div>${p.id===state.activeProfile?'<span class="tag amber">编辑中</span>':`<span class="tag">${isInstalled(p.plugin)?'可用':'需安装'}</span>`}</div>
         </button>`}).join('')}</div>
       <div class="auto-card" style="margin-top:16px">${icon('wand')}<div><b>自动配置：从“检测到的应用”开始</b><p>扫描到 ${isInstalled('codex')?'Codex':''}${isInstalled('dsh')?'、DSH':''}${isInstalled('wechat')?'、微信输入法':''}。工作台可以生成 3 个按键 × 单击 / 双击 / 长按 = 9 个动作位，用户只需确认或替换其中几个。</p><button class="btn sm" data-action="auto-config">生成 9 个推荐动作</button></div></div>
+      ${comboDeck()}
     </main>
     <aside class="market"><div class="market-head"><h2>插件目录</h2><button class="btn sm" data-action="noop">管理</button></div><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65;margin-bottom:12px">安装插件后，它提供的动作会出现在 profile 编辑器里；设备插件还会出现在左侧设备栏。</p>${PLUGINS.map(p=>`<div class="plugin-row">${pluginGlyph(p)}<div class="grow"><b>${esc(p.name)}</b><small>${esc(p.kind)} · ${esc(p.vendor)}</small></div><button class="btn sm ${isInstalled(p.id)?'ghost':''}" data-action="toggle-plugin" data-plugin="${p.id}">${isInstalled(p.id)?'已安装':'安装'}</button></div>`).join('')}</aside>
   </div>

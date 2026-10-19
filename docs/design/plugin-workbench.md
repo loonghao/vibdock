@@ -278,6 +278,58 @@ The prototype shows this as three tabs (单击 / 双击 / 长按) in the inspect
 `3/3` count on each key callout, timing sliders, and "9 个动作位" in the canvas
 header. Variant C tags each profile with the exact key+gesture assignments.
 
+### Multi-button combinations
+
+Three buttons also form chords. The pattern set may contain any of these shapes:
+
+| Pattern | Example | Recognized when |
+| --- | --- | --- |
+| `Sequence([1, 2])` | 1 then 2 quickly | both tapped inside the 250 ms chord window |
+| `Sequence([1, 2, 3])` | 1, 2, 3 quickly | all three tapped inside the window |
+| `Sequence([2, 3])` | 2 and 3 quickly | both tapped, either order |
+| `Hold([1, 2])` | 1+2 held | both held together past 550 ms |
+| `Hold([2, 3])` | 2+3 held | both held together past 550 ms |
+
+Combinations are **unordered sets** for sequence purposes: `2→3` and `3→2`
+both match `2+3`. Repeated presses of a control already in the current sequence
+do not duplicate it. A sequence needs at least two distinct controls; a maximum
+of three is enforced in the first release.
+
+Resolution rules:
+
+1. **Longer sequence wins.** If `1+2` and `1+2+3` both exist, releasing `1,2`
+   waits for the chord window after the last press. Adding `3` fires `1+2+3`;
+   otherwise the shorter `1+2` fires at the deadline.
+2. **Hold beats tap for the same set.** If `1+2` is both a sequence and a hold,
+   holding past the threshold fires the hold and the later releases are ignored;
+   releasing before the threshold fires the sequence.
+3. **A first tap waits only if it can still become a combo.** Pressing only `1`
+   while `1+2` exists buffers until the chord window ends. If no combo starts
+   with `1`, the single-key gesture can proceed without this extra wait. This is
+   why the engine needs the configured pattern set, not just the raw events.
+4. **One action per sequence.** After a sequence or hold fires, the remaining
+   releases in that sequence are consumed. A new sequence starts only after all
+   controls are released and the next press begins.
+5. **Timeouts are bounded.** Chord window 80–1000 ms (default 250 ms), hold
+   200–3000 ms (default 550 ms). A sequence press older than the window is
+   discarded rather than matched late.
+
+The AU05 sentinel approach extends directly: each active button is written with
+a different sentinel key (`F13`, `F14`, `F15`), so a keyboard hook can tell
+which button went down and when. The same hook feeds the single-key gesture
+classifier and the multi-key matcher; the hook must not mistake the sentinels for
+ordinary typing. Holding `1+2` means observing both sentinels held; tapping
+`1,2,3` means three down/up pairs within the window. No firmware change is
+needed beyond writing the three sentinels once.
+
+If the service is not running, sentinel buttons produce nothing. Direct firmware
+chords remain the fallback for users who do not need gestures, and the voice
+button tradeoff described above still applies.
+
+The prototype adds a 多键组合 deck with the exact patterns `1+2`, `1+2+3`,
+`2+3`, and `1+2` hold. Each card shows the ordered key sequence, the pattern
+kind (快按 / 长按), and the profile it executes.
+
 ### UI composition
 
 The host provides primitives; plugins contribute data, not untrusted HTML:
@@ -336,7 +388,13 @@ so the layout does not pretend a plugin is working when no device is present.
 
 ## Implementation status
 
-The platform-independent gesture classifier has landed as `src/gesture.rs` with 11 unit tests covering single, double, long, repeated down reports, window expiry, reset and unusable timings. It is not wired to the service yet: the Windows keyboard hook/sentinel path, persisted gesture bindings, profile UI and gamepad integration remain Phase 1 work.
+The platform-independent gesture classifier has landed as `src/gesture.rs` with
+11 unit tests covering single, double, long, repeated down reports, window expiry,
+reset and unusable timings. The multi-button matcher has landed as `src/combo.rs`
+with 10 unit tests covering sequences, order independence, longer-sequence
+precedence, holds, quick release, repeated presses and bounded timings. They are
+not wired to the service yet: the Windows keyboard hook/sentinel path, persisted
+gesture/combo bindings, profile UI and gamepad integration remain Phase 1 work.
 
 ## Migration plan
 

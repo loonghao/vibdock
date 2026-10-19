@@ -17,6 +17,10 @@ mod app_shortcuts;
 mod actions;
 mod au05;
 mod browser_auth;
+// Multi-button chord recognition is platform independent and unit-tested; the
+// profile layer will construct it from saved combos.
+#[allow(dead_code)]
+mod combo;
 // Platform adapter that provisions the AU05 buttons. The stub reports
 // unavailable on hosts without the Windows HID adapter.
 mod capabilities;
