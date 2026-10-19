@@ -171,3 +171,7 @@ The gesture direction adds three slots per physical control (单击 / 双击 / �
 
 The same profiles can be projected as large touch-first virtual keys on a Pad or second screen. The prototype is [prototype-pad.html](prototype-pad.html); the API, pairing boundary and current status are in [virtual-pad.md](virtual-pad.md). POST /api/pad/execute already runs only a saved action id and records a pad recent event; the /pad route and pairing flow are not implemented yet.
 
+## First-run onboarding
+
+The [onboarding.html](onboarding.html) prototype covers the guided first-run path (connect, template, assign, test) and a copyable Agent prompt. The interaction and production integration contract are in [onboarding.md](onboarding.md); it is not served by the current Settings page yet.
+

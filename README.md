@@ -14,7 +14,8 @@ A local-first bridge between hardware controls, voice workflows and personal AI 
   <a href="README.zh-CN.md">简体中文</a> ·
   <a href="README.technical.md">Technical README</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#interface">Interface</a>
+  <a href="#interface">Interface</a> ·
+  <a href="#guided-setup">Guided setup</a>
 </p>
 
 <p align="center">
@@ -94,6 +95,32 @@ No Node.js, Python or separate web server is required. The published v0.1.0
 preview is older than the current source; the AU05/action work is a source
 candidate, not a new release.
 
+## Guided setup
+
+A first-run flow is designed around four steps: connect the device, choose a
+template, confirm the three buttons, then test.
+
+![First-run guide](assets/screenshots/onboarding.png)
+
+- [Install and configure guide](docs/guide/installation.md) — traditional setup,
+  direct chords, application shortcuts, hardware actions, verification,
+  troubleshooting and uninstall.
+- [Interactive onboarding prototype](docs/design/onboarding.html) — clickable
+  steps and an Agent prompt; the production Settings migration is still in
+  progress.
+
+## Let an agent configure it
+
+VibDock ships an [Agent skill](skills/vibdock/SKILL.md) plus a
+[helper](scripts/vibdock-agent.ps1). A user can say:
+
+> Bind button 2 to open Codex, and put WeChat voice on button 1. Read the current
+> configuration first; do not overwrite anything without asking.
+
+The agent reads `GET /api/plugins`, `GET /api/actions` and `hardware-status`,
+resolves application references instead of guessing paths, asks before writing
+firmware, and reports the readback and recent-trigger result.
+
 ## How it fits together
 
 ```
@@ -155,4 +182,3 @@ MIT. VibDock is independent of Ulanzi, OpenAI, DeepSeek, Tencent and WorkBuddy;
 product names are used only to describe integrations.
 
 <p align="center"><a href="README.zh-CN.md">阅读中文版 →</a></p>
-

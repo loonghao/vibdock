@@ -1,0 +1,254 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VibDock · 首次配置</title>
+<style>
+:root{
+  color-scheme:light;--paper:#f4f2ec;--surface:#fffdf9;--ink:#1d1b18;--muted:#78736a;--faint:#a39d92;
+  --line:#e5e0d6;--line-strong:#d4cdc0;--accent:#b45f2a;--accent-soft:#f3e7dc;--green:#3f7a5f;
+}
+*{box-sizing:border-box}
+html,body{min-height:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font:14px/1.55 "Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased;text-wrap:pretty;
+}
+button,select{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer;text-align:left}
+button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+h1,h2,h3,p{margin:0}
+h1{font-size:25px;line-height:1.15;letter-spacing:-.6px;font-weight:600;text-wrap:balance}
+h2{font-size:17px;line-height:1.25;letter-spacing:-.3px;font-weight:600}
+h3{font-size:13px;font-weight:600}
+small{font-size:12px;color:var(--muted)}
+.kicker{font-size:10.5px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase}
+.icon{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.button{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line-strong);background:var(--surface);border-radius:7px;padding:8px 13px;font-size:12.5px;line-height:1}
+.button:hover{border-color:#bfb6a7}
+.button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:550}
+.button.primary:hover{background:#a35424}
+.button.quiet{border-color:transparent;color:var(--muted)}
+.button.quiet:hover{background:#ece8df;color:var(--ink)}
+.button:disabled{opacity:.4;cursor:not-allowed}
+/* shell */
+.topbar{height:58px;display:flex;align-items:center;gap:16px;padding:0 24px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;letter-spacing:-.2px}
+.brand-mark{width:22px;height:22px;border:1.5px solid var(--ink);border-radius:6px;display:grid;place-items:center;font-size:10px;font-weight:700;background:var(--surface)}
+.brand span{color:var(--accent)}
+.topbar .grow{flex:1}
+.topbar .hint{font-size:11.5px;color:var(--faint);white-space:nowrap}
+.main{max-width:860px;margin:28px auto 40px;padding:0 22px}
+.wizard{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.progress{display:flex;gap:0;padding:16px 24px 0;border-bottom:1px solid var(--line)}
+.step{flex:1;padding:0 0 13px;color:var(--faint);font-size:11px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.step b{display:block;font-size:10px;letter-spacing:.08em;font-weight:550;margin-bottom:3px}
+.step[aria-current=true]{color:var(--accent);border-color:var(--accent)}
+.step[data-done=true]{color:var(--muted);border-color:var(--line-strong)}
+.body{padding:30px 34px 24px;min-height:430px}
+.body-head{display:flex;align-items:flex-start;gap:16px}
+.body-head .grow{flex:1}
+.body-head p{font-size:12.5px;color:var(--muted);margin-top:7px;max-width:560px}
+.body-actions{display:flex;align-items:center;gap:8px;flex:none}
+.foot{display:flex;align-items:center;gap:10px;padding:14px 24px;border-top:1px solid var(--line);background:#fbf9f4}
+.foot .grow{flex:1}
+.foot .link{font-size:11.5px;color:var(--faint);text-decoration:none}
+.foot .link:hover{color:var(--accent)}
+/* step 1 */
+.connect{display:grid;grid-template-columns:230px minmax(0,1fr);gap:26px;align-items:center;margin-top:26px}
+.device-stage{border:1px solid var(--line);border-radius:10px;background:#f0ede6;display:grid;place-items:center;padding:16px;min-height:270px}
+.device-stage svg{width:170px;height:auto;display:block}
+.checklist{display:flex;flex-direction:column;gap:10px}
+.check{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-size:12.5px;background:#fff}
+.check .dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
+.check small{display:block;font-size:11px;margin-top:1px;color:var(--faint)}
+.check b{display:block;font-size:12.5px;font-weight:550}
+.status-line{display:flex;align-items:center;gap:7px;margin-top:16px;font-size:11.5px;color:var(--green)}
+/* step 2 templates */
+.templates{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px}
+.template{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);background:#fff;border-radius:9px;padding:13px;text-align:left}
+.template:hover{border-color:var(--line-strong)}
+.template[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
+.template .radio{width:15px;height:15px;border:1.5px solid var(--line-strong);border-radius:50%;flex:none;margin-top:2px;position:relative}
+.template[aria-pressed=true] .radio{border-color:var(--accent)}
+.template[aria-pressed=true] .radio:after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+.template b{display:block;font-size:12.5px;font-weight:550}
+.template small{display:block;font-size:11px;line-height:1.5;margin-top:2px;color:var(--faint)}
+.template .keys{display:flex;gap:4px;flex-wrap:wrap;margin-top:7px}
+.key-chip{font:9.5px var(--mono,"Cascadia Mono",monospace);border:1px solid var(--line);border-radius:4px;padding:2px 5px;color:var(--muted)}
+/* step 3 mapping */
+.mapping{display:grid;grid-template-columns:210px minmax(0,1fr);gap:24px;margin-top:22px;align-items:start}
+.mini-device{border:1px solid var(--line);border-radius:10px;background:#f0ede6;padding:14px;display:grid;place-items:center}
+.mini-device svg{width:150px;display:block}
+.rows{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.map-row{display:grid;grid-template-columns:58px 1fr 172px;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.map-row .num{font:10px var(--mono,"Cascadia Mono",monospace);color:var(--faint)}
+.map-row b{display:block;font-size:12.5px;font-weight:550}
+.map-row small{display:block;font-size:10.5px;color:var(--faint);margin-top:1px}
+.select{width:100%;border:1px solid var(--line-strong);background:#fff;border-radius:6px;padding:7px 8px;font-size:12px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8d8578 50%),linear-gradient(135deg,#8d8578 50%,transparent 50%);background-position:calc(100% - 13px) 50%,calc(100% - 8px) 50%;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+.mapping-note{font-size:11px;color:var(--faint);line-height:1.6;margin-top:12px}
+/* step 4 test */
+.test-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:22px}
+.test-tile{border:1px solid var(--line);background:#fff;border-radius:9px;padding:14px;text-align:left;min-height:112px;display:flex;flex-direction:column;gap:5px}
+.test-tile:hover{border-color:var(--line-strong)}
+.test-tile[data-ok=true]{border-color:rgba(63,122,95,.5);background:#f1f7f3}
+.test-tile .num{font:10px var(--mono,monospace);color:var(--faint)}
+.test-tile b{font-size:13px;font-weight:550;margin-top:auto}
+.test-tile small{font-size:10.5px;color:var(--faint)}
+.test-tile .mark{font-size:10px;color:var(--green);margin-top:3px}
+.test-note{margin-top:16px;border:1px solid var(--line);border-radius:8px;padding:11px 12px;background:#fbf9f4;font-size:11px;color:var(--muted);line-height:1.6}
+/* done */
+.done{display:flex;flex-direction:column;align-items:flex-start;gap:0;padding:8px 0}
+.done-badge{width:42px;height:42px;border:1px solid rgba(63,122,95,.4);border-radius:50%;display:grid;place-items:center;color:var(--green);background:#f1f7f3;margin-bottom:16px}
+.done p{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.7;max-width:560px}
+.done-actions{display:flex;gap:8px;margin-top:22px;flex-wrap:wrap}
+/* agent modal */
+.backdrop{position:fixed;inset:0;background:rgba(29,27,24,.18);z-index:50;display:grid;place-items:center;padding:20px}
+.modal{width:min(600px,100%);max-height:86vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px;box-shadow:0 20px 60px #281f1620}
+.modal-head{display:flex;align-items:flex-start;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.modal-head .grow{flex:1}
+.modal-close{width:26px;height:26px;border:1px solid var(--line);border-radius:5px;color:var(--muted);display:grid;place-items:center;font-size:15px}
+.modal p{font-size:12px;color:var(--muted);line-height:1.7;margin-top:9px}
+.prompt{margin-top:14px;border:1px solid var(--line);border-radius:8px;background:#fbf9f4;padding:13px;font:11.5px/1.65 var(--mono,"Cascadia Mono",monospace);white-space:pre-wrap;color:var(--ink)}
+.modal-actions{display:flex;gap:8px;margin-top:14px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,8px);background:#2c2924;color:#fff;font-size:12px;border-radius:6px;padding:8px 12px;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:60}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(max-width:720px){.main{padding:0 12px;margin-top:14px}.body{padding:22px 18px}.connect{grid-template-columns:1fr}.device-stage{min-height:220px}.templates{grid-template-columns:1fr}.mapping{grid-template-columns:1fr}.mini-device svg{width:130px}.map-row{grid-template-columns:44px 1fr 150px}.test-grid{grid-template-columns:1fr}.progress{padding:12px 14px 0}.step{font-size:10px}.foot{padding:12px 16px}.topbar{padding:0 14px}.topbar .hint{display:none}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">V</span><span>Vib<span>Dock</span></span></div>
+  <div class="grow"></div>
+  <span class="hint">首次配置 · 约 2 分钟</span>
+  <button class="button quiet" id="agentButton">让 Agent 配置</button>
+</header>
+<main class="main">
+  <div class="wizard">
+    <nav class="progress" id="progress" aria-label="配置步骤"></nav>
+    <div class="body" id="body"></div>
+    <div class="foot">
+      <a class="link" href="../guide/installation.zh-CN.md" id="guideLink">查看传统安装说明</a>
+      <span class="grow"></span>
+      <button class="button" id="back">上一步</button>
+      <button class="button primary" id="next">下一步</button>
+    </div>
+  </div>
+</main>
+<div id="modalRoot"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+const PROFILES=[
+  {id:'wechat',name:'微信语音 · Ctrl + Win'},
+  {id:'codex',name:'Codex 语音'},
+  {id:'dsh',name:'DSH 工作台'},
+  {id:'mute',name:'麦克风静音'},
+  {id:'enter',name:'回车 / 确认'},
+  {id:'esc',name:'Esc / 取消'},
+  {id:'empty',name:'暂不分配'}
+];
+const TEMPLATES=[
+  {id:'voice',name:'语音工作流',desc:'微信语音 + Codex + DSH，适合日常与 Agent 对话。',mapping:['wechat','codex','dsh']},
+  {id:'coding',name:'编程助手',desc:'Codex + DSH + 麦克风静音，专注编码。',mapping:['codex','dsh','mute']},
+  {id:'wechat',name:'微信输入法',desc:'保留最常见的聊天与确认按键。',mapping:['wechat','enter','esc']},
+  {id:'blank',name:'空白配置',desc:'从零开始，之后在 Workbench 里逐个分配。',mapping:['empty','empty','empty']}
+];
+const STEPS=[{n:'01',t:'连接设备'},{n:'02',t:'选择模板'},{n:'03',t:'确认按键'},{n:'04',t:'测试反馈'}];
+const state={
+  step:new URL(location.href).searchParams.get('step')?Number(new URL(location.href).searchParams.get('step')):1,
+  template:'voice',mapping:[...TEMPLATES[0].mapping],tested:[false,false,false],done:false,agent:new URL(location.href).searchParams.get('agent')==='1'
+};
+let toastTimer=0;
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),1800)}
+function profileName(id){return (PROFILES.find(p=>p.id===id)||PROFILES[6]).name}
+function setStep(n){state.step=Math.max(1,Math.min(4,n));state.done=false;const u=new URL(location.href);u.searchParams.set('step',state.step);history.replaceState(null,'',u);render()}
+function chooseTemplate(id){state.template=id;const t=TEMPLATES.find(x=>x.id===id);state.mapping=[...t.mapping];state.tested=[false,false,false];render()}
+function setMapping(i,value){state.mapping[i]=value;render()}
+function testKey(i){state.tested[i]=true;render();showToast('已收到反馈（原型预览）')}
+function finish(){state.done=true;render();showToast('配置完成（原型预览）')}
+function render(){
+  document.getElementById('progress').innerHTML=STEPS.map((s,i)=>`<div class="step" aria-current="${state.step===i+1}" data-done="${state.step>i+1}"><b>${s.n}</b>${s.t}</div>`).join('');
+  document.getElementById('back').disabled=state.step===1||state.done;
+  const next=document.getElementById('next');
+  next.textContent=state.done?'完成':'下一步';
+  const body=document.getElementById('body');
+  if(state.done){body.innerHTML=doneView();next.textContent='关闭向导';}
+  else if(state.step===1)body.innerHTML=stepConnect();
+  else if(state.step===2)body.innerHTML=stepTemplate();
+  else if(state.step===3)body.innerHTML=stepMapping();
+  else body.innerHTML=stepTest();
+  renderModal();
+}
+function deviceSVG(){
+  return `<svg viewBox="0 0 150 300" role="img" aria-label="Vibe Key">
+    <rect x="30" y="5" width="90" height="288" rx="15" fill="#fffdf9" stroke="#2b2722" stroke-width="1.2"/>
+    <rect x="36" y="11" width="78" height="276" rx="11" fill="none" stroke="#ece7dd"/>
+    ${[0,1,2,3].map(r=>[0,1,2,3,4,5].map(c=>`<circle cx="${54+c*8}" cy="${24+r*6}" r="1.2" fill="#c4bcae"/>`).join('')).join('')}
+    <circle cx="75" cy="82" r="30" fill="#f1eee6" stroke="#c9c2b5"/>
+    <circle cx="75" cy="82" r="23" fill="none" stroke="#ded7ca"/><path d="M75 63v9" stroke="#7d766a" stroke-width="1.8" stroke-linecap="round"/>
+    <rect x="45" y="132" width="60" height="38" rx="8" fill="#fffdf9" stroke="#b9b2a5"/><circle cx="75" cy="151" r="12" fill="#f1eee6" stroke="#d9d2c5"/><g transform="translate(69 145)" fill="none" stroke="#6e6a61" stroke-width="1.3" stroke-linecap="round"><path d="M6 9a2 2 0 0 0 2-2V4a2 2 0 1 0-4 0v3a2 2 0 0 0 2 2Z"/><path d="M3 8a3 3 0 0 0 6 0M6 11v2M4 13h4"/></g>
+    <rect x="45" y="184" width="60" height="38" rx="8" fill="#fffdf9" stroke="#b9b2a5"/><circle cx="75" cy="203" r="12" fill="#f1eee6" stroke="#d9d2c5"/><path d="m70 203 3 3 6-6" fill="none" stroke="#6e6a61" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="45" y="236" width="60" height="38" rx="8" fill="#fffdf9" stroke="#b9b2a5"/><circle cx="75" cy="255" r="12" fill="#f1eee6" stroke="#d9d2c5"/><path d="m71 251 8 8M79 251l-8 8" fill="none" stroke="#6e6a61" stroke-width="1.4" stroke-linecap="round"/>
+  </svg>`
+}
+function stepConnect(){
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 01</div><h1>先把 Vibe Key 接通。</h1><p>插好 2.4G 接收器，打开设备电源，按任意按键唤醒。不需要安装 Ulanzi Studio。</p></div></div>
+  <div class="connect"><div class="device-stage">${deviceSVG()}</div><div class="checklist">
+    <div class="check"><span class="dot"></span><span><b>接收器已插入</b><small>USB-A / 2.4G，不经过 Studio</small></span></div>
+    <div class="check"><span class="dot"></span><span><b>设备已唤醒</b><small>按任意按键后状态灯亮起</small></span></div>
+    <div class="check"><span class="dot"></span><span><b>本机服务已运行</b><small>launcher 或 vibdock service-start</small></span></div>
+    <div class="status-line"><span class="dot" style="background:var(--green)"></span>检测到 Vibe Key · 固件 4.4.0</div>
+  </div></div>`
+}
+function stepTemplate(){
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 02</div><h1>从一个模板开始。</h1><p>模板只写入初始分配，之后可以随时在 Workbench 里改。每个按键还有单击 / 双击 / 长按和多键组合。</p></div></div>
+  <div class="templates">${TEMPLATES.map(t=>`<button class="template" data-template="${t.id}" aria-pressed="${state.template===t.id}"><span class="radio"></span><span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small><span class="keys">${t.mapping.map((m,i)=>`<span class="key-chip">0${i+1} ${esc(profileName(m))}</span>`).join('')}</span></span></button>`).join('')}</div>`
+}
+function stepMapping(){
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 03</div><h1>确认三个按键做什么。</h1><p>先给单击分配动作；双击/长按和多键组合可以在 Workbench 继续加。</p></div><div class="body-actions"><button class="button quiet" id="resetMapping">恢复模板</button></div></div>
+  <div class="mapping"><div class="mini-device">${deviceSVG()}</div><div class="rows">${state.mapping.map((m,i)=>`<div class="map-row"><span class="num">0${i+1}</span><span><b>${['语音键','确认键','取消键'][i]}</b><small>单击</small></span><select class="select" data-map="${i}" aria-label="按钮 ${i+1} 的动作">${PROFILES.map(p=>`<option value="${p.id}" ${p.id===m?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`).join('')}</div></div>
+  <p class="mapping-note">一个按键可以承载应用快捷键、硬件直发组合键或硬件动作中的一种。冲突由服务端校验，向导不会覆盖已有配置。</p>`
+}
+function stepTest(){
+  return `<div class="body-head"><div class="grow"><div class="kicker">Step 04</div><h1>按一下，确认它收到了。</h1><p>可以按物理按键，也可以点下面的虚拟卡片模拟反馈；测试只记录向导结果，不写入设备。</p></div></div>
+  <div class="test-grid">${state.mapping.map((m,i)=>`<button class="test-tile" data-test="${i}" data-ok="${state.tested[i]}"><span class="num">0${i+1}</span><b>${['语音键','确认键','取消键'][i]}</b><small>${esc(profileName(m))}</small>${state.tested[i]?'<span class="mark">✓ 已收到</span>':'<span class="mark" style="color:var(--faint)">等待测试</span>'}</button>`).join('')}</div>
+  <div class="test-note">物理按键触发会进入最近触发日志；如果没有任何反应，先确认服务在运行、接收器已插好，再检查当前按键是否被直发组合键占用。</div>`
+}
+function doneView(){
+  return `<div class="done"><div class="done-badge">✓</div><h1>可以开始用了。</h1><p>已为 Vibe Key 准备 3 个按键配置。接下来可以在 Workbench 里添加双击 / 长按 / 多键组合，或直接把同一套 Profile 打开到 Pad 上。</p><div class="done-actions"><button class="button primary" data-action="finish">打开 Workbench</button><button class="button" data-action="pad">打开 Virtual Pad</button><button class="button quiet" id="doneAgent">让 Agent 继续配置</button></div></div>`
+}
+function renderModal(){
+  const root=document.getElementById('modalRoot');
+  if(!state.agent){root.innerHTML='';return}
+  const prompt=`请用 VibDock 的 agent skill 帮我配置 Vibe Key：
+- 按钮 1 单击：微信语音
+- 按钮 2 单击：打开 Codex
+- 按钮 3 长按：打开 DeepSeek Harness
+
+先读取 GET /api/plugins 和 GET /api/actions，确认当前设备和已保存配置；
+不要覆盖已有绑定。每一步修改前先告诉我将写什么，完成后用 hardware-status 或 recent_actions 读回结果。`;
+  root.innerHTML=`<div class="backdrop" data-action="close-agent"><div class="modal" role="dialog" aria-modal="true" aria-label="让 Agent 配置">
+    <div class="modal-head"><div class="grow"><div class="kicker">Agent setup</div><h2>把这段话交给 Agent</h2><small>它会通过本机服务和 CLI 完成配置，并在每一步确认。</small></div><button class="modal-close" data-action="close-agent" aria-label="关闭">×</button></div>
+    <p>VibDock 的 Agent skill 位于 <code>skills/vibdock/SKILL.md</code>。用户只需要说“帮我把按钮 2 配置成打开 Codex”，Agent 就会读取插件清单、解析应用引用、创建或修改动作，并回报写入结果。</p>
+    <div class="prompt" id="agentPrompt">${esc(prompt)}</div>
+    <div class="modal-actions"><button class="button" data-action="copy-prompt">复制指令</button><button class="button quiet" data-action="close-agent">稍后</button></div>
+  </div></div>`;
+}
+document.addEventListener('click',e=>{
+  if(e.target.closest('.modal')&&!e.target.closest('[data-action]'))return;
+  const tpl=e.target.closest('[data-template]');if(tpl){chooseTemplate(tpl.dataset.template);return}
+  const test=e.target.closest('[data-test]');if(test){testKey(Number(test.dataset.test));return}
+  if(e.target.closest('#resetMapping')){chooseTemplate(state.template);return}
+  if(e.target.closest('#agentButton')){state.agent=true;render();return}
+  if(e.target.closest('#doneAgent')){state.agent=true;render();return}
+  if(e.target.closest('[data-action="close-agent"]')){state.agent=false;render();return}
+  if(e.target.closest('[data-action="copy-prompt"]')){const text=document.getElementById('agentPrompt')?.textContent||'';navigator.clipboard?.writeText(text).then(()=>showToast('已复制 Agent 指令')).catch(()=>showToast('复制失败，请手动选择'));return}
+  if(e.target.closest('[data-action="finish"]')){window.location.href='prototype-clean.html';return}
+  if(e.target.closest('[data-action="pad"]')){window.location.href='prototype-pad.html';return}
+  if(e.target.closest('#next')){if(state.done){window.location.href='prototype-clean.html';return}if(state.step<4)setStep(state.step+1);else finish();return}
+  if(e.target.closest('#back')){setStep(state.step-1);return}
+});
+document.addEventListener('change',e=>{const map=e.target.closest('[data-map]');if(map){setMapping(Number(map.dataset.map),map.value)}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&state.agent){state.agent=false;render()}});
+render();
+</script>
+</body></html>
+

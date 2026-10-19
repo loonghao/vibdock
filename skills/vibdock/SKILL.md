@@ -1,3 +1,8 @@
+---
+name: vibdock
+description: Inspect and configure the local VibDock service, AU05 Vibe Key, saved actions, profiles, gamepads and Virtual Pad through authenticated CLI/API calls.
+---
+
 # VibDock agent skill
 
 Use this skill when an agent needs to inspect or configure the local VibDock
@@ -7,6 +12,17 @@ Virtual Pad.
 VibDock is a local-first Windows service with an authenticated loopback API. The
 physical device, global hotkeys and process actions are executed by the Rust
 service; the browser and agent never inject input directly.
+
+There are two supported setup paths:
+
+- **Manual:** follow [the install and configure guide](../../docs/guide/installation.md)
+  or [简体中文](../../docs/guide/installation.zh-CN.md).
+- **Agent:** use this skill and the read-only helper. Read the detailed
+  [configuration recipes](references/configuration-recipes.md) before a mutation.
+
+A first-run onboarding design exists at
+[`docs/design/onboarding.html`](../../docs/design/onboarding.html); it is a
+prototype and its "Let an agent configure" prompt is the intended user flow.
 
 ## Safety rules
 
@@ -20,6 +36,29 @@ service; the browser and agent never inject input directly.
 - Ask before mutating device firmware, deleting bindings, or writing a direct
   chord. These can change what the physical buttons do.
 - If a write fails, do not silently fall back to another microphone or device.
+
+## Configure from natural language
+
+A user should be able to say what they want, not memorize API routes:
+
+| User request | Correct first step | Do not do |
+| --- | --- | --- |
+| “把按钮 2 配置成打开 Codex” | read plugins/actions/hardware, resolve the Codex reference from `shortcut-apps`, then create a launch action | guess an `.exe` path or overwrite button 2 silently |
+| “把微信语音放到按钮 1” | direct firmware chord `Ctrl + Win`, confirm the button is free | use an injected chord and claim it works |
+| “按钮 3 双击静音” | explain gesture monitoring is not wired yet | pretend a double-click binding exists |
+| “把 Codex 的语音键映射到按钮 2” | use an application shortcut or a hardware action with `send_keys` | claim a dispatched chord starts voice |
+| “测试一下我的配置” | read `hardware-status` and `recent_actions`; ask the user to press | fabricate a recent event |
+| “在 Pad 上执行这个动作” | `pad-execute -Id <saved-id>` | submit arbitrary steps to the Pad endpoint |
+
+Before any write, state exactly:
+
+1. which button/control will change;
+2. its current binding and what will be removed;
+3. whether firmware will be written;
+4. how the result will be verified.
+
+Then wait for confirmation. The full step-by-step examples are in
+[configuration recipes](references/configuration-recipes.md).
 
 ## Discovery
 
@@ -148,4 +187,6 @@ For hardware changes, run the relevant checklist in
 `docs/testing/au05-acceptance.md` or
 `docs/testing/hardware-actions-acceptance.md`, and report what was actually
 observed.
+
+
 

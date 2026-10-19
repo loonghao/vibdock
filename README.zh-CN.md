@@ -14,7 +14,8 @@
   <a href="README.md">English</a> ·
   <a href="README.technical.md">技术细节（英文）</a> ·
   <a href="#快速开始">快速开始</a> ·
-  <a href="#界面">界面</a>
+  <a href="#界面">界面</a> ·
+  <a href="#首次配置引导">首次配置</a>
 </p>
 
 <p align="center">
@@ -83,6 +84,27 @@ cargo build --release
 不需要 Node.js、Python 或单独启动 Web 服务。已发布的 v0.1.0 早于当前源码；
 AU05 / 动作相关能力目前是源码候选版本，不是新的正式发布。
 
+## 首次配置引导
+
+我们设计了一条四步首次配置流程：连接设备、选择模板、确认三个按键、测试反馈。
+
+![首次配置引导](assets/screenshots/onboarding.png)
+
+- [安装与配置指南](docs/guide/installation.zh-CN.md)：传统安装、固件直发、
+  应用快捷键、硬件动作、验证、故障排查和卸载。
+- [交互式首次配置原型](docs/design/onboarding.html)：可点击的步骤和 Agent
+  指令；生产 Settings 还在迁移中。
+
+## 让 Agent 帮你配置
+
+VibDock 提供 [Agent skill](skills/vibdock/SKILL.md) 和
+[辅助脚本](scripts/vibdock-agent.ps1)。你可以直接说：
+
+> 帮我把按钮 2 配置成打开 Codex，按钮 1 放微信语音。先读当前配置，不要覆盖已有绑定。
+
+Agent 会读取 `GET /api/plugins`、`GET /api/actions` 和 `hardware-status`，
+从应用引用解析目标而不是猜路径，在写固件前先确认，并在完成后报告读回结果和最近触发。
+
 ## 架构
 
 ```
@@ -143,3 +165,5 @@ MIT。VibDock 与 Ulanzi、OpenAI、DeepSeek、Tencent、WorkBuddy 均无隶属�
 产品名称仅用于描述集成目标。
 
 <p align="center"><a href="README.md">Read in English →</a></p>
+
+
