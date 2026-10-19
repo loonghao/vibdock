@@ -1680,7 +1680,6 @@ function updateOnboardVisibility(){
     return;
   }
   updateOnboardCardStatus();
-  maybeAutoOpenOnboard();
 }
 function openOnboard(options){
   if(!onboardSupported()||onboardOpen)return;
@@ -2165,3 +2164,4 @@ probe().then(async ()=>{
   $('authError').textContent='请通过托盘的 Settings… 重新进入本页，链接会自带一次性引导码。手动粘贴仅用于排查，不作为正常入口。';
 });
 </script></html>
+
