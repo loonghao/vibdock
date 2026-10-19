@@ -160,3 +160,7 @@ endpoint; native software-icon menus control one explicitly selected playback
 session. Neither path implements application input routing or voice start/stop. See
 [resident software contract](../resident-software.md) for API, lifecycle, privacy
 and real-device evidence limits.
+
+## Plugin workbench direction (proposal)
+
+The current Settings page is feature-oriented; the next direction is device-first and plugin-oriented. The architecture proposal is [plugin-workbench.md](plugin-workbench.md) and the clickable three-direction prototype is [prototype-workbench.html](prototype-workbench.html) (?variant=A|B|C). It is an exploration, not a production page: it does not persist, does not call the service, and does not change any acceptance claim. Direction A (device canvas) is the recommendation, with the profile deck from A/C and the key-to-plugin chain from B as the inspector.
