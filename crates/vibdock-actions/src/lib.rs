@@ -69,8 +69,7 @@ fn atomic_write(path: &PathBuf, contents: &[u8]) -> std::io::Result<()> {
         .parent()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))?;
     std::fs::create_dir_all(dir)?;
-    let token =
-        generate_token().map_err(|_| std::io::Error::other("token"))?;
+    let token = generate_token().map_err(|_| std::io::Error::other("token"))?;
     let temp = dir.join(format!(
         ".{}.{}.{}.tmp",
         path.file_name()
@@ -1460,4 +1459,3 @@ mod tests {
         assert!(super::CommandDefinition::parse(&value).is_none());
     }
 }
-
