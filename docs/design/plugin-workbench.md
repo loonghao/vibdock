@@ -195,6 +195,89 @@ A profile is the user-facing unit and the only thing most users edit:
 - The same profile can be shown as a list item, a card, or a patch cable; the
   data model does not depend on the layout.
 
+### Gesture layer
+
+Three physical keys should not mean three actions. Each input has up to three
+gesture slots, so the same AU05 exposes nine logical controls:
+
+| Gesture | Default timing | Semantics |
+| --- | --- | --- |
+| 单击 `single` | after release, after the double-click window | one press and release |
+| 双击 `double` | second press within 300 ms | two presses, one action |
+| 长按 `long` | held for 550 ms | fires at the threshold, not on release |
+
+Timings are per profile or global user settings and are bounded (for example
+double window 150–600 ms, long press 350–900 ms). The state machine is:
+
+```
+Idle ──press──▶ Held ──release before long──▶ AwaitingDouble ──timeout──▶ Single
+                  │                              └──second press──▶ Double
+                  └──held past long threshold──▶ Long (release is ignored)
+```
+
+Only one gesture is emitted per press sequence. Repeated key-down reports are
+ignored; a second press after the double window becomes the start of a new
+sequence. If a button has no double or long mapping, the host can fire `single`
+immediately on release instead of waiting, so the feature does not add latency
+to simple buttons.
+
+**Physical detection.** The AU05 firmware stores one shortcut entry per button
+and cannot classify gestures itself. The host therefore writes a unique
+**sentinel** key (for example bare `F13`, `F14`, `F15`; the AU05 accepts them in
+direct mode and normal applications ignore them) into a button that is in
+gesture mode, and observes keyboard down/up events. A low-level keyboard hook
+(`WH_KEYBOARD_LL`) or Raw Input provides press/release timing; the hook consumes
+the sentinel so it is not typed into the foreground application.
+`RegisterHotKey` is not sufficient: it reports a press, not a release, so it
+cannot measure long-press or double-press reliably.
+
+This is the same shape as OpenVibeKey's macOS "sentinel + delayed single click"
+design, adapted to Windows input monitoring. The honest tradeoffs:
+
+- **Single click is delayed** by the double-click window unless double is not
+  configured. The UI must show this, and the timing control must be visible.
+- **A button in gesture mode cannot also be a firmware direct chord.** The
+  vendor slot holds the sentinel instead of `Ctrl + Win`, `Enter`, etc.
+- **The WeChat voice default needs care.** We measured that an injected
+  `Ctrl + Win` did not open WeChat Input voice while a firmware-emitted chord
+  did. Moving button 1 to gesture mode would therefore trade away the reliable
+  single-click voice path. The workbench should keep button 1 in direct mode by
+  default and offer gestures on buttons 2/3, or let the user choose an explicit
+  action for the single gesture (for example launch WeChat Input, then send a
+  different chord).
+- **Service availability.** Gesture detection requires the resident service. If
+  it is not running, a sentinel button does nothing; the UI must not promise a
+  fallback it cannot deliver.
+- **Gamepad is simpler.** The existing HID monitor already yields press and
+  release events, so the same classifier can run without sentinels or firmware
+  writes; only the double-window delay applies.
+
+The profile schema gains a gesture key:
+
+```json
+{
+  "bindings": [
+    {
+      "input": { "device": "ulanzi.au05", "control": "button2", "gesture": "double" },
+      "steps": [
+        { "action": "app.launch", "target": "dsh" },
+        { "action": "wait", "ms": 200 }
+      ]
+    }
+  ]
+}
+```
+
+A source may have at most one binding per gesture (three per physical control).
+The host rejects a second binding for the same `(control, gesture)`, and a
+button cannot mix gesture mode with a direct firmware chord. Switching a button
+into gesture mode writes and verifies the sentinel; switching back restores the
+direct chord and removes the sentinel registration.
+
+The prototype shows this as three tabs (单击 / 双击 / 长按) in the inspector, a
+`3/3` count on each key callout, timing sliders, and "9 个动作位" in the canvas
+header. Variant C tags each profile with the exact key+gesture assignments.
+
 ### UI composition
 
 The host provides primitives; plugins contribute data, not untrusted HTML:
@@ -251,20 +334,26 @@ inspector for a selected key. Concretely:
 The prototype also covers the gamepad empty state ("Windows 当前未检测到设备"),
 so the layout does not pretend a plugin is working when no device is present.
 
+## Implementation status
+
+The platform-independent gesture classifier has landed as `src/gesture.rs` with 11 unit tests covering single, double, long, repeated down reports, window expiry, reset and unusable timings. It is not wired to the service yet: the Windows keyboard hook/sentinel path, persisted gesture bindings, profile UI and gamepad integration remain Phase 1 work.
+
 ## Migration plan
 
 **Phase 0 — prototype (this change).** Static, no persistence; choose variants.
 
-**Phase 1 — host shell + AU05 plugin.** Introduce `plugin.json` for the built-in
-AU05 support, a profile store, and the workbench shell. Keep existing APIs for
+**Phase 1 — host shell + AU05 plugin + gestures.** Introduce `plugin.json` for
+the built-in AU05 support, a profile store, the workbench shell, and the gesture
+classifier + sentinel-key detection for AU05. Keep existing APIs for
 compatibility; the new UI reads the plugin/profile view.
 
 **Phase 2 — application plugins.** Move Codex, DeepSeek Harness, WorkBuddy and
 WeChat Input to manifests that declare launch/edit/voice actions and default
 profiles. Command definitions become an action-provider plugin.
 
-**Phase 3 — gamepad plugin.** The existing HID monitor becomes a device plugin
-with a device view and learnable buttons.
+**Phase 3 — gamepad plugin + gestures.** The existing HID monitor becomes a
+device plugin with a device view and learnable buttons; its press/release events
+feed the same gesture classifier, without sentinels or firmware writes.
 
 **Phase 4 — third-party plugins.** Local plugin folder, manifest signing,
 sandboxed runtime, marketplace metadata. Only after the capability boundary and
@@ -287,5 +376,10 @@ review process have tests.
 - Plugin manifest validation rejects unknown capabilities and missing fields.
 - The device view is keyboard-operable; every control has a focus state and an
   accessible name.
+- The gesture classifier is unit-tested for single, double, long, repeat
+  suppression, double-window expiry, and long-then-release; the sentinel hook
+  suppresses its own keys and a missing service never fabricates a gesture.
 - The page remains usable with no device, no gamepad, no plugins installed, and
   in read-only preview mode (no authenticated calls).
+
+

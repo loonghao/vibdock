@@ -113,6 +113,7 @@ small{color:var(--ink-3);font-size:12px}
 .callout b{display:block;font-size:12px;font-weight:600}
 .callout small{display:block;font-size:10.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .callout .dot{justify-self:end}
+.callout .gcount{font:9px var(--mono);color:var(--ink-3);border:1px solid var(--line);border-radius:4px;padding:1px 4px;margin-left:4px}
 .stage-hint{position:absolute;left:24px;bottom:18px;z-index:2;display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:11px}
 .stage-hint kbd{font:10px var(--mono);border:1px solid var(--line);border-bottom-color:var(--line-strong);padding:2px 5px;border-radius:4px;color:var(--ink-2);background:var(--surface)}
 /* profile deck */
@@ -138,6 +139,19 @@ small{color:var(--ink-3);font-size:12px}
 .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:3px;border:1px solid var(--line);border-radius:9px;background:#131619;margin:16px 0}
 .seg button{border:0;background:transparent;border-radius:6px;padding:7px 4px;font-size:11px;color:var(--ink-3)}
 .seg button[aria-selected=true]{background:var(--surface-3);color:var(--ink);box-shadow:0 1px 0 #ffffff08}
+.gesture-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:14px 0 2px;padding:3px;border:1px solid var(--line);border-radius:10px;background:#131619}
+.gesture-tab{border:0;background:transparent;border-radius:7px;padding:7px 5px;text-align:left;color:var(--ink-3);position:relative}
+.gesture-tab b{display:block;font-size:11.5px;font-weight:550;color:inherit}
+.gesture-tab small{display:block;font-size:9.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gesture-tab[aria-selected=true]{background:var(--surface-3);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-strong)}
+.gesture-tab .count{position:absolute;right:6px;top:6px;width:5px;height:5px;border-radius:50%;background:var(--jade)}
+.gesture-tab[aria-selected=true] .count{background:var(--amber)}
+.timing-card{margin-top:16px;border:1px solid var(--line);border-radius:11px;padding:12px;background:#141719}
+.timing-card h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500;display:flex;justify-content:space-between;gap:8px}
+.timing-row{display:grid;grid-template-columns:64px 1fr 52px;align-items:center;gap:8px;margin-top:10px;font-size:11px;color:var(--ink-2)}
+.timing-row input[type=range]{width:100%;accent-color:var(--amber);height:3px}
+.timing-row output{font-family:var(--mono);font-size:10px;color:var(--ink-3);text-align:right}
+.timing-card p{font-size:10.5px;color:var(--ink-3);line-height:1.55;margin-top:8px}
 .inspector label{display:block;font-size:10.5px;letter-spacing:.05em;color:var(--ink-3);margin:14px 0 6px;text-transform:uppercase}
 .select{width:100%;border:1px solid var(--line-strong);background:#131619;border-radius:9px;padding:10px 11px;font-size:12.5px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .field-note{font-size:11px;color:var(--ink-3);line-height:1.6;margin-top:6px}
@@ -275,7 +289,7 @@ small{color:var(--ink-3);font-size:12px}
   <button class="arrow" data-action="variant-prev" aria-label="上一个方向">‹</button>
   <div class="label" id="protoLabel"></div>
   <button class="arrow" data-action="variant-next" aria-label="下一个方向">›</button>
-  <span class="proto-tag">PROTOTYPE · 不写入配置</span>
+  <span class="proto-tag">PROTOTYPE · 手势版 · 不写入配置</span>
 </div>
 <script>
 /* ── 原型数据（全部是演示数据，不访问网络、不写配置） ───────────────────── */
@@ -311,14 +325,20 @@ const PROFILES=[
   {id:'workbuddy',name:'WorkBuddy',plugin:'workbuddy',color:'#e7a97f',desc:'启动 WorkBuddy 并开始语音。需要先安装插件。',steps:[{i:'launch',t:'启动 WorkBuddy'},{i:'mic',t:'切换麦克风'},{i:'send',t:'开始语音'}]},
   {id:'media',name:'媒体控制',plugin:'scripts',color:'#c9b98f',desc:'播放 / 暂停、上一首、下一首。',steps:[{i:'send',t:'发送媒体播放快捷键'},{i:'send',t:'发送上一首'}]}
 ];
+const GESTURES=[{id:'single',name:'单击',hint:'按下后立即松开'},{id:'double',name:'双击',hint:'两次按下，300 ms 内'},{id:'long',name:'长按',hint:'按住超过 550 ms'}];
 const KEYS=[{id:'button1',label:'语音键',idx:'01',icon:'mic',hint:'按住说话 / 切换语音'},{id:'button2',label:'确认键',idx:'02',icon:'check',hint:'确认 / 发送'},{id:'button3',label:'取消键',idx:'03',icon:'x',hint:'取消 / 返回'},{id:'knob',label:'旋钮',idx:'04',icon:'knob',hint:'旋转切换 profile，按下确认'}];
 
 let state={
   variant:new URL(location.href).searchParams.get('variant')||'A',
   key:'button1',
+  gesture:'single',
   focusPlugin:'wechat',
   activeProfile:'codex',
-  assignments:{button1:'wechat',button2:'codex',button3:'dsh'},
+  assignments:{
+    button1:{single:'wechat',double:'codex',long:'dsh'},
+    button2:{single:'codex',double:'dsh',long:'media'},
+    button3:{single:'dsh',double:'media',long:'wechat'}
+  },
   installed:new Set(PLUGINS.filter(p=>p.installed).map(p=>p.id)),
   modal:null
 };
@@ -329,17 +349,21 @@ let toastTimer=0;
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function plugin(id){return PLUGINS.find(p=>p.id===id)}
 function profile(id){return PROFILES.find(p=>p.id===id)}
-function assignedProfile(keyId){return profile(state.assignments[keyId])}
-function assignedName(keyId){const p=assignedProfile(keyId);return p?p.name:'未配置'}
+function gestureName(id){return (GESTURES.find(g=>g.id===id)||GESTURES[0]).name}
+function keyAssignments(keyId){return state.assignments[keyId]||{}}
+function assignedProfile(keyId,gesture=state.gesture){return profile(keyAssignments(keyId)[gesture])}
+function assignedName(keyId,gesture=state.gesture){const p=assignedProfile(keyId,gesture);return p?p.name:'未配置'}
+function gestureCount(keyId){return Object.values(keyAssignments(keyId)).filter(Boolean).length}
 function pluginOfProfile(p){return p?plugin(p.plugin):null}
 function isInstalled(id){return state.installed.has(id)}
 function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2600)}
 function setVariant(v){if(!VARIANT_ORDER.includes(v))return;state.variant=v;const u=new URL(location.href);u.searchParams.set('variant',v);history.replaceState(null,'',u);render()}
 function cycleVariant(dir){const i=VARIANT_ORDER.indexOf(state.variant);setVariant(VARIANT_ORDER[(i+dir+VARIANT_ORDER.length)%VARIANT_ORDER.length])}
 function selectKey(id){state.key=id;if(id==='knob'){showToast('旋钮用于切换 profile：点击下方 profile 可应用到当前按键')}render()}
-function assignProfile(pid){const p=profile(pid);if(!p)return;if(state.key==='knob'){state.activeProfile=pid;showToast(`旋钮当前指向「${p.name}」`);render();return}state.assignments[state.key]=pid;state.activeProfile=pid;showToast(`已把「${p.name}」分配给 ${KEYS.find(k=>k.id===state.key).label}（原型预览）`);render()}
+function selectGesture(id){if(state.key==='knob')return;state.gesture=id;render()}
+function assignProfile(pid){const p=profile(pid);if(!p)return;if(state.key==='knob'){state.activeProfile=pid;showToast(`旋钮当前指向「${p.name}」`);render();return}state.assignments[state.key][state.gesture]=pid;state.activeProfile=pid;showToast(`已把「${p.name}」分配给 ${KEYS.find(k=>k.id===state.key).label} · ${gestureName(state.gesture)}（原型预览）`);render()}
 function togglePlugin(id){const p=plugin(id);if(!p)return;if(id==='au05'||id==='gamepad'||id==='scripts'){showToast('内置插件不能卸载');return}if(isInstalled(id)){state.installed.delete(id);showToast(`已停用 ${p.name}（原型预览）`)}else{state.installed.add(id);showToast(`已安装 ${p.name}，可创建 profile（原型预览）`)}state.modal=id;render()}
-function render(){document.getElementById('app').innerHTML=state.variant==='A'?renderA():state.variant==='B'?renderB():renderC();renderModal();const label=document.getElementById('protoLabel');label.innerHTML=`<b>${state.variant} · ${VARIANT_NAMES[state.variant]}</b><em>← / → 切换方向 · 点击设备按键或 profile 试用</em>`}
+function render(){document.getElementById('app').innerHTML=state.variant==='A'?renderA():state.variant==='B'?renderB():renderC();renderModal();const label=document.getElementById('protoLabel');label.innerHTML=`<b>${state.variant} · ${VARIANT_NAMES[state.variant]}</b><em>← / → 切换方向 · 点按键后选手势 · 单击 / 双击 / 长按</em>`}
 
 /* ── shared chrome ─────────────────────────────────────────────────────── */
 function topbar(){
@@ -363,16 +387,31 @@ function pluginMiniList(){
 function keyCallouts(){
   return `<div class="callouts">${KEYS.map(k=>{
     const active=state.key===k.id;
-    const sub=k.id==='knob'?`点击切换 profile`:`${assignedName(k.id)}${assignedProfile(k.id)?' · '+assignedProfile(k.id).steps.length+' 步':''}`;
+    const count=gestureCount(k.id);
+    const sub=k.id==='knob'?`点击切换 profile`:`${count}/3 手势 · ${gestureName(state.gesture)}：${assignedName(k.id)}`;
     return `<button class="callout" data-action="select-key" data-key="${k.id}" aria-pressed="${active}">
-      <span class="idx">${k.idx}</span><span><b>${k.label}</b><small>${esc(sub)}</small></span>
+      <span class="idx">${k.idx}</span><span><b>${k.label}${k.id==='knob'?'':` <span class="gcount">${count}/3</span>`}</b><small>${esc(sub)}</small></span>
       <span class="dot ${active?'warn':(k.id==='knob'?'off':'live')}"></span>
     </button>`}).join('')}</div>`
 }
+function gestureTabs(keyId){
+  return `<div class="gesture-tabs" role="tablist" aria-label="手势">${GESTURES.map(g=>{
+    const p=assignedProfile(keyId,g.id);
+    return `<button class="gesture-tab" role="tab" data-action="select-gesture" data-gesture="${g.id}" aria-selected="${state.gesture===g.id}">
+      ${p?'<span class="count"></span>':''}<b>${g.name}</b><small>${p?esc(p.name):'未配置'}</small>
+    </button>`}).join('')}</div>`
+}
+function timingCard(){
+  return `<div class="timing-card"><h3><span>手势判定</span><span class="mono">HOST TIMING</span></h3>
+    <div class="timing-row"><label for="doubleWindow">双击窗口</label><input id="doubleWindow" type="range" min="150" max="600" step="50" value="300" data-action="noop"><output>300 ms</output></div>
+    <div class="timing-row"><label for="longPress">长按阈值</label><input id="longPress" type="range" min="350" max="900" step="50" value="550" data-action="noop"><output>550 ms</output></div>
+    <p>单击要等双击窗口结束才执行；长按达到阈值立即执行，松开不再触发单击。AU05 固件只存一个哨兵键，判定在本机服务里完成。</p></div>`
+}
 function profileDeck(){
-  return `<div class="deck-head"><h2>Profile 库</h2><small>点击卡片应用到当前按键 · 由插件提供</small></div>
+  const gesture=state.key==='knob'?'':gestureName(state.gesture);
+  return `<div class="deck-head"><h2>Profile 库</h2><small>${state.key==='knob'?'旋钮用于切换 profile':'点击卡片应用到当前按键 · '+gesture} · 由插件提供</small></div>
   <div class="profile-deck">${PROFILES.map(p=>{
-    const assigned=state.assignments[state.key]===p.id;
+    const assigned=state.key!=='knob'&&assignedProfile(state.key)?.id===p.id;
     const pl=pluginOfProfile(p);const installed=isInstalled(p.plugin);
     return `<button class="profile-card" data-action="assign-profile" data-profile="${p.id}" data-assigned="${assigned}">
       <div class="profile-card-top"><b>${esc(p.name)}</b>${assigned?'<span class="assign-mark">当前</span>':`<span class="tag" style="color:${p.color};border-color:${p.color}35">${esc(pl?pl.vendor:'')}</span>`}</div>
@@ -384,26 +423,25 @@ function profileDeck(){
 function inspector(selectedKey=state.key){
   const k=KEYS.find(x=>x.id===selectedKey)||KEYS[0];
   const p=assignedProfile(selectedKey);
-  const pl=p?pluginOfProfile(p):null;
   const knob=selectedKey==='knob';
+  const count=gestureCount(selectedKey);
   return `<aside class="inspector">
-    <div class="inspector-head"><div><div class="eyebrow">${knob?'PROFILE DIAL':'KEY ASSIGNMENT'}</div><h2>${knob?'旋钮':k.label}</h2><small>${knob?'旋转切换 profile，按下确认':'按下时执行一个 profile 的动作序列'}</small></div><span class="tag ${p?'jade':''}">${knob?'轮盘':(p?'已配置':'空')}</span></div>
+    <div class="inspector-head"><div><div class="eyebrow">${knob?'PROFILE DIAL':'KEY GESTURE'}</div><h2>${knob?'旋钮':k.label}</h2><small>${knob?'旋转切换 profile，按下确认':'同一个按键可以拥有单击、双击、长按三种动作'}</small></div><span class="tag ${p?'jade':''}">${knob?'轮盘':count+'/3'}</span></div>
     ${knob?`
       <label>Profile 轮盘</label>
       <div class="step-list">${PROFILES.map(x=>`<button class="step" data-action="assign-profile" data-profile="${x.id}" style="text-align:left"><span class="step-no">${x.steps.length}</span><span><b>${esc(x.name)}</b><small>${esc(pluginOfProfile(x)?.name||'')}</small></span><span class="dot ${state.activeProfile===x.id?'warn':'off'}"></span></button>`).join('')}</div>
-      <p class="field-note">旋钮是全局 profile 选择器；按键仍保留各自绑定。旋转时预览角标会跟随，按下可确认。</p>
+      <p class="field-note">旋钮是全局 profile 选择器；按键仍保留各自手势。旋转时预览角标会跟随，按下可确认。</p>
     `:`
-      <div class="seg" role="tablist" aria-label="绑定类型">
-        <button role="tab" aria-selected="true">插件动作</button><button role="tab" aria-selected="false" data-action="noop">快捷键</button><button role="tab" aria-selected="false" data-action="noop">固件直发</button>
-      </div>
-      <label>由哪个插件处理</label>
+      ${gestureTabs(selectedKey)}
+      <label>由哪个插件处理 · ${gestureName(state.gesture)}</label>
       <select class="select" data-action="select-plugin" aria-label="插件">${PLUGINS.filter(x=>x.kind!=='设备插件').map(x=>`<option value="${x.id}" ${p&&p.plugin===x.id?'selected':''} ${isInstalled(x.id)?'':'disabled'}>${esc(x.name)}${isInstalled(x.id)?'':'（未安装）'}</option>`).join('')}</select>
-      <label>Profile</label>
+      <label>Profile（${gestureName(state.gesture)}）</label>
       <select class="select" data-action="select-profile" aria-label="Profile">${PROFILES.filter(x=>isInstalled(x.plugin)).map(x=>`<option value="${x.id}" ${p&&p.id===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
-      <div class="sequence"><div class="sequence-head"><h3>动作序列</h3><span class="mono">${p?p.steps.length:0} STEPS</span></div>
+      <div class="sequence"><div class="sequence-head"><h3>${gestureName(state.gesture)}动作序列</h3><span class="mono">${p?p.steps.length:0} STEPS</span></div>
         <ul class="step-list">${p?p.steps.map((s,i)=>`<li class="step"><span class="step-no">${String(i+1).padStart(2,'0')}</span><span><b>${esc(stepAction(s))}</b><small>${esc(stepDetail(s))}</small></span><span class="grip">⋮⋮</span></li>`).join(''):'<li class="step"><span class="step-no">0</span><span><b>尚未配置</b><small>从下方 Profile 库选择</small></span></li>'}</ul>
         <button class="step-add" data-action="noop">+ 添加步骤（插件提供的动作）</button>
       </div>
+      ${timingCard()}
       ${autoCard()}
       <div class="inspector-actions"><button class="btn" data-action="select-key" data-key="${selectedKey}">测试反馈</button><button class="btn primary" data-action="noop">保存到本机</button></div>
     `}
@@ -411,7 +449,7 @@ function inspector(selectedKey=state.key){
 }
 function autoCard(){
   const codex=isInstalled('codex'),dsh=isInstalled('dsh');
-  return `<div class="auto-card">${icon('wand')}<div><b>自动配置建议</b><p>${codex&&dsh?'检测到 Codex 与 DeepSeek Harness 已安装。可把按钮 2 设为 Codex 语音、按钮 3 设为 DSH 工作台。':'安装 Codex 或 DSH 插件后，这里会出现一键配置。'}</p>${codex&&dsh?'<button class="btn sm" data-action="auto-config">一键生成</button>':''}</div></div>`
+  return `<div class="auto-card">${icon('wand')}<div><b>自动配置建议</b><p>${codex&&dsh?'检测到 Codex 与 DeepSeek Harness 已安装。可把语音键的单击 / 双击 / 长按分别设为微信语音、Codex、DSH，把 3 个按键变成 9 个动作。':'安装 Codex 或 DSH 插件后，这里会出现一键配置。'}</p>${codex&&dsh?'<button class="btn sm" data-action="auto-config">一键生成</button>':''}</div></div>`
 }
 function stepAction(s){return s.t}
 function stepDetail(s){return ({launch:'启动并聚焦应用',send:'向目标应用发送按键',mic:'切换指定麦克风',wait:'等待固定时间',focus:'前置窗口'})[s.i]||'插件动作'}
@@ -429,8 +467,8 @@ function renderA(){
       <div class="rail-note">插件只声明自己拥有的能力：设备、应用、快捷键、命令。工作台根据清单生成配置，不再为每个应用手写一套页面。</div>
     </aside>
     <main class="canvas">
-      <div class="canvas-head"><div><h1>Vibe Key 画布</h1><small>点击设备上的按键或右侧编号开始配置；旋钮切换 profile。</small></div><div class="spacer"></div><span class="tag jade"><span class="dot live"></span>固件已读回</span><button class="btn sm" data-action="open-plugin" data-plugin="au05">设备设置</button></div>
-      <div class="stage"><div class="stage-device">${deviceSVG(state.key)}</div>${keyCallouts()}<div class="stage-hint">${icon('spark')} 推荐：Codex / DSH 已就绪，可一键生成配置 <button class="btn sm" data-action="auto-config">生成</button></div></div>
+      <div class="canvas-head"><div><h1>Vibe Key 画布</h1><small>3 个按键 × 3 种手势 = 9 个动作位；点击按键，再选单击 / 双击 / 长按。</small></div><div class="spacer"></div><span class="tag amber">9 个手势槽</span><span class="tag jade"><span class="dot live"></span>固件已读回</span><button class="btn sm" data-action="open-plugin" data-plugin="au05">设备设置</button></div>
+      <div class="stage"><div class="stage-device">${deviceSVG(state.key)}</div>${keyCallouts()}<div class="stage-hint">${icon('spark')} 单击 / 双击 / 长按可绑定不同 profile <button class="btn sm" data-action="auto-config">一键生成</button></div></div>
       ${profileDeck()}
     </main>
     ${inspector()}
@@ -444,14 +482,15 @@ function renderB(){
   return `${topbar()}<div class="workbench-b">
     <nav class="plugin-rail" aria-label="已安装插件">${PLUGINS.filter(x=>isInstalled(x.id)).map(x=>`<button data-action="focus-plugin" data-plugin="${x.id}" aria-pressed="${state.focusPlugin===x.id}">${pluginGlyph(x)}<small>${esc(x.name.split(' ')[0])}</small></button>`).join('')}<div class="rail-label">plugins</div></nav>
     <main class="patch-main">
-      <div class="patch-head"><div><h1>把按键接到一个插件</h1><small>设备输入 → 插件能力 → 动作序列。每一步都由插件声明，工作台只负责编排。</small></div><button class="btn sm" data-action="noop">+ 新建 profile</button></div>
+      <div class="patch-head"><div><h1>把按键接到一个插件</h1><small>先选手势，再接插件能力与动作序列。同一个按键的三种手势可以走完全不同的链。</small></div><button class="btn sm" data-action="noop">+ 新建 profile</button></div>
       <div class="profile-tabs" role="tablist" aria-label="Profile">${PROFILES.map(x=>`<button class="profile-tab" data-action="assign-profile" data-profile="${x.id}" aria-selected="${p&&p.id===x.id}">${esc(x.name)}</button>`).join('')}</div>
+      ${state.key==='knob'?'':gestureTabs(state.key)}
       <div class="chain-wrap">
-        <div class="chain-node device-node">${deviceSVG(state.key,'compact')}<h3>${k.label}</h3><small>Vibe Key · ${state.key==='knob'?'旋钮':'按钮'}</small></div>
+        <div class="chain-node device-node">${deviceSVG(state.key,'compact')}<h3>${k.label}</h3><small>${state.key==='knob'?'旋钮 · profile 轮盘':`按钮 · ${gestureName(state.gesture)}`}</small></div>
         <div class="wire"><span>INPUT</span></div>
         <div class="chain-node plugin-node"><div class="node-eyebrow">${pluginGlyph(pl||plugin('wechat'))}<span>${pl?esc(pl.kind):'插件'}</span></div><h2>${esc(pl?pl.name:'选择插件')}</h2><p>${esc(pl?pl.desc:'从左侧插件栏选择一个应用插件，工作台会显示它能提供的动作。')}</p><div class="cap-list">${(pl?pl.caps:[]).map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div><div class="node-foot"><span class="tag ${isInstalled(pl?.id||'')?'jade':'amber'}">${isInstalled(pl?.id||'')?'已安装':'需要安装'}</span><button class="btn sm" data-action="open-plugin" data-plugin="${pl?pl.id:'codex'}">配置</button></div></div>
         <div class="wire"><span>ACTION</span></div>
-        <div class="chain-node action-node"><div class="node-eyebrow"><span>SEQUENCE</span><span>${p?p.steps.length:0} STEPS</span></div><h2>${p?esc(p.name):'未配置'}</h2><ol>${p?p.steps.map((s,i)=>`<li><span class="n">${String(i+1).padStart(2,'0')}</span>${icon(profileStepIcon(s))}<span>${esc(s.t)}</span></li>`).join(''):'<li>从 profile 标签选择一个动作</li>'}</ol><div class="node-foot"><span class="mono">按 ${k.idx} 触发</span><button class="btn sm" data-action="noop">+ 步骤</button></div></div>
+        <div class="chain-node action-node"><div class="node-eyebrow"><span>SEQUENCE · ${gestureName(state.gesture)}</span><span>${p?p.steps.length:0} STEPS</span></div><h2>${p?esc(p.name):'未配置'}</h2><ol>${p?p.steps.map((s,i)=>`<li><span class="n">${String(i+1).padStart(2,'0')}</span>${icon(profileStepIcon(s))}<span>${esc(s.t)}</span></li>`).join(''):'<li>从 profile 标签选择一个动作</li>'}</ol><div class="node-foot"><span class="mono">按 ${k.idx} · ${gestureName(state.gesture)}</span><button class="btn sm" data-action="noop">+ 步骤</button></div></div>
       </div>
       <div class="chain-meta">
         <div class="meta-card"><h3>插件详情 · ${esc(focus.name)}</h3><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65">${esc(focus.desc)}</p><div class="meta-row" style="margin-top:8px"><span>版本 / 提供方</span><span>${esc(focus.version)} · ${esc(focus.vendor)}</span></div><div class="meta-row"><span>状态</span><span>${focus.status}</span></div><div class="meta-row"><span>能力</span><span>${focus.caps.join(' / ')}</span></div><button class="btn sm" style="margin-top:9px" data-action="open-plugin" data-plugin="${focus.id}">打开插件设置</button></div>
@@ -469,17 +508,18 @@ function renderC(){
     <main class="profiles-main">
       <div class="profiles-head"><div><h1>Profiles 是配置本身</h1><p>一个 profile 描述“哪个按键做什么”。插件提供动作，profile 负责组合；换设备时只换 profile。</p></div><button class="btn primary" data-action="noop">+ 新建 Profile</button></div>
       <div class="profile-grid">${PROFILES.map(p=>{
-        const pl=pluginOfProfile(p);const keys=Object.entries(state.assignments).filter(([k,v])=>v===p.id).map(([k])=>KEYS.find(x=>x.id===k)?.label);
+        const pl=pluginOfProfile(p);const keys=[];
+        for(const [keyId,slots] of Object.entries(state.assignments)){for(const [gid,pid] of Object.entries(slots||{})){if(pid===p.id){const key=KEYS.find(x=>x.id===keyId);keys.push(`${key?key.label:keyId}·${gestureName(gid)}`)}}}
         return `<button class="big-profile" data-action="select-profile-card" data-profile="${p.id}" data-selected="${state.activeProfile===p.id}">
           <div class="big-profile-top"><div><h2>${esc(p.name)}</h2><small>${esc(pl?pl.name:'')} · ${p.steps.length} 步</small></div><span class="tag" style="color:${p.color};border-color:${p.color}35">${esc(pl?pl.vendor:'')}</span></div>
           <div class="profile-steps">${p.steps.map((s,i)=>`<span><span class="n">${String(i+1).padStart(2,'0')}</span>${esc(s.t)}</span>`).join('')}</div>
           <div class="profile-foot"><div class="key-badges">${keys.length?keys.map(x=>`<span class="key-badge">${esc(x)}</span>`).join(''):'<span class="field-note">未绑定按键</span>'}</div>${p.id===state.activeProfile?'<span class="tag amber">编辑中</span>':`<span class="tag">${isInstalled(p.plugin)?'可用':'需安装'}</span>`}</div>
         </button>`}).join('')}</div>
-      <div class="auto-card" style="margin-top:16px">${icon('wand')}<div><b>自动配置：从“检测到的应用”开始</b><p>扫描到 ${isInstalled('codex')?'Codex':''}${isInstalled('dsh')?'、DSH':''}${isInstalled('wechat')?'、微信输入法':''}。工作台可以生成“语音 / 确认 / 取消”三个 profile，并把它们分配到三个按键，用户只需确认。</p><button class="btn sm" data-action="auto-config">生成三个推荐 profile</button></div></div>
+      <div class="auto-card" style="margin-top:16px">${icon('wand')}<div><b>自动配置：从“检测到的应用”开始</b><p>扫描到 ${isInstalled('codex')?'Codex':''}${isInstalled('dsh')?'、DSH':''}${isInstalled('wechat')?'、微信输入法':''}。工作台可以生成 3 个按键 × 单击 / 双击 / 长按 = 9 个动作位，用户只需确认或替换其中几个。</p><button class="btn sm" data-action="auto-config">生成 9 个推荐动作</button></div></div>
     </main>
     <aside class="market"><div class="market-head"><h2>插件目录</h2><button class="btn sm" data-action="noop">管理</button></div><p style="font-size:11.5px;color:var(--ink-3);line-height:1.65;margin-bottom:12px">安装插件后，它提供的动作会出现在 profile 编辑器里；设备插件还会出现在左侧设备栏。</p>${PLUGINS.map(p=>`<div class="plugin-row">${pluginGlyph(p)}<div class="grow"><b>${esc(p.name)}</b><small>${esc(p.kind)} · ${esc(p.vendor)}</small></div><button class="btn sm ${isInstalled(p.id)?'ghost':''}" data-action="toggle-plugin" data-plugin="${p.id}">${isInstalled(p.id)?'已安装':'安装'}</button></div>`).join('')}</aside>
   </div>
-  <div class="device-dock"><div class="dock-device">${deviceSVG(state.key,'compact')}</div><div class="dock-copy"><b>Vibe Key · 已连接</b><small>点击按键切换检查对象 · 当前 ${k.label} → ${esc(assignedName(state.key))}</small></div><div class="dock-keys">${KEYS.slice(0,3).map(x=>`<button class="dock-key" data-action="select-key" data-key="${x.id}" aria-pressed="${state.key===x.id}"><b>${x.label}</b><small>${esc(assignedName(x.id))}</small></button>`).join('')}<button class="dock-key" data-action="select-key" data-key="knob" aria-pressed="${state.key==='knob'}"><b>旋钮</b><small>切换 profile</small></button></div></div>`
+  <div class="device-dock"><div class="dock-device">${deviceSVG(state.key,'compact')}</div><div class="dock-copy"><b>Vibe Key · 已连接</b><small>点击按键切换检查对象 · 当前 ${k.label} · ${state.key==='knob'?'profile 轮盘':gestureName(state.gesture)} → ${esc(assignedName(state.key))}</small></div><div class="dock-keys">${KEYS.slice(0,3).map(x=>`<button class="dock-key" data-action="select-key" data-key="${x.id}" aria-pressed="${state.key===x.id}"><b>${x.label}</b><small>${gestureCount(x.id)}/3 手势</small></button>`).join('')}<button class="dock-key" data-action="select-key" data-key="knob" aria-pressed="${state.key==='knob'}"><b>旋钮</b><small>切换 profile</small></button></div></div>`
 }
 
 /* ── device illustration ───────────────────────────────────────────────── */
@@ -574,11 +614,12 @@ document.addEventListener('click',e=>{
   if(a==='variant-prev')return cycleVariant(-1);
   if(a==='variant-next')return cycleVariant(1);
   if(a==='select-key')return selectKey(el.dataset.key);
+  if(a==='select-gesture')return selectGesture(el.dataset.gesture);
   if(a==='assign-profile')return assignProfile(el.dataset.profile);
   if(a==='open-plugin'){state.modal=el.dataset.plugin;return render()}
   if(a==='close-modal'){state.modal=null;return render()}
   if(a==='toggle-plugin'){togglePlugin(el.dataset.plugin);return render()}
-  if(a==='auto-config'){state.assignments.button1='wechat';state.assignments.button2='codex';state.assignments.button3='dsh';showToast('已生成推荐配置：语音键 → 微信语音，确认键 → Codex，取消键 → DSH（原型预览）');return render()}
+  if(a==='auto-config'){state.assignments.button1={single:'wechat',double:'codex',long:'dsh'};state.assignments.button2={single:'codex',double:'dsh',long:'media'};state.assignments.button3={single:'dsh',double:'media',long:'wechat'};showToast('已生成 9 个推荐动作：每个按键都可单击 / 双击 / 长按（原型预览）');return render()}
   if(a==='focus-plugin'){state.focusPlugin=el.dataset.plugin;return render()}
   if(a==='select-profile-card'){state.activeProfile=el.dataset.profile;showToast(`正在编辑「${profile(el.dataset.profile)?.name}」`);return render()}
   if(a==='noop')return showToast('原型交互：这个操作在接入服务后生效')

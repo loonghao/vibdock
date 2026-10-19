@@ -164,3 +164,6 @@ and real-device evidence limits.
 ## Plugin workbench direction (proposal)
 
 The current Settings page is feature-oriented; the next direction is device-first and plugin-oriented. The architecture proposal is [plugin-workbench.md](plugin-workbench.md) and the clickable three-direction prototype is [prototype-workbench.html](prototype-workbench.html) (?variant=A|B|C). It is an exploration, not a production page: it does not persist, does not call the service, and does not change any acceptance claim. Direction A (device canvas) is the recommendation, with the profile deck from A/C and the key-to-plugin chain from B as the inspector.
+
+The gesture direction adds three slots per physical control (单击 / 双击 / 长按), so three AU05 buttons become nine actions. The timing classifier is unit-tested in src/gesture.rs; the Windows sentinel-key hook and profile wiring are not implemented yet. The prototype's 单击 / 双击 / 长按 tabs show the intended UI.
+

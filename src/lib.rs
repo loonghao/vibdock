@@ -27,6 +27,10 @@ pub mod feedback;
 mod feedback_windows;
 #[cfg(windows)]
 mod gamepad_windows;
+// Gesture timing is platform independent and unit-tested; the Windows gesture
+// monitor will construct it when the profile gesture layer lands.
+#[allow(dead_code)]
+mod gesture;
 mod hardware;
 mod instance_proof;
 mod integrations;
