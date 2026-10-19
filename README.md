@@ -9,7 +9,7 @@ A local-first bridge between hardware controls, voice workflows, and personal AI
 
 Use a microphone button to talk to an agent, silence an input device, and get back to a meeting without hunting through windows. VibDock is being built for the way people move between coding assistants, personal agents, and collaboration apps.
 
-**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. Current Windows source also recognises running window applications independently of their audio sessions and can save up to eight per-application shortcut bindings that dispatch a user-supplied chord only when the bound executable owns the foreground window. These source features are not a new published release. Physical Ulanzi buttons, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
+**Early preview:** Published v0.1.0 provides Windows microphone commands and a design preview. Current source adds authenticated Web configuration, one resident microphone shortcut, a Windows tray that opens Settings directly, saved Windows software observations with microphone associations and explicit native single-session playback controls, a macOS native menu-bar/Dock/panel with saved application-presence observations, and native desktop packaging. Current Windows source also recognises running window applications independently of their audio sessions and can save up to eight per-application shortcut bindings that dispatch a user-supplied chord only when the bound executable owns the foreground window. The same source can write chords directly into the three Ulanzi AU05 Vibe Key buttons over the device's vendor HID interface, so per-application buttons no longer depend on Ulanzi Studio. A first-run default layout writes firmware-emitted `Ctrl + Win` (WeChat voice), `Enter`, and `Escape` to the three buttons, and the same direct-chord mode can carry other chords and bare keys that VibDock cannot register itself; a recent-trigger log shows captured application-bound presses. The first-run defaults, the three default buttons' host behaviour, and a physical application-bound press were checked on a real AU05 on 2026-10-19; Studio coexistence, device replacement, power-cycle persistence, and sleep/wake recovery remain open. These source features are not a new published release. The remaining physical-device items, real default-browser launch, tray pointer interaction and DPI/focus behavior still require desktop acceptance. Application input routing and voice-session start/stop remain `not_implemented`; VibDock is independent of these vendors.
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline predates the desktop and microphone-association changes. New candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
@@ -21,7 +21,7 @@ Published v0.1.0 archives contain one Rust executable and this README. Current W
 
 | Platform | Published v0.1.0 | Pending source |
 | --- | --- | --- |
-| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, tray-first Settings, persistent software/microphone associations and exact-session playback controls, dual-entry archive |
+| Windows x64 | Microphone commands, fixed global mute shortcut, design preview | Authenticated configuration, resident configurable shortcut, tray-first Settings, persistent software/microphone associations, exact-session playback controls, direct AU05 provisioning with first-run defaults and direct firmware chords, dual-entry archive |
 | Linux x64 | Design preview | Local configuration service; audio and global shortcuts unsupported |
 | macOS Apple silicon | Design preview | Native .app, menu bar/Dock and floating panel, persistent application list/icons/running state, authenticated local configuration; audio and global shortcuts unsupported |
 
@@ -46,8 +46,14 @@ This workflow requires a build containing both `vibdock.exe` and `vibdock-launch
 2. Select the intended microphone from the service's device list. In the binding editor, record a combination such as **Ctrl+Alt+Shift+F9** and save it.
 3. Check the separate **background binding** row. “Registered” means Windows accepted the shortcut; it does not mean an audio action already ran. A conflict leaves the previous configuration and registration in place.
 4. In Ulanzi Studio, map the desired button to that exact keyboard combination using its shortcut action. Physical-device identification is not inferred from a mapped keyboard event.
-5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical Ulanzi verification remains pending; a saved mapping alone is not proof of input delivery.
+5. Press the hardware button and verify the microphone's actual mute state. The page reports the last completed action or its error. Physical verification of this Studio-mapped microphone shortcut remains pending; a saved mapping alone is not proof of input delivery. The AU05 Vibe Key button defaults are covered separately below.
 6. Close the browser to leave the service running. Reopen **Settings…** from the tray; use **Exit VibDock** or `vibdock.exe service-stop` to stop the service.
+
+This workflow still maps the microphone shortcut through Ulanzi Studio: the
+direct AU05 path provisions per-application button triggers or direct firmware
+chords, and a trigger equal to the microphone shortcut is rejected.
+Per-application Vibe Key buttons can be written directly without Studio; see
+[Vibe Key (AU05) direct bindings](#vibe-key-au05-direct-bindings-windows-source).
 
 Only one microphone/shortcut pair is currently active. Up to eight separate
 per-application shortcut bindings can also be saved (see below). Do not run
@@ -63,10 +69,11 @@ Settings > **应用与麦克风** also recognises running applications that own 
 visible top-level window, even when they have no playback session. This is how
 an input method, a coding agent, or a meeting client can be selected before it
 produces audio. Recognised names include Tencent Meeting (`wemeetapp.exe`),
-WeChat Input (`wetype*.exe`), Codex/ChatGPT (`codex.exe`/`chatgpt.exe`) and
-WorkBuddy. That match is a filename label only: it does not establish that the
-client is installed correctly, connected, signed in, or able to accept a
-shortcut.
+WeChat Input (`wetype*.exe`), Codex/ChatGPT (`codex.exe`/`chatgpt.exe`),
+DeepSeek Harness (`DeepSeek Harness.exe`, integration id `dsh`) and WorkBuddy
+(`workbuddy.exe`). That match is a filename label only: it does not establish
+that the client is installed correctly, connected, signed in, or able to accept
+a shortcut.
 
 For a recognised application, save:
 
@@ -89,8 +96,10 @@ Read the target's actual shortcut from its own settings. VibDock ships no
 built-in WeChat, Codex, or Tencent Meeting shortcut. Up to eight bindings are
 saved in `shortcuts.json`; a trigger must be unique, and a dispatch chord may
 not equal any VibDock trigger (Windows would feed the injected chord back into
-the global registration). Bindings live in
-`%LOCALAPPDATA%\VibDock\shortcuts.json`; executable paths in that file are
+the global registration). A registered trigger cannot contain `Win` or be a
+bare key, but a dispatch chord may contain `Win` (for example `Ctrl + Win`);
+the AU05 direct firmware mode accepts both for a physical button. Bindings live
+in `%LOCALAPPDATA%\VibDock\shortcuts.json`; executable paths in that file are
 personal data.
 
 The same bindings are available without the browser:
@@ -98,7 +107,7 @@ The same bindings are available without the browser:
 ```powershell
 .\vibdock.exe shortcut-apps
 .\vibdock.exe shortcut-list --json
-.\vibdock.exe shortcut-add --app "ChatGPT" --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space"
+.\vibdock.exe shortcut-add --app "ChatGPT" --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space" --device-button 1
 .\vibdock.exe shortcut-add --application <reference> --trigger "Ctrl+Alt+F10" --dispatch "Ctrl+Shift+Space" --scope running
 .\vibdock.exe shortcut-remove --id <saved-id>
 ```
@@ -112,13 +121,260 @@ Recognition is deliberately bounded: only visible, non-cloaked, non-tool
 windows are considered, shell/host processes are skipped, and a capped or
 partially unreadable window scan reports state as unknown rather than "not
 running". A closed set of known integration executables (`wetype*`, `wemeet*`,
-`codex`, `workbuddy`) is also recognised when it runs without a window, so
-WeChat Input can be pinned even when it has no visible window. Other background
-services and tray-only helpers are not listed.
+`codex`/`chatgpt`, `DeepSeek Harness`, `workbuddy`) is also recognised when it
+runs without a window, so WeChat Input can be pinned even when it has no
+visible window. Other background services and tray-only helpers are not
+listed.
 The dated [application recognition acceptance record](docs/testing/app-recognition-acceptance.md)
 lists the live detections, shortcut dispatch checks and the remaining UI limits.
 Live foreground/focus and injected-input acceptance on a real desktop remains
 pending; see [the software contract](docs/resident-software.md).
+
+## Vibe Key (AU05) direct bindings (Windows source)
+
+Current Windows source can provision the three round buttons of an Ulanzi AU05
+Vibe Key directly, without installing or running Ulanzi Studio. The resident
+service talks to the device's vendor HID collection (VID `0xFFF1`, PID `0x00DD`,
+usage page `0xFFFC`, report ID `0x55`) and writes chords into the buttons'
+firmware settings. There are two modes:
+
+- **Application binding** — a saved per-application shortcut names a Vibe Key
+  button; its registered trigger is written into that button. Pressing the
+  button emits the chord, VibDock captures it, and dispatch follows the same
+  foreground/running rules as
+  [per-application shortcuts](#per-application-shortcuts-windows-source).
+- **Direct firmware chord** — a chord or single key is written straight into
+  the button with no VibDock trigger and no dispatch. The device emits the keys
+  itself and VibDock is not involved. This is how the default layout works and
+  is needed for `Ctrl + Win` (which Windows will not let VibDock register) and
+  for bare keys such as `Enter` and `Esc`.
+
+`provisioned` is only reported after the shortcut slot and the fixed-function
+slot are read back and match, so it means the device returned exactly the
+requested chord — not that the application ran, received anything, or started
+voice. The protocol was cross-checked against the MIT-licensed
+[OpenVibeKey](https://github.com/palaemonboy/OpenVibeKey) reference and against
+live device readback; the first-run defaults and a physical application-bound
+press have live acceptance evidence (below). The protocol design and full limits
+are in [AU05 direct bindings](docs/design/au05-direct-bindings.md). The published
+v0.1.0 download does not contain this feature.
+
+### Default layout on first run
+
+When no `hardware.json` exists, the authenticated service writes this built-in
+layout once at startup and stores it in `hardware.json`:
+
+| Vibe Key button | Chord | Label | What the device emits |
+| --- | --- | --- | --- |
+| 按钮 1 | `Ctrl + Win` | 微信语音 | left Ctrl + left Windows |
+| 按钮 2 | `Enter` | 回车 | `Enter` |
+| 按钮 3 | `Escape` | 取消 | `Escape` |
+
+A button that already carries an application binding keeps that binding; its
+default entry is skipped. On 2026-10-19 the default entries were written and
+read back from a physical AU05 (firmware 4.4.0), and the user confirmed button 1
+invokes WeChat Input voice, button 2 sends `Enter`, and button 3 sends `Escape`.
+These are firmware-emitted physical keys, not VibDock dispatches.
+
+If the device is absent on first run, the layout is still saved and can be
+written later with **同步到设备** / `--sync`. A `hardware.json` that exists but
+is empty does not re-seed the defaults.
+
+### Setup
+
+1. Build or use a current Windows source build. Keep `vibdock.exe` and
+   `vibdock-launcher.exe` in the same directory, then start the launcher to
+   open authenticated Settings. Keep the notification-area icon running.
+2. Open **应用与麦克风**. The **Vibe Key（AU05）硬件按键** card should report
+   已连接 and show the device and its microphone. If it reports 未检测到 AU05,
+   plug in the 2.4G receiver, power the device on, press any AU05 key, and click
+   刷新.
+3. On first run, confirm the three buttons report 已写入设备并读回一致 and list
+   their direct chords. If a button shows a device failure, press an AU05 key and
+   click **同步到设备**.
+4. Change a direct chord in **硬件直发快捷键**: choose the button, enter a
+   chord such as `Ctrl + Shift + Win` or a single key such as `Enter`, add an
+   optional label, and click 写入直发组合键. 清除该按键直发 removes it.
+5. To bind an application instead, first clear that button's direct chord, then
+   in **新增应用快捷键** choose the target application, a free **VibDock
+   trigger**, the target's own dispatch chord, and the **Vibe Key 按钮**. Save.
+6. Press the physical button. A direct chord produces its keys in whatever
+   application is focused and does **not** appear in 最近触发. An
+   application-bound button produces a 最近触发 entry and reports `DISPATCHED`
+   or an error. **`DISPATCHED` is not a verified application state.**
+7. Use **同步到设备** after a service restart, wake-up, or reconnect to
+   re-detect the device and rewrite all saved buttons.
+
+At most one saved item (application binding or direct chord) may name each
+button, and at most eight application bindings are saved in total. A direct
+chord equal to a registered trigger is rejected, and a new trigger equal to a
+direct chord is rejected, so a firmware-emitted chord can never also feed the
+global hotkey table. Only the three round buttons (device slots 0-2) are managed; the knob, the built-in
+microphone, lighting, standby timers and every other device setting are never
+written. A written chord lives in the device firmware, so the button keeps
+emitting it while VibDock is not running; it then reaches the foreground
+application like any other keyboard input.
+
+### Layouts and the 最近触发 (recent trigger) log
+
+`GET /api/hardware` and `GET /api/config` return `recent_actions`: a bounded,
+in-memory log (newest last, at most 20) of completed triggers, and the page shows
+the newest six in **最近触发** plus the latest one in the status line. Each entry
+carries `sequence`, `at` (milliseconds since the Unix epoch), `source`
+(`vibe_key`, `application_shortcut`, or `microphone`), `label`, `trigger`,
+`dispatch`, `device_button`, `state`, and `error`. For application sources
+`label` is the saved binding label; for `microphone` it is the configured
+endpoint id. It records that VibDock received a registered trigger and what it
+sent; `DISPATCHED` still does not mean the application acted. The log is cleared
+on service restart.
+
+Direct firmware chords never appear in this log: the device emits them without a
+host hotkey, so VibDock never sees the press. Confirm their effect in the target
+application instead.
+
+Two layouts are supported:
+
+- **Out-of-the-box:** the three direct defaults above (WeChat voice / Enter /
+  Escape).
+- **One button per agent:** clear the direct chords, then bind each button to
+  an application with its own trigger. The intended example is Codex/ChatGPT,
+  DeepSeek Harness (`dsh`), and WorkBuddy.
+
+| Vibe Key button | Target | Recognised executable | Example trigger |
+| --- | --- | --- | --- |
+| 按钮 1 | Codex / ChatGPT | `codex.exe` / `chatgpt.exe` | `Ctrl + Alt + Shift + F10` |
+| 按钮 2 | DeepSeek Harness (integration id `dsh`) | `DeepSeek Harness.exe` | `Ctrl + Alt + Shift + F11` |
+| 按钮 3 | WorkBuddy | `workbuddy.exe` | `Ctrl + Alt + Shift + F12` |
+
+These triggers are examples: pick chords no other application uses, and do not
+reuse the microphone shortcut (the `listen` example uses
+`Ctrl + Alt + Shift + F9`). A registered trigger must be AU05-expressible and
+must not contain `Win`; a dispatch chord may contain `Win`. `F1`-`F12`, letters,
+digits, common punctuation and named keys are accepted; `F13`-`F24` and
+unsupported characters are rejected with `400`.
+
+### Why default button 1 uses the direct path
+
+`Ctrl + Win` is a common voice shortcut for input methods, but Windows does not
+let VibDock register it as a global trigger, and `SendInput`-injected
+`Ctrl + Win` produced a `DISPATCHED` receipt without invoking WeChat Input
+during live acceptance. The firmware-emitted chord did invoke it. That negative
+result is why the default uses direct firmware emission rather than an
+application binding; it does not prove the application reacted in general.
+
+### AU05 microphone
+
+The AU05 microphone appears as a normal Windows capture endpoint whose friendly
+name contains `AU05`. Select it in the target application or in VibDock's
+existing **音频设备** view like any other microphone. This feature does not
+select, open, or change an audio route, and the hardware status view uses the
+name only as a label.
+
+### CLI and API
+
+The service must already be running (`service-start` or the launcher). The CLI
+never talks to the device directly; it projects the authenticated API.
+
+```powershell
+.\vibdock.exe hardware-status
+.\vibdock.exe hardware-status --json
+.\vibdock.exe hardware-status --sync
+.\vibdock.exe hardware-bind --button 1 --chord "Ctrl + Win" --label "微信语音"
+.\vibdock.exe hardware-bind --button 2 --chord "Enter"
+.\vibdock.exe hardware-unbind --button 1
+.\vibdock.exe shortcut-add --app "DeepSeek Harness" --trigger "Ctrl+Alt+Shift+F11" --dispatch "Ctrl+Shift+Space" --device-button 2
+.\vibdock.exe shortcut-remove --id <saved-id>
+```
+
+`--device-button` and `--button` are 1-3, matching the printed button labels;
+the API fields are zero-based. `hardware-status` prints the buttons, their direct
+chords, and the direct-chord list; `--json` prints the hardware status object;
+`--sync` re-detects the device and rewrites every saved button.
+
+The authenticated API uses the same bearer, `Host` and `Origin` rules as the
+other `/api` routes:
+
+```text
+GET  /api/hardware                         (also returns recent_actions)
+POST /api/hardware/sync
+POST /api/hardware/direct                  {"revision":0,"button":0,"chord":"Ctrl + Win","label":"微信语音"}
+POST /api/hardware/direct/remove           {"revision":1,"button":0}
+GET  /api/shortcuts                        (each entry includes device_button; top-level hardware status)
+POST /api/shortcuts/add
+     {"revision":0,"application_reference":"<fresh reference from a scan>",
+      "trigger":"Ctrl + Alt + Shift + F10","dispatch":"Ctrl + Shift + Space",
+      "device_button":0}
+GET  /api/config                           (includes last_action and recent_actions)
+```
+
+A direct chord accepts a chord or a bare key (except bare `Win`); `chord` and an
+optional `label` are stored in `hardware.json`. `device_button` is optional and
+accepts `0`, `1`, `2`, or `null`; an explicit `null` means no button. A button
+cannot hold both an application binding and a direct chord: the second save
+returns `409` until the other is cleared. The hardware status object contains
+`schema_version`, `platform`, `available`, `enabled`, `connected`, `device`,
+`buttons` (with `direct_chord`, `direct_label`, `direct_state`, `direct_error`),
+`direct` (`revision`, `entries`, `limit`, `storage_writable`, `error`), `error`,
+`studio_note`, and `recent_actions`.
+
+### Provisioning states
+
+The per-button `state` and, when a direct chord exists, `direct_state` use the
+same labels; `direct_state` is `null` when no direct chord is configured.
+
+- `provisioned` — this service instance wrote the chord and read both device
+  slots back successfully. It is a firmware readback of the last completed
+  write, not continuous monitoring and not an application result; unplugging the
+  device does not retract it until a later attempt fails.
+- `failed` — the latest write or readback failed; if the device is not connected
+  and there is no recorded result for this binding, the not-found error is
+  shown. A firmware failure does **not** roll back the saved binding or direct
+  chord.
+- `pending` — the item is saved and the device is connected, but this service
+  instance has not written and verified it yet (for example after a service
+  restart). The button may still work from its stored firmware chord; run a sync
+  to re-verify it.
+- `unbound` — no saved item names that button (combined `state` only; a
+  `direct_state` is `null` rather than `unbound`).
+- Unavailable — on a platform or mode where hardware control is disabled
+  (the read-only preview, or a non-Windows build), the status reports
+  `available: false`; the Settings card is hidden in the preview.
+
+When both an application binding and a direct chord name one button, the
+combined `state` reports `failed` with a conflict message and provisioning skips
+that button.
+
+**Quit Ulanzi Studio while VibDock owns the device.** Studio may hold or talk on
+the same vendor collection; VibDock does not detect Studio or coordinate with
+it, and writes or readbacks can then time out. The device's vendor channel can
+also sleep after its standby timeout: a write then times out, and the message
+asks you to press any AU05 key, then retry the sync. Because
+the chord lives in the device firmware, the button keeps working while VibDock
+is closed, but VibDock cannot dispatch or capture anything then.
+
+### Verified and not yet verified
+
+Live acceptance on 2026-10-19 (AU05 firmware 4.4.0) verified the first-run
+defaults (written and read back; entry bytes `83 01 83 08`, `02 28`, `02 29`),
+the three default buttons producing WeChat voice / `Enter` / `Escape`, a
+physical application-bound press appearing in 最近触发 with its
+button/label/trigger/dispatch and `DISPATCHED`, and the negative `Ctrl + Win`
+injection result above.
+
+Still unverified:
+
+- Ulanzi Studio coexistence, device replacement identity, and power-cycle
+  persistence.
+- Sleep/wake recovery after the device's standby timeout.
+- Clearing a firmware slot on `hardware-unbind`, especially after a service
+  restart or with the device absent; confirm by pressing the button.
+- A per-button matrix of application-binding writes and dispatches for all
+  three buttons.
+- Hosted CI with a device: CI has no AU05, so only protocol, validation,
+  persistence, and page code are covered there.
+
+The dated evidence and the full manual checklist are in the
+[AU05 acceptance record](docs/testing/au05-acceptance.md).
 
 ## Local speech-to-text (optional native build)
 

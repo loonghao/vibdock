@@ -40,15 +40,117 @@ fn print_view(view: &Value) {
                 .map(|error| format!("not registered: {error}"))
                 .unwrap_or_else(|| "not registered".to_string())
         };
+        let device = entry["device_button"]
+            .as_u64()
+            .map(|button| format!("  Vibe Key button {}", button + 1))
+            .unwrap_or_default();
         println!(
-            "  {}  [{}]  {} -> {}  {}",
+            "  {}  [{}]  {} -> {}  {}{}",
             entry["label"].as_str().unwrap_or("?"),
             entry["scope"].as_str().unwrap_or("?"),
             entry["trigger"].as_str().unwrap_or("?"),
             entry["dispatch"].as_str().unwrap_or("?"),
-            state
+            state,
+            device
         );
     }
+}
+
+fn hardware(args: &[String]) -> Result<()> {
+    let mut json_output = false;
+    let mut sync = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json_output = true,
+            "--sync" => sync = true,
+            other => {
+                return Err(format!(
+                    "Unknown hardware-status argument: {other}. \
+                     Usage: vibdock hardware-status [--json] [--sync]"
+                )
+                .into())
+            }
+        }
+    }
+    let control = client()?;
+    let view = if sync {
+        control.sync_hardware()?
+    } else {
+        control.hardware()?
+    };
+    if json_output {
+        println!("{view}");
+        return Ok(());
+    }
+    if view["enabled"] != true {
+        println!("AU05 hardware control is unavailable in this mode.");
+        return Ok(());
+    }
+    if view["connected"] == true {
+        println!(
+            "AU05: connected{}",
+            view["device"]["microphone"]
+                .as_str()
+                .map(|microphone| format!("  microphone: {microphone}"))
+                .unwrap_or_default()
+        );
+    } else {
+        println!(
+            "AU05: not connected{}",
+            view["error"]
+                .as_str()
+                .map(|error| format!(" — {error}"))
+                .unwrap_or_default()
+        );
+    }
+    let bindings = view["buttons"].as_array().cloned().unwrap_or_default();
+    for button in bindings {
+        let detail = button["binding_label"]
+            .as_str()
+            .map(|label| format!("{label} ({})", button["trigger"].as_str().unwrap_or("?")))
+            .or_else(|| {
+                button["direct_chord"].as_str().map(|chord| {
+                    format!(
+                        "direct {chord}{}",
+                        button["direct_label"]
+                            .as_str()
+                            .map(|label| format!(" ({label})"))
+                            .unwrap_or_default()
+                    )
+                })
+            })
+            .unwrap_or_else(|| "unbound".to_string());
+        println!(
+            "  {}  {}  {}",
+            button["label"].as_str().unwrap_or("?"),
+            button["state"].as_str().unwrap_or("?"),
+            detail
+        );
+        if let Some(error) = button["error"].as_str() {
+            println!("    {error}");
+        }
+    }
+    if let Some(direct) = view.get("direct") {
+        let entries = direct["entries"].as_array().cloned().unwrap_or_default();
+        if !entries.is_empty() {
+            println!("Direct firmware chords (revision {}):", direct["revision"]);
+            for entry in entries {
+                println!(
+                    "  Button {}  {}{}",
+                    entry["button"].as_u64().unwrap_or(0) + 1,
+                    entry["chord"].as_str().unwrap_or("?"),
+                    entry["label"]
+                        .as_str()
+                        .map(|label| format!("  ({label})"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        if let Some(error) = direct["error"].as_str() {
+            println!("  {error}");
+        }
+    }
+    Ok(())
 }
 
 fn list(args: &[String]) -> Result<()> {
@@ -109,6 +211,7 @@ struct AddOptions {
     dispatch: String,
     scope: Option<String>,
     label: Option<String>,
+    device_button: Option<u8>,
 }
 
 fn parse_add(args: &[String]) -> std::result::Result<AddOptions, String> {
@@ -118,6 +221,7 @@ fn parse_add(args: &[String]) -> std::result::Result<AddOptions, String> {
     let mut dispatch = None;
     let mut scope = None;
     let mut label = None;
+    let mut device_button = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -155,6 +259,17 @@ fn parse_add(args: &[String]) -> std::result::Result<AddOptions, String> {
                 label = Some(value(args, index, "--label")?);
                 index += 2;
             }
+            "--device-button" => {
+                let value = value(args, index, "--device-button")?;
+                let button: u8 = value
+                    .parse()
+                    .map_err(|_| "--device-button must be 1, 2, or 3.".to_string())?;
+                if !(1..=3).contains(&button) {
+                    return Err("--device-button must be 1, 2, or 3.".into());
+                }
+                device_button = Some(button - 1);
+                index += 2;
+            }
             other => return Err(format!("Unknown shortcut-add argument: {other}")),
         }
     }
@@ -172,6 +287,7 @@ fn parse_add(args: &[String]) -> std::result::Result<AddOptions, String> {
         dispatch,
         scope,
         label,
+        device_button,
     })
 }
 
@@ -238,6 +354,9 @@ fn add(args: &[String]) -> Result<()> {
     if let Some(label) = options.label {
         body["label"] = json!(label);
     }
+    if let Some(button) = options.device_button {
+        body["device_button"] = json!(button);
+    }
     let saved = control.mutate_shortcut("add", body)?;
     let entry = saved["entries"]
         .as_array()
@@ -257,6 +376,33 @@ fn add(args: &[String]) -> Result<()> {
             entry["error"].as_str().unwrap_or("unknown error")
         );
     }
+    if let Some(button) = options.device_button {
+        let state = saved["hardware"]["buttons"]
+            .as_array()
+            .and_then(|buttons| {
+                buttons
+                    .iter()
+                    .find(|row| row["button"].as_u64() == Some(u64::from(button)))
+            })
+            .cloned()
+            .unwrap_or(Value::Null);
+        match state["state"].as_str() {
+            Some("provisioned") => println!(
+                "Vibe Key button {}: written and read back from the device.",
+                button + 1
+            ),
+            Some(other) => println!(
+                "Vibe Key button {}: {} — {}",
+                button + 1,
+                other,
+                state["error"].as_str().unwrap_or("no detail")
+            ),
+            None => println!(
+                "Vibe Key button {}: hardware status was not returned.",
+                button + 1
+            ),
+        }
+    }
     Ok(())
 }
 
@@ -272,6 +418,98 @@ fn remove(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn hardware_bind(args: &[String]) -> Result<()> {
+    let mut button = None;
+    let mut chord = None;
+    let mut label = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--button" => {
+                let value = value(args, index, "--button")?;
+                let parsed: u8 = value
+                    .parse()
+                    .map_err(|_| "--button must be 1, 2, or 3.".to_string())?;
+                if !(1..=3).contains(&parsed) {
+                    return Err("--button must be 1, 2, or 3.".into());
+                }
+                button = Some(parsed - 1);
+                index += 2;
+            }
+            "--chord" => {
+                chord = Some(value(args, index, "--chord")?);
+                index += 2;
+            }
+            "--label" => {
+                label = Some(value(args, index, "--label")?);
+                index += 2;
+            }
+            other => return Err(format!("Unknown hardware-bind argument: {other}").into()),
+        }
+    }
+    let button = button.ok_or("--button is required.")?;
+    let chord = chord.ok_or("--chord is required.")?;
+    let control = client()?;
+    let view = control.hardware()?;
+    let revision = view["direct"]["revision"].as_u64().unwrap_or(0);
+    let mut body = json!({"revision": revision, "button": button, "chord": chord});
+    if let Some(label) = label {
+        body["label"] = json!(label);
+    }
+    let saved = control.bind_hardware(body)?;
+    print_direct_result(&saved, button);
+    Ok(())
+}
+
+fn hardware_unbind(args: &[String]) -> Result<()> {
+    if args.len() != 2 || args[0] != "--button" {
+        return Err("Usage: vibdock hardware-unbind --button <1-3>".into());
+    }
+    let button: u8 = args[1]
+        .parse()
+        .map_err(|_| "--button must be 1, 2, or 3.".to_string())?;
+    if !(1..=3).contains(&button) {
+        return Err("--button must be 1, 2, or 3.".into());
+    }
+    let control = client()?;
+    let view = control.hardware()?;
+    let revision = view["direct"]["revision"].as_u64().unwrap_or(0);
+    let saved = control.unbind_hardware(json!({"revision": revision, "button": button - 1}))?;
+    println!("Cleared the direct chord on Vibe Key button {button}.");
+    print_direct_result(&saved, button - 1);
+    Ok(())
+}
+
+fn print_direct_result(view: &Value, button: u8) {
+    let Some(row) = view["buttons"].as_array().and_then(|buttons| {
+        buttons
+            .iter()
+            .find(|row| row["button"].as_u64() == Some(u64::from(button)))
+    }) else {
+        return;
+    };
+    let state = row["direct_state"].as_str().unwrap_or("unknown");
+    match state {
+        "provisioned" => println!(
+            "Vibe Key button {}: direct chord written and read back from the device.",
+            button + 1
+        ),
+        "unbound" => println!(
+            "Vibe Key button {}: no direct chord is configured.",
+            button + 1
+        ),
+        other => println!(
+            "Vibe Key button {}: {} — {}",
+            button + 1,
+            other,
+            row["direct_error"]
+                .as_str()
+                .or_else(|| row["error"].as_str())
+                .unwrap_or("hardware status did not include a reason")
+        ),
+    }
+}
+
 pub(crate) fn run(action: Action, args: &[String]) -> Result<()> {
     let rest = &args[1..];
     match action {
@@ -279,6 +517,9 @@ pub(crate) fn run(action: Action, args: &[String]) -> Result<()> {
         Action::ShortcutApps => applications(rest),
         Action::ShortcutAdd => add(rest),
         Action::ShortcutRemove => remove(rest),
+        Action::HardwareStatus => hardware(rest),
+        Action::HardwareBind => hardware_bind(rest),
+        Action::HardwareUnbind => hardware_unbind(rest),
         _ => Err("Not a shortcut CLI command.".into()),
     }
 }
@@ -296,6 +537,52 @@ mod tests {
         assert!(reference(&"a".repeat(64)));
         assert!(!reference(&"a".repeat(63)));
         assert!(!reference(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn device_button_is_one_based_and_optional() {
+        let reference = "a".repeat(64);
+        let parsed = parse_add(&args(&[
+            "--application",
+            &reference,
+            "--trigger",
+            "Ctrl+Alt+Shift+F9",
+            "--dispatch",
+            "Ctrl+Shift+Space",
+            "--device-button",
+            "1",
+        ]))
+        .unwrap();
+        assert_eq!(parsed.device_button, Some(0));
+        assert_eq!(
+            parse_add(&args(&[
+                "--application",
+                &reference,
+                "--trigger",
+                "Ctrl+Alt+Shift+F9",
+                "--dispatch",
+                "Ctrl+Shift+Space",
+            ]))
+            .unwrap()
+            .device_button,
+            None
+        );
+        for invalid in ["0", "4", "one"] {
+            assert!(
+                parse_add(&args(&[
+                    "--application",
+                    &reference,
+                    "--trigger",
+                    "Ctrl+Alt+Shift+F9",
+                    "--dispatch",
+                    "Ctrl+Shift+Space",
+                    "--device-button",
+                    invalid,
+                ]))
+                .is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

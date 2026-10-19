@@ -278,6 +278,56 @@ fn application_shortcut_result(
     None
 }
 
+/// Records one fired application shortcut with the binding details the page
+/// needs to show what a physical button press did.
+#[cfg(windows)]
+fn record_application_shortcut_event(
+    feedback: &mut ActionFeedback,
+    shortcuts: &ShortcutRegistry,
+    id: i32,
+    result: std::result::Result<String, String>,
+    target: Option<String>,
+) {
+    match shortcuts.describe(id) {
+        Some(details) => feedback.record_event(
+            TriggerEvent {
+                source: if details.device_button.is_some() {
+                    "vibe_key"
+                } else {
+                    "application_shortcut"
+                },
+                label: Some(&details.label),
+                trigger: Some(&details.trigger),
+                dispatch: Some(&details.dispatch),
+                device_button: details.device_button,
+                target: target.as_deref(),
+            },
+            result,
+        ),
+        None => feedback.record_event(
+            TriggerEvent {
+                source: "application_shortcut",
+                label: None,
+                trigger: None,
+                dispatch: None,
+                device_button: None,
+                target: target.as_deref(),
+            },
+            result,
+        ),
+    }
+}
+
+#[cfg(not(windows))]
+fn record_application_shortcut_event(
+    _feedback: &mut ActionFeedback,
+    _shortcuts: &ShortcutRegistry,
+    _id: i32,
+    _result: std::result::Result<String, String>,
+    _target: Option<String>,
+) {
+}
+
 /// Performs the action the armed binding is configured for.
 ///
 /// Only the toggle action exists today, and it always names the configured
@@ -371,6 +421,23 @@ struct ActionFeedback {
     /// display time: a binding change after an action would otherwise relabel
     /// that older action's verified result with the newly selected microphone.
     target: Option<String>,
+    /// Bounded newest-last history of completed triggers.
+    ///
+    /// The page shows this so a physical button press is observable even when
+    /// the target application ignores the injected chord. It records that a
+    /// trigger was received and what VibDock sent, never that the application
+    /// acted on it.
+    recent: std::collections::VecDeque<serde_json::Value>,
+}
+
+/// One completed trigger, rendered in the page's recent-actions list.
+struct TriggerEvent<'a> {
+    source: &'a str,
+    label: Option<&'a str>,
+    trigger: Option<&'a str>,
+    dispatch: Option<&'a str>,
+    device_button: Option<u8>,
+    target: Option<&'a str>,
 }
 
 impl ActionFeedback {
@@ -404,6 +471,45 @@ impl ActionFeedback {
         }
     }
 
+    /// Records a trigger with enough detail for the page to show what happened.
+    ///
+    /// `source` is `microphone`, `application_shortcut`, or `vibe_key`; a
+    /// `vibe_key` event also carries the device button that emitted the trigger.
+    fn record_event(
+        &mut self,
+        event: TriggerEvent<'_>,
+        result: std::result::Result<String, String>,
+    ) {
+        let (state, error) = match &result {
+            Ok(state) => (Some(state.clone()), None),
+            Err(error) => (None, Some(error.clone())),
+        };
+        self.record_for(result, event.target);
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis())
+            .unwrap_or(0);
+        self.recent.push_back(serde_json::json!({
+            "sequence": self.sequence,
+            "at": at,
+            "source": event.source,
+            "label": event.label,
+            "trigger": event.trigger,
+            "dispatch": event.dispatch,
+            "device_button": event.device_button,
+            "state": state,
+            "error": error,
+        }));
+        const MAX_RECENT: usize = 20;
+        while self.recent.len() > MAX_RECENT {
+            self.recent.pop_front();
+        }
+    }
+
+    fn recent_json(&self) -> serde_json::Value {
+        serde_json::Value::Array(self.recent.iter().cloned().collect())
+    }
+
     fn enrich(&self, payload: &str) -> String {
         let mut value: serde_json::Value =
             serde_json::from_str(payload).expect("configuration responses are generated JSON");
@@ -412,6 +518,7 @@ impl ActionFeedback {
             "state": self.state,
             "error": self.error,
         });
+        value["recent_actions"] = self.recent_json();
         value.to_string()
     }
 }
@@ -789,6 +896,13 @@ fn accept_loop(
     let mut browser_auth = crate::browser_auth::BrowserAuth::default();
     let mut apps = crate::resident_apps::Registry::start(token.is_some());
     let mut shortcuts = ShortcutRegistry::start(token.is_some());
+    let mut hardware = crate::hardware::Hardware::start(token.is_some());
+    // First run only: seed and write button 1 = Ctrl+Win, 2 = Enter, 3 = Esc.
+    // A button that already has an application shortcut keeps it instead. The
+    // read-only design preview never writes device configuration.
+    if token.is_some() {
+        hardware.ensure_defaults(&shortcuts.device_bindings());
+    }
     let mut feedback = ActionFeedback::default();
     // The indicator is opt-in, resolved from the documented environment
     // variable. When it is off, no overlay thread starts and no window is ever
@@ -809,7 +923,17 @@ fn accept_loop(
                 }
                 // The device is captured with the action, so a later rebinding
                 // cannot relabel this action's verified result with another mic.
-                feedback.record_for(result, state.device_id.as_deref());
+                feedback.record_event(
+                    TriggerEvent {
+                        source: "microphone",
+                        label: state.device_id.as_deref(),
+                        trigger: state.hotkey.as_deref(),
+                        dispatch: None,
+                        device_button: None,
+                        target: state.device_id.as_deref(),
+                    },
+                    result,
+                );
             } else if let Some((result, target)) =
                 application_shortcut_result(&shortcuts, &apps, id)
             {
@@ -817,7 +941,7 @@ fn accept_loop(
                     eprintln!("ERROR: the application shortcut failed: {error}");
                 }
                 // Dispatch is unverified by nature; the recorded state says so.
-                feedback.record_for(result, target.as_deref());
+                record_application_shortcut_event(&mut feedback, &shortcuts, id, result, target);
             }
         }
         // Repaint the indicator from the completed action. This enqueues only
@@ -852,6 +976,7 @@ fn accept_loop(
             || path.starts_with("/api/actions/")
             || path.starts_with("/api/apps/actions/")
             || path.starts_with("/api/shortcuts")
+            || path.starts_with("/api/hardware")
             || matches!(
                 path.as_str(),
                 "/api/apps"
@@ -889,12 +1014,22 @@ fn accept_loop(
                 instance_challenge_route(&routed_request, token.as_deref())
             } else if path.starts_with("/api/apps") {
                 apps_route(&routed_request, token.is_some(), &mut apps, principal)
+            } else if path.starts_with("/api/hardware") {
+                hardware_route(
+                    &routed_request,
+                    token.is_some(),
+                    &mut hardware,
+                    &shortcuts,
+                    &feedback,
+                    state,
+                )
             } else if path.starts_with("/api/shortcuts") {
                 shortcuts_route(
                     &routed_request,
                     token.is_some(),
                     &mut apps,
                     &mut shortcuts,
+                    &mut hardware,
                     state,
                     principal,
                 )
@@ -1126,6 +1261,7 @@ mod tests {
             state: Some("live".to_string()),
             error: None,
             target: Some("Shure MV7".to_string()),
+            recent: std::collections::VecDeque::new(),
         };
         let mut cursor = OverlayCursor::default();
         #[cfg(windows)]
@@ -1302,6 +1438,50 @@ mod tests {
         assert_eq!(failed["last_action"]["error"], "endpoint disconnected");
         feedback.record(Ok("MUTED".into()));
         assert!(feedback.error.is_none());
+    }
+
+    #[test]
+    fn recent_actions_are_bounded_and_carry_trigger_details() {
+        let mut feedback = ActionFeedback::default();
+        feedback.record_event(
+            TriggerEvent {
+                source: "vibe_key",
+                label: Some("微信输入法"),
+                trigger: Some("Ctrl + Alt + Shift + F9"),
+                dispatch: Some("Ctrl + Win"),
+                device_button: Some(0),
+                target: Some("微信输入法"),
+            },
+            Ok("DISPATCHED".into()),
+        );
+        let view: serde_json::Value = serde_json::from_str(&feedback.enrich("{}")).unwrap();
+        assert_eq!(view["last_action"]["state"], "DISPATCHED");
+        let events = view["recent_actions"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["source"], "vibe_key");
+        assert_eq!(events[0]["device_button"], 0);
+        assert_eq!(events[0]["trigger"], "Ctrl + Alt + Shift + F9");
+        assert_eq!(events[0]["dispatch"], "Ctrl + Win");
+        assert_eq!(events[0]["state"], "DISPATCHED");
+        assert!(events[0]["at"].as_u64().unwrap() > 0);
+
+        for _ in 0..25 {
+            feedback.record_event(
+                TriggerEvent {
+                    source: "application_shortcut",
+                    label: Some("Codex"),
+                    trigger: Some("Ctrl + Alt + Shift + F10"),
+                    dispatch: Some("Ctrl + Shift + Space"),
+                    device_button: None,
+                    target: None,
+                },
+                Err("not the foreground window".into()),
+            );
+        }
+        let view: serde_json::Value = serde_json::from_str(&feedback.enrich("{}")).unwrap();
+        assert_eq!(view["recent_actions"].as_array().unwrap().len(), 20);
+        assert_eq!(view["last_action"]["sequence"], 26);
+        assert_eq!(view["last_action"]["error"], "not the foreground window");
     }
 
     #[test]
@@ -1811,6 +1991,20 @@ mod tests {
     }
 }
 
+/// Adds the current hardware status to a shortcut view.
+///
+/// The page joins provisioning state by saved id; keeping it in one envelope
+/// means a shortcut edit and its device result cannot be read from two
+/// different snapshots.
+fn with_hardware(
+    mut view: serde_json::Value,
+    hardware: &mut crate::hardware::Hardware,
+    shortcuts: &ShortcutRegistry,
+) -> serde_json::Value {
+    view["hardware"] = hardware.view(&shortcuts.device_bindings());
+    view
+}
+
 /// Per-application shortcut reads and edits.
 ///
 /// The browser never supplies an executable path: it sends the opaque reference
@@ -1822,6 +2016,7 @@ fn shortcuts_route(
     token_configured: bool,
     apps: &mut crate::resident_apps::Registry,
     shortcuts: &mut ShortcutRegistry,
+    hardware: &mut crate::hardware::Hardware,
     config: &Config,
     _principal: Option<&str>,
 ) -> Routed {
@@ -1834,16 +2029,51 @@ fn shortcuts_route(
     #[cfg(windows)]
     {
         match (request.method, request.path) {
-            (Method::Get, "/api/shortcuts") => {
-                (200, "application/json", shortcuts.view().to_string())
-            }
+            (Method::Get, "/api/shortcuts") => (
+                200,
+                "application/json",
+                with_hardware(shortcuts.view(), hardware, shortcuts).to_string(),
+            ),
             (Method::Post, "/api/shortcuts/add") => {
-                let reference = serde_json::from_str::<serde_json::Value>(request.body)
-                    .ok()
+                let parsed = serde_json::from_str::<serde_json::Value>(request.body).ok();
+                let reference = parsed
+                    .as_ref()
                     .and_then(|value| value["application_reference"].as_str().map(str::to_string));
+                let wants_device = parsed
+                    .as_ref()
+                    .and_then(|value| value.get("device_button"))
+                    .is_some_and(serde_json::Value::is_number);
+                if let Some(button) = parsed
+                    .as_ref()
+                    .and_then(|value| value["device_button"].as_u64())
+                    .and_then(|value| u8::try_from(value).ok())
+                {
+                    if hardware.direct_configured(button) {
+                        return (
+                            409,
+                            "application/json",
+                            serde_json::json!({"error":"That Vibe Key button already has a direct chord; clear it first."}).to_string(),
+                        );
+                    }
+                }
                 let application = reference
                     .as_deref()
                     .and_then(|reference| apps.resolve_application(reference));
+                // A registered trigger equal to a direct firmware chord would
+                // make that button emit the trigger as well as its own keys.
+                if let Some(trigger) = parsed
+                    .as_ref()
+                    .and_then(|value| value["trigger"].as_str())
+                    .and_then(|trigger| crate::hotkey::Hotkey::parse(trigger).ok())
+                {
+                    if hardware.direct_conflicts_with_trigger(&trigger) {
+                        return (
+                            409,
+                            "application/json",
+                            serde_json::json!({"error":"That trigger equals a direct Vibe Key chord; clear the direct chord or choose another trigger."}).to_string(),
+                        );
+                    }
+                }
                 let (code, value) =
                     shortcuts.mutate("add", request.body, config.hotkey.as_deref(), application);
                 if code == 200 {
@@ -1851,12 +2081,35 @@ fn shortcuts_route(
                         apps.consume_application(reference);
                     }
                 }
-                (code, "application/json", value.to_string())
+                let mut view = value;
+                if code == 200 && wants_device {
+                    // Persisting and arming the binding happened first. A
+                    // failed firmware write is reported in `hardware`, never
+                    // converted into a blanket success or a rollback of a
+                    // trigger the user can still see and remove.
+                    view["hardware"] = hardware.provision(&shortcuts.device_bindings());
+                } else if code == 200 {
+                    view = with_hardware(view, hardware, shortcuts);
+                }
+                (code, "application/json", view.to_string())
             }
             (Method::Post, "/api/shortcuts/remove") => {
+                let id = serde_json::from_str::<serde_json::Value>(request.body)
+                    .ok()
+                    .and_then(|value| value["id"].as_str().map(str::to_string));
+                let button = id.as_deref().and_then(|id| shortcuts.device_button_for(id));
                 let (code, value) =
                     shortcuts.mutate("remove", request.body, config.hotkey.as_deref(), None);
-                (code, "application/json", value.to_string())
+                if code == 200 {
+                    if let Some(button) = button {
+                        // The binding is gone, so the button must not keep
+                        // emitting its trigger. A clear failure is not fatal to
+                        // the removal; hardware state remains visible.
+                        let _ = hardware.clear_button(button);
+                    }
+                }
+                let view = with_hardware(value, hardware, shortcuts);
+                (code, "application/json", view.to_string())
             }
             _ => (
                 404,
@@ -1869,15 +2122,115 @@ fn shortcuts_route(
     {
         let _ = (apps, config);
         match (request.method, request.path) {
-            (Method::Get, "/api/shortcuts") => {
-                (200, "application/json", shortcuts.view().to_string())
-            }
+            (Method::Get, "/api/shortcuts") => (
+                200,
+                "application/json",
+                with_hardware(shortcuts.view(), hardware, shortcuts).to_string(),
+            ),
             _ => (
                 501,
                 "application/json",
                 serde_json::json!({"error":"Application shortcut dispatch is unavailable on this platform"}).to_string(),
             ),
         }
+    }
+}
+
+/// Hardware detection and explicit re-provisioning.
+fn hardware_route(
+    request: &Request<'_>,
+    token_configured: bool,
+    hardware: &mut crate::hardware::Hardware,
+    shortcuts: &ShortcutRegistry,
+    feedback: &ActionFeedback,
+    config: &Config,
+) -> Routed {
+    if let Some(rejection) = validate_request(request, token_configured) {
+        return rejection;
+    }
+    if !request.authorized {
+        return unauthorized();
+    }
+    match (request.method, request.path) {
+        (Method::Get, "/api/hardware") => {
+            let mut view = hardware.view(&shortcuts.device_bindings());
+            view["recent_actions"] = feedback.recent_json();
+            (200, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/hardware/sync") => {
+            let mut view = hardware.provision(&shortcuts.device_bindings());
+            view["recent_actions"] = feedback.recent_json();
+            (200, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/hardware/direct") => {
+            // A button can carry either an application binding or a direct
+            // firmware chord, never both: two writers would fight over one
+            // firmware slot.
+            if let Some(button) = request
+                .body
+                .parse::<serde_json::Value>()
+                .ok()
+                .and_then(|value| value["button"].as_u64())
+                .and_then(|value| u8::try_from(value).ok())
+            {
+                if shortcuts
+                    .device_bindings()
+                    .iter()
+                    .any(|binding| binding.button == button)
+                {
+                    return (
+                        409,
+                        "application/json",
+                        serde_json::json!({"error":"That Vibe Key button already has an application shortcut; remove it first."}).to_string(),
+                    );
+                }
+            }
+            // A direct chord that equals a registered trigger would be
+            // captured by VibDock as well as emitted by the device, creating a
+            // second, unintended action. Reject it before touching firmware.
+            if let Some(chord) = request
+                .body
+                .parse::<serde_json::Value>()
+                .ok()
+                .and_then(|value| value["chord"].as_str().map(str::to_string))
+            {
+                if let Ok(parsed) = crate::hotkey::Hotkey::parse(&chord) {
+                    let mic_conflict = config
+                        .hotkey
+                        .as_deref()
+                        .and_then(|saved| crate::hotkey::Hotkey::parse(saved).ok())
+                        .is_some_and(|saved| saved == parsed);
+                    if mic_conflict || shortcuts.conflicts_with_trigger(&parsed.as_string()) {
+                        return (
+                            409,
+                            "application/json",
+                            serde_json::json!({"error":"That chord is already registered as a VibDock trigger; choose another direct chord."}).to_string(),
+                        );
+                    }
+                }
+            }
+            let (code, value) = hardware.configure_direct(request.body);
+            if code != 200 {
+                return (code, "application/json", value.to_string());
+            }
+            let mut view = hardware.provision(&shortcuts.device_bindings());
+            view["recent_actions"] = feedback.recent_json();
+            (200, "application/json", view.to_string())
+        }
+        (Method::Post, "/api/hardware/direct/remove") => {
+            let (code, value) = hardware.remove_direct(request.body);
+            if code != 200 {
+                return (code, "application/json", value.to_string());
+            }
+            let mut view = hardware.provision(&shortcuts.device_bindings());
+            view["recent_actions"] = feedback.recent_json();
+            (200, "application/json", view.to_string())
+        }
+        _ => (
+            404,
+            "application/json",
+            serde_json::json!({"error":"Unknown hardware route"}).to_string(),
+        ),
     }
 }
 
@@ -2062,6 +2415,7 @@ mod resident_api_tests {
         let host = format!("127.0.0.1:{}", crate::service::port());
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let mut hardware = crate::hardware::Hardware::start(false);
         let config = Config::default();
         for (path, method) in [
             ("/api/shortcuts", Method::Get),
@@ -2083,6 +2437,7 @@ mod resident_api_tests {
                     true,
                     &mut apps,
                     &mut shortcuts,
+                    &mut hardware,
                     &config,
                     Some("fixture-principal")
                 )
@@ -2097,6 +2452,7 @@ mod resident_api_tests {
                     true,
                     &mut apps,
                     &mut shortcuts,
+                    &mut hardware,
                     &config,
                     Some("fixture-principal")
                 )
@@ -2119,6 +2475,7 @@ mod resident_api_tests {
                 true,
                 &mut apps,
                 &mut shortcuts,
+                &mut hardware,
                 &config,
                 Some("fixture-principal")
             )
@@ -2131,6 +2488,7 @@ mod resident_api_tests {
         let host = format!("127.0.0.1:{}", crate::service::port());
         let mut apps = crate::resident_apps::Registry::empty(std::path::PathBuf::new(), None);
         let mut shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let mut hardware = crate::hardware::Hardware::start(false);
         let request = Request {
             method: Method::Post,
             path: "/api/shortcuts/add",
@@ -2146,11 +2504,88 @@ mod resident_api_tests {
                 false,
                 &mut apps,
                 &mut shortcuts,
+                &mut hardware,
                 &Config::default(),
                 Some("fixture-principal")
             )
             .0,
             405
         );
+    }
+    #[test]
+    fn hardware_routes_require_authentication_and_origin() {
+        let host = format!("127.0.0.1:{}", crate::service::port());
+        let shortcuts = crate::app_shortcuts::Registry::empty_for_test();
+        let mut hardware = crate::hardware::Hardware::start(false);
+        let feedback = ActionFeedback::default();
+        for (path, method) in [
+            ("/api/hardware", Method::Get),
+            ("/api/hardware/sync", Method::Post),
+            ("/api/hardware/direct", Method::Post),
+            ("/api/hardware/direct/remove", Method::Post),
+        ] {
+            let mut request = Request {
+                method,
+                path,
+                host: Some(&host),
+                origin: None,
+                authorized: false,
+                body: "{}",
+                body_rejected: false,
+            };
+            assert_eq!(
+                hardware_route(
+                    &request,
+                    true,
+                    &mut hardware,
+                    &shortcuts,
+                    &feedback,
+                    &Config::default()
+                )
+                .0,
+                401
+            );
+            request.authorized = true;
+            request.origin = Some("https://attacker.invalid");
+            assert_eq!(
+                hardware_route(
+                    &request,
+                    true,
+                    &mut hardware,
+                    &shortcuts,
+                    &feedback,
+                    &Config::default()
+                )
+                .0,
+                403
+            );
+        }
+        let request = Request {
+            method: Method::Get,
+            path: "/api/hardware",
+            host: Some(&host),
+            origin: None,
+            authorized: true,
+            body: "",
+            body_rejected: false,
+        };
+        let (code, mime, body) = hardware_route(
+            &request,
+            true,
+            &mut hardware,
+            &shortcuts,
+            &feedback,
+            &Config::default(),
+        );
+        assert_eq!(code, 200);
+        assert_eq!(mime, "application/json");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["available"], false);
+        assert_eq!(value["buttons"].as_array().unwrap().len(), 3);
+        assert!(value["recent_actions"].as_array().unwrap().is_empty());
+        // The direct-chord section is always present so the page can render
+        // its editor even when no device is attached.
+        assert_eq!(value["direct"]["revision"], 0);
+        assert!(value["direct"]["entries"].as_array().unwrap().is_empty());
     }
 }

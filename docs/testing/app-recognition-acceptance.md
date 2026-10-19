@@ -92,6 +92,18 @@ This is a dated single-host record. The command rejects executable paths, uses
 only opaque application references from a fresh scan, and requires the verified
 service to be running.
 
+## DeepSeek Harness recognition (mapping only)
+
+`DeepSeek Harness.exe` is recognised by exact, case-insensitive basename as
+integration id `dsh`. Unit tests cover the mapping and reject near misses such
+as `deepseek.exe`, `deepseek-harness.exe`, `deepseek_harness.exe`, and
+`DeepSeek Harness Helper.exe`.
+
+This is not part of the dated live runs above. DeepSeek Harness was not
+launched, detected, pinned, bound, or dispatched to on this host in those runs,
+and no live foreground dispatch against it is claimed here. Its placement on an
+AU05 button is unverified end to end as well.
+
 ## Playback isolation check
 
 Two real PowerShell processes played different looping WAV tones (440 Hz and

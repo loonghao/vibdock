@@ -61,11 +61,13 @@ struct Entry {
     trigger: String,
     dispatch: String,
     scope: Scope,
+    /// Optional AU05 Vibe Key button (0-based) that should emit the trigger.
+    device_button: Option<u8>,
 }
 impl Entry {
     #[cfg(any(windows, test))]
     fn json(&self) -> Value {
-        json!({"id":self.id,"label":self.label,"executable_path":self.executable,"trigger":self.trigger,"dispatch":self.dispatch,"scope":self.scope.as_str()})
+        json!({"id":self.id,"label":self.label,"executable_path":self.executable,"trigger":self.trigger,"dispatch":self.dispatch,"scope":self.scope.as_str(),"device_button":self.device_button})
     }
     fn parse(value: &Value) -> Option<Self> {
         let id = text(value, "id", 64)?;
@@ -79,8 +81,31 @@ impl Entry {
         let trigger = text(value, "trigger", 80)?;
         let dispatch = text(value, "dispatch", 80)?;
         let trigger_key = Hotkey::parse(&trigger).ok()?;
+        // Windows reserves Win for shell bindings, so it can never be a
+        // registered VibDock trigger.
+        if trigger_key
+            .modifiers()
+            .iter()
+            .any(|modifier| !modifier.is_registrable())
+            || trigger_key.key() == crate::hotkey::Key::Win
+        {
+            return None;
+        }
         let dispatch_key = Hotkey::parse(&dispatch).ok()?;
         if trigger_key == dispatch_key {
+            return None;
+        }
+        let device_button = match value.get("device_button") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(number)) => {
+                let number = number.as_u64()?;
+                (number <= 2).then_some(number as u8)
+            }
+            Some(_) => return None,
+        };
+        // A persisted hardware binding must still be writable to the device;
+        // otherwise the file would claim a button can emit a chord it cannot.
+        if device_button.is_some() && crate::au05::hotkey_entries(&trigger_key).is_err() {
             return None;
         }
         Some(Self {
@@ -94,6 +119,7 @@ impl Entry {
                 Some(Value::String(scope)) => Scope::parse(scope)?,
                 Some(_) => return None,
             },
+            device_button,
         })
     }
 }
@@ -122,6 +148,12 @@ fn safe_entries(entries: &[Entry]) -> bool {
             if same_hotkey(&entry.trigger, &other.trigger) {
                 return false;
             }
+            if entry.device_button.is_some()
+                && other.device_button.is_some()
+                && entry.device_button == other.device_button
+            {
+                return false;
+            }
         }
         for other in entries {
             if same_hotkey(&entry.dispatch, &other.trigger) {
@@ -144,6 +176,15 @@ fn bounded_label(value: &str) -> String {
 #[cfg(windows)]
 pub(crate) fn hotkey_id(index: usize) -> i32 {
     HOTKEY_ID_BASE + i32::try_from(index).unwrap_or(i32::MAX - HOTKEY_ID_BASE)
+}
+
+/// A saved binding's display details, for the page's recent-trigger log.
+#[cfg(windows)]
+pub(crate) struct BindingDescription {
+    pub(crate) label: String,
+    pub(crate) trigger: String,
+    pub(crate) dispatch: String,
+    pub(crate) device_button: Option<u8>,
 }
 
 pub(crate) struct Registry {
@@ -335,6 +376,7 @@ impl Registry {
                     "trigger":entry.trigger,
                     "dispatch":entry.dispatch,
                     "scope":entry.scope.as_str(),
+                    "device_button":entry.device_button,
                     "armed":armed,
                     "error":error
                 })
@@ -352,6 +394,53 @@ impl Registry {
         })
     }
 
+    /// Bindings that a hardware button should carry, in saved order.
+    ///
+    /// The platform adapter receives only the button, the parsed chord and the
+    /// display identity; it never receives an executable path or a dispatch
+    /// chord, so provisioning cannot leak a target into the device.
+    pub(crate) fn device_bindings(&self) -> Vec<crate::hardware::HardwareBinding> {
+        self.entries
+            .iter()
+            .filter_map(|entry| {
+                let button = entry.device_button?;
+                let trigger = Hotkey::parse(&entry.trigger).ok()?;
+                Some(crate::hardware::HardwareBinding {
+                    binding_id: entry.id.clone(),
+                    binding_label: entry.label.clone(),
+                    button,
+                    trigger_text: entry.trigger.clone(),
+                    trigger,
+                })
+            })
+            .collect()
+    }
+
+    /// The device button carried by one saved binding, if any.
+    pub(crate) fn device_button_for(&self, id: &str) -> Option<u8> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .and_then(|entry| entry.device_button)
+    }
+
+    /// Describes the binding addressed by one fired hotkey id.
+    ///
+    /// Used only to label a recent-trigger event; it carries no executable
+    /// path and grants no authority. Returns `None` for an id outside the
+    /// saved set, so an unrelated hotkey cannot be attributed to a binding.
+    #[cfg(windows)]
+    pub(crate) fn describe(&self, id: i32) -> Option<BindingDescription> {
+        let index = usize::try_from(id - HOTKEY_ID_BASE).ok()?;
+        let entry = self.entries.get(index)?;
+        Some(BindingDescription {
+            label: entry.label.clone(),
+            trigger: entry.trigger.clone(),
+            dispatch: entry.dispatch.clone(),
+            device_button: entry.device_button,
+        })
+    }
+
     /// True when `trigger` would collide with a saved dispatch chord.
     ///
     /// Used before committing a microphone trigger: dispatching that chord
@@ -360,6 +449,17 @@ impl Registry {
         self.entries
             .iter()
             .any(|entry| same_hotkey(&entry.dispatch, trigger))
+    }
+
+    /// True when `chord` equals a saved binding's registered trigger.
+    ///
+    /// A direct firmware chord with this value would feed VibDock's own global
+    /// hotkey registration in addition to reaching the foreground application,
+    /// so the two modes must not share a chord.
+    pub(crate) fn conflicts_with_trigger(&self, chord: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| same_hotkey(&entry.trigger, chord))
     }
 
     /// Handles one fired hotkey id, if it belongs to a saved binding.
@@ -448,7 +548,13 @@ impl Registry {
         if object.keys().any(|key| {
             !matches!(
                 key.as_str(),
-                "revision" | "application_reference" | "trigger" | "dispatch" | "label" | "scope"
+                "revision"
+                    | "application_reference"
+                    | "trigger"
+                    | "dispatch"
+                    | "label"
+                    | "scope"
+                    | "device_button"
             )
         }) {
             return fail(
@@ -483,10 +589,57 @@ impl Registry {
                 "dispatch must be a supported combination of at least one modifier and one key",
             );
         };
+        if let Some(modifier) = trigger_key
+            .modifiers()
+            .iter()
+            .find(|modifier| !modifier.is_registrable())
+        {
+            return fail(
+                400,
+                &format!(
+                    "{} is not available as a VibDock trigger: Windows reserves it for shell bindings. Use it only in the dispatch shortcut.",
+                    modifier.as_str()
+                ),
+            );
+        }
+        if trigger_key.key() == crate::hotkey::Key::Win {
+            return fail(
+                400,
+                "The Windows key is not available as a VibDock trigger. Use it only in the dispatch shortcut.",
+            );
+        }
         let trigger_text = trigger_key.as_string();
         let dispatch_text = dispatch_key.as_string();
         if same_hotkey(&trigger_text, &dispatch_text) {
             return fail(400, "The trigger and dispatch shortcut must differ");
+        }
+        let device_button = match value.get("device_button") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(number)) => {
+                let Some(number) = number.as_u64() else {
+                    return fail(400, "device_button must be 0, 1, 2, or null");
+                };
+                if number > 2 {
+                    return fail(400, "device_button must be 0, 1, 2, or null");
+                }
+                Some(number as u8)
+            }
+            Some(_) => return fail(400, "device_button must be 0, 1, 2, or null"),
+        };
+        if let Some(button) = device_button {
+            if let Err(error) = crate::au05::hotkey_entries(&trigger_key) {
+                return fail(
+                    400,
+                    &format!("This trigger cannot be written to an AU05 button: {error}"),
+                );
+            }
+            if self
+                .entries
+                .iter()
+                .any(|entry| entry.device_button == Some(button))
+            {
+                return fail(409, "That Vibe Key button already has a binding");
+            }
         }
         if mic_trigger.is_some_and(|mic| !mic.is_empty() && same_hotkey(mic, &trigger_text)) {
             return fail(
@@ -563,6 +716,7 @@ impl Registry {
             trigger: trigger_text,
             dispatch: dispatch_text,
             scope,
+            device_button,
         });
         // Reject a stale reference after the selection TTL. The caller supplies
         // the application only from a scan it just received.
@@ -911,6 +1065,164 @@ mod tests {
                 .0,
             409
         );
+    }
+
+    #[test]
+    fn saves_and_reloads_a_vibe_key_button_binding() {
+        let mut registry = registry();
+        let body = json!({
+            "revision":0,
+            "application_reference":"r",
+            "trigger":"Ctrl + Alt + Shift + F9",
+            "dispatch":"Ctrl + Shift + Space",
+            "device_button":0
+        })
+        .to_string();
+        let (status, view) = registry.add(&body, None, application());
+        assert_eq!(status, 200, "{view}");
+        assert_eq!(view["entries"][0]["device_button"], 0);
+        let id = view["entries"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(registry.device_button_for(&id), Some(0));
+        let bindings = registry.device_bindings();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].button, 0);
+        assert_eq!(bindings[0].binding_id, id);
+        assert_eq!(bindings[0].trigger_text, "Ctrl + Alt + Shift + F9");
+
+        let reopened = Registry::load(registry.path.clone());
+        assert_eq!(reopened.entries[0].device_button, Some(0));
+        assert_eq!(reopened.device_bindings().len(), 1);
+        std::fs::remove_dir_all(registry.path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn one_vibe_key_button_cannot_carry_two_bindings() {
+        let mut registry = registry();
+        assert_eq!(
+            registry
+                .add(
+                    &json!({"revision":0,"application_reference":"r","trigger":"Ctrl + Alt + Shift + F9","dispatch":"Ctrl + Shift + Space","device_button":1}).to_string(),
+                    None,
+                    application()
+                )
+                .0,
+            200
+        );
+        assert_eq!(
+            registry
+                .add(
+                    &json!({"revision":1,"application_reference":"r","trigger":"Ctrl + Alt + Shift + F10","dispatch":"Ctrl + Shift + F12","device_button":1}).to_string(),
+                    None,
+                    Some((r"C:\Fixture\Other.exe".into(), "Other".into(), false))
+                )
+                .0,
+            409
+        );
+        assert_eq!(registry.entries.len(), 1);
+    }
+
+    #[test]
+    fn a_device_button_requires_a_trigger_the_au05_can_emit() {
+        let mut registry = registry();
+        let (status, view) = registry.add(
+            &json!({"revision":0,"application_reference":"r","trigger":"Ctrl + F13","dispatch":"Ctrl + Shift + Space","device_button":0}).to_string(),
+            None,
+            application(),
+        );
+        assert_eq!(status, 400, "{view}");
+        assert!(
+            view["error"].as_str().unwrap_or_default().contains("AU05"),
+            "{view}"
+        );
+        assert!(registry.entries.is_empty());
+    }
+
+    #[test]
+    fn invalid_device_button_values_are_rejected() {
+        let mut registry = registry();
+        for device_button in [json!(3), json!(-1), json!("1"), json!(true), json!(1.5)] {
+            let body = json!({"revision":0,"application_reference":"r","trigger":"Ctrl + Alt + Shift + F9","dispatch":"Ctrl + Shift + Space","device_button":device_button});
+            let status = registry.add(&body.to_string(), None, application()).0;
+            assert_eq!(status, 400, "{device_button}");
+        }
+        // An explicit null is the same as omitting the field.
+        let body = json!({"revision":0,"application_reference":"r","trigger":"Ctrl + Alt + Shift + F9","dispatch":"Ctrl + Shift + Space","device_button":null});
+        assert_eq!(registry.add(&body.to_string(), None, application()).0, 200);
+        assert_eq!(registry.entries[0].device_button, None);
+    }
+
+    #[test]
+    fn a_persisted_file_with_duplicate_device_buttons_is_rejected() {
+        let path = temp();
+        let bytes = json!({"schema_version":1,"revision":0,"entries":[
+            {"id":"a".repeat(64),"label":"One","executable_path":"C:\\Fixture\\One.exe","trigger":"Ctrl + Alt + F10","dispatch":"Ctrl + Shift + Space","device_button":0},
+            {"id":"b".repeat(64),"label":"Two","executable_path":"C:\\Fixture\\Two.exe","trigger":"Ctrl + Alt + F11","dispatch":"Ctrl + Shift + F12","device_button":0}
+        ]})
+        .to_string();
+        std::fs::write(&path, &bytes).unwrap();
+        let registry = Registry::load(path.clone());
+        assert!(registry.load_error.is_some());
+        assert!(registry.entries.is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_registered_trigger_is_detected_for_direct_chord_conflicts() {
+        let mut registry = registry();
+        let body = json!({
+            "revision":0,
+            "application_reference":"r",
+            "trigger":"Ctrl + Alt + Shift + F9",
+            "dispatch":"Ctrl + Shift + Space"
+        })
+        .to_string();
+        assert_eq!(registry.add(&body, None, application()).0, 200);
+        assert!(registry.conflicts_with_trigger("Ctrl + Alt + Shift + F9"));
+        assert!(registry.conflicts_with_trigger("Shift + Alt + Ctrl + F9"));
+        assert!(!registry.conflicts_with_trigger("Ctrl + Alt + Shift + F10"));
+        std::fs::remove_dir_all(registry.path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn win_is_allowed_in_a_dispatch_but_never_in_a_trigger() {
+        let mut registry = registry();
+        for trigger in ["Ctrl + Win + F9", "Ctrl + Win"] {
+            let rejected = json!({
+                "revision":0,
+                "application_reference":"r",
+                "trigger":trigger,
+                "dispatch":"Ctrl + Shift + Space"
+            })
+            .to_string();
+            assert_eq!(
+                registry.add(&rejected, None, application()).0,
+                400,
+                "{trigger}"
+            );
+        }
+        let accepted = json!({
+            "revision":0,
+            "application_reference":"r",
+            "trigger":"Ctrl + Alt + Shift + F9",
+            "dispatch":"Ctrl + Win"
+        })
+        .to_string();
+        let (status, view) = registry.add(&accepted, None, application());
+        assert_eq!(status, 200, "{view}");
+        assert_eq!(view["entries"][0]["dispatch"], "Ctrl + Win");
+        // A hand-edited file with Win in the trigger is not loadable: it could
+        // never be registered, so accepting it would show a dead binding.
+        let path = temp();
+        let bytes = json!({"schema_version":1,"revision":0,"entries":[
+            {"id":"a".repeat(64),"label":"One","executable_path":"C:\\Fixture\\One.exe","trigger":"Ctrl + Win + F9","dispatch":"Ctrl + Shift + Space"}
+        ]})
+        .to_string();
+        std::fs::write(&path, &bytes).unwrap();
+        let loaded = Registry::load(path.clone());
+        assert!(loaded.load_error.is_some());
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::remove_dir_all(registry.path.parent().unwrap()).unwrap();
     }
 
     #[cfg(windows)]

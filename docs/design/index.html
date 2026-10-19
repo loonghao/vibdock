@@ -5,6 +5,7 @@
 .app-row{flex-wrap:wrap}.app-row>div{flex:1;min-width:120px;overflow-wrap:anywhere}.app-row img,.app-row button{flex:none}
 .route-editor{padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:24px 0}.route-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}.route-fields>div,.editor{min-width:0}.route-fields label{margin-top:0}.route-editor h2{margin-bottom:8px}.route-editor p{margin:8px 0;color:var(--muted)}.route-editor .actions{margin-top:16px}.route-note{font-size:12px}.capabilities{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.capabilities span{font-size:12px;color:var(--muted);padding:6px 10px;background:var(--bg);border-radius:5px}button:disabled{opacity:.45;cursor:not-allowed}button:disabled:hover{border-color:var(--line)}.rows>p{padding:20px;color:var(--muted)}kbd{overflow-wrap:anywhere}body[data-mode=service] .workspace{grid-template-columns:minmax(240px,.8fr) minmax(300px,1.2fr)}body[data-mode=service] .device-stage,body[data-mode=service] .device-area>.panel-title,body[data-mode=service] .device-area>.hint,body[data-mode=service] #selectedKey,body[data-mode=service] #revert,body[data-mode=service] .foot{display:none}body[data-mode=service] .svcbind{margin-top:0;padding-top:0;border:0}body[data-mode=service] .svcbind h2{font-size:17px}body[data-mode=service] .svcbind .row{display:block;padding:16px 0}body[data-mode=service] .svcbind kbd{display:block;color:var(--text);margin-top:8px;font-size:14px}body[data-mode=service] .editor h2{margin-top:0!important}#sbStatus[data-state=live]{color:var(--live)}#sbStatus[data-state=error]{color:var(--bad)}#appBindingStatus[data-kind=error]{color:var(--bad)}@media(max-width:1000px){body[data-mode=service] .workspace{grid-template-columns:1fr}}@media(max-width:600px){.route-fields{grid-template-columns:1fr;gap:16px}.route-editor{padding:18px}.route-editor .actions button{flex:1}.app-row{gap:12px}main{padding:20px 16px}.capture{flex-wrap:wrap}.capture input{flex:1;min-width:150px}.brand-subtitle{display:none}}
 .software-avatar{position:relative;display:inline-grid;place-items:center;width:44px;height:44px;flex:none!important;background:var(--bg);border-radius:10px}.software-avatar img{width:28px;height:28px;object-fit:contain}.software-badge{position:absolute;right:-4px;bottom:-3px;display:grid;place-items:center;width:18px;height:18px;border:2px solid var(--panel);border-radius:50%;background:#626966;color:white;font-size:10px;font-weight:700}.software-avatar[data-state=muted] .software-badge{background:var(--bad);color:#241512}.software-avatar[data-state=playing] .software-badge,.software-avatar[data-state=running] .software-badge{background:var(--live);color:#12241d}.software-avatar[data-state=idle] .software-badge{background:var(--amber);color:#211b12}
+#hardwareCard{padding:20px 24px}#hardwareCard h2{font-size:16px}#hardwareCard .rows{margin-top:12px}#hardwareCard .row{padding:14px 16px}#hardwareCard .row p{margin-top:4px}#hardwareCard .row>.tag{flex:none;align-self:flex-start}#hardwareCard .status[data-kind=ok]{color:var(--live)}.tag[data-state=live]{color:var(--live);border-color:var(--live)}.tag[data-state=bad]{color:var(--bad);border-color:var(--bad)}.tag[data-state=off]{color:var(--muted);border-color:var(--line)}
 </style>
 <header><div class="brand"><img class="brand-logo" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI+Cjx0aXRsZT5WaWJEb2NrIHN5bWJvbCDigJQgdmVjdG9yIHJlY29uc3RydWN0aW9uIG9mIHNlbGVjdGVkIGNvbmNlcHQ8L3RpdGxlPgo8ZGVmcz48bWFzayBpZD0idm9pY2UiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjAiIHk9IjAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0id2hpdGUiLz48ZyBmaWxsPSJub25lIiBzdHJva2U9ImJsYWNrIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yNTYgMTI3VjM5MiIgc3Ryb2tlLXdpZHRoPSI0MCIvPjxwYXRoIGQ9Ik0xNSAyOTFIMTU0UTE3OCAyOTEgMTc4IDI2N1YyMjkiIHN0cm9rZS13aWR0aD0iMzIiLz48cGF0aCBkPSJNMzM0IDMzOFYyNjhRMzM0IDI0NSAzNTggMjQ1SDQ5NyIgc3Ryb2tlLXdpZHRoPSIzMiIvPjwvZz48L21hc2s+PC9kZWZzPgo8cGF0aCBmaWxsPSIjRDRGNkU4IiBtYXNrPSJ1cmwoI3ZvaWNlKSIgZD0iTTI4MSA0OCA0NjQgMjMxUTQ4OSAyNTYgNDY0IDI4MUwyODEgNDY0UTI1NiA0ODkgMjMxIDQ2NEw0OCAyODFRMjMgMjU2IDQ4IDIzMUwyMzEgNDhRMjU2IDIzIDI4MSA0OFoiLz4KPC9zdmc+Cg==" alt="VibDock 标志" width="38" height="38"><div>Vib<span>Dock</span></div><small class="brand-subtitle">本地交互工作台</small></div><span class="conn" id="conn" data-state="unknown">检查服务</span></header>
 <div class="shell"><nav aria-label="配置导航"><button data-view="bindings" aria-selected="true">快捷键</button><button data-view="audio" aria-selected="false">音频设备</button><button data-view="apps" aria-selected="false">应用与麦克风</button><button data-view="feedback" aria-selected="false">状态提示</button><small>LOCAL FIRST<br><br>关闭页面不等于<br>停止后台服务<br><br>后台绑定与<br>浏览器草稿分开保存</small></nav><main>
@@ -41,8 +42,23 @@
 <h2 style="margin-top:28px">应用快捷键</h2><p class="muted">识别正在运行且有窗口的应用（即使它没有播放声音），为它保存一个触发键和一条发送给该应用的快捷键。只有该应用位于前台时才会发送；发送成功不代表应用已经执行。</p>
 <div id="shortcutDetected" class="rows" aria-label="可绑定快捷键的运行应用"></div>
 <div id="pinnedShortcuts" class="rows" aria-label="已保存的应用快捷键"></div>
-<div class="route-editor" id="shortcutEditor" hidden><h2>新增应用快捷键</h2><div class="route-fields"><div><label for="shortcutApp">应用</label><select id="shortcutApp"></select></div><div><label for="shortcutTrigger">VibDock 触发键</label><input id="shortcutTrigger" placeholder="Ctrl + Alt + Shift + F10" autocomplete="off"></div><div><label for="shortcutDispatch">发送给应用的快捷键</label><input id="shortcutDispatch" placeholder="Ctrl + Shift + Space" autocomplete="off"></div><div><label for="shortcutLabel">名称（可选）</label><input id="shortcutLabel" maxlength="80" autocomplete="off"></div></div><div class="actions"><button class="primary" id="shortcutSave">保存快捷键</button><button id="shortcutCancel">取消</button></div><p class="route-note">两条快捷键都必须包含至少一个修饰键。触发键由 VibDock 注册；默认只在该应用位于前台时发送。后台输入法等没有前台窗口的工具需要勾选“发送到当前前台应用”，此时只确认应用正在运行，快捷键会注入到当前前台应用。发送成功不代表应用已经执行。</p><label class="check"><input id="shortcutGlobal" type="checkbox">发送到当前前台应用（后台输入法/托盘工具）</label></div>
+<div class="route-editor" id="shortcutEditor" hidden><h2>新增应用快捷键</h2><div class="route-fields"><div><label for="shortcutApp">应用</label><select id="shortcutApp"></select></div><div><label for="shortcutTrigger">VibDock 触发键</label><input id="shortcutTrigger" placeholder="Ctrl + Alt + Shift + F10" autocomplete="off"></div><div><label for="shortcutDispatch">发送给应用的快捷键</label><input id="shortcutDispatch" placeholder="Ctrl + Shift + Space" autocomplete="off"></div><div><label for="shortcutDeviceButton">Vibe Key 按钮（AU05）</label><select id="shortcutDeviceButton"><option value="">不绑定</option><option value="0">按钮 1</option><option value="1">按钮 2</option><option value="2">按钮 3</option></select><small>可选。触发键会写入该按键的固件，服务读回一致才算写入成功；写入失败会在保存后单独提示。</small></div><div><label for="shortcutLabel">名称（可选）</label><input id="shortcutLabel" maxlength="80" autocomplete="off"></div></div><div class="actions"><button class="primary" id="shortcutSave">保存快捷键</button><button id="shortcutCancel">取消</button></div><p class="route-note">两条快捷键都必须包含至少一个修饰键。触发键由 VibDock 注册；默认只在该应用位于前台时发送。后台输入法等没有前台窗口的工具需要勾选“发送到当前前台应用”，此时只确认应用正在运行，快捷键会注入到当前前台应用。发送成功不代表应用已经执行。</p><label class="check"><input id="shortcutGlobal" type="checkbox">发送到当前前台应用（后台输入法/托盘工具）</label></div>
 <p id="shortcutStatus" role="status" aria-live="polite" class="muted">读取服务后显示已保存的应用快捷键。</p>
+<section class="route-editor" id="hardwareCard" hidden aria-labelledby="hardwareTitle"><h2 id="hardwareTitle">Vibe Key（AU05）硬件按键</h2>
+<p role="status" aria-live="polite"><span class="conn" id="hardwareConn" data-state="pending">正在读取 Vibe Key 状态…</span></p>
+<p class="muted" id="hardwareDevice">正在读取设备信息…</p>
+<p class="muted" id="hardwareNote">无需安装 Ulanzi Studio；若它已在运行，请先退出，由 VibDock 独占设备。首次运行会写入默认布局：按钮 1 = Ctrl + Win（微信语音），按钮 2 = Enter（回车），按钮 3 = Escape（取消）；可在下方改写。AU05 麦克风会作为普通 Windows 输入设备出现，可在“音频设备”列表或目标软件中选择。</p>
+<div id="hardwareButtons" class="rows" aria-label="AU05 按键绑定与写入状态"></div>
+<p class="route-note" id="hardwareHint" hidden>没有检测到设备：插好 2.4G 接收器，给 AU05 通电，按任意按键唤醒，然后点“刷新”。</p>
+<h3 style="margin-top:18px">最近触发</h3>
+<div id="hardwareEvents" class="rows" aria-label="最近收到的 Vibe Key 按键触发"></div>
+<p class="muted" id="hardwareEventsNote">这里显示后台服务实际收到的触发和发送出去的组合键；发送成功不代表目标应用已响应或语音已开启。记录只保存在本次服务运行期间。</p>
+<div class="actions"><button id="hardwareRefresh">刷新</button><button id="hardwareSync">同步到设备</button></div>
+<h3 style="margin-top:18px">硬件直发快捷键</h3>
+<p class="muted">把组合键或单个按键直接写进按键固件，适合 Ctrl + Win 这类 VibDock 无法注册为全局热键的组合，也支持 Enter、Escape 这类单键。写入后由按键自己发出该组合键，不经过目标应用判断；服务只负责写入和读回验证。首次运行的默认布局就是在这里生成的，可随时改写或清除。</p>
+<div class="route-fields"><div><label for="hardwareDirectButton">按键</label><select id="hardwareDirectButton"><option value="0">按钮 1</option><option value="1">按钮 2</option><option value="2">按钮 3</option></select></div><div><label for="hardwareDirectChord">组合键/单键</label><input id="hardwareDirectChord" placeholder="Ctrl + Win 或 Enter" autocomplete="off"></div><div><label for="hardwareDirectLabel">说明（可选）</label><input id="hardwareDirectLabel" maxlength="80" placeholder="微信语音" autocomplete="off"></div></div>
+<div class="actions"><button id="hardwareDirectSave">写入直发组合键</button><button id="hardwareDirectClear">清除该按键直发</button></div>
+<p id="hardwareStatus" role="status" aria-live="polite" class="status" data-kind="idle">尚未读取 Vibe Key 状态。</p></section>
 <h2 style="margin-top:28px">语音集成能力规划</h2><p class="muted">安装识别、连接成功、动作生效是三个独立状态。</p>
 <div class="rows"><div class="row"><div><strong>Codex / Mini</strong><p>已识别运行窗口；可用自定义触发键派发应用内快捷键。发送成功不验证语音状态，应用控制接口仍待验证。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div><div class="row"><div><strong>微信输入法</strong><p>已识别 wetype 运行窗口；快捷键由用户从客户端录入，发送成功不代表语音已开启。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div><div class="row"><div><strong>WorkBuddy</strong><p>已识别运行窗口；快捷键动作与平台接口分别接入，按实际能力启用。</p></div><span class="tag"><span class="dot" data-state="pending"></span> 识别可用 · 控制待验证</span></div></div>
 <div class="legend"><span><span class="dot" data-state="live"></span>已验证</span><span><span class="dot" data-state="pending"></span>等待确认</span><span><span class="dot" data-state="mock"></span>演示数据</span><span><span class="dot" data-state="off"></span>未连接</span><span><span class="dot" data-state="bad"></span>失败</span></div></section>
@@ -134,6 +150,7 @@ function updateModeLabels(){
     if(option.value!=='mic')option.disabled=true;
   }
   if(!supported&&$('target').value!=='mic')$('target').value='mic';
+  updateHardwareVisibility();
   loadDevices();
 }
 // Service-backed save: the backend is the source of truth. The local draft is
@@ -249,7 +266,10 @@ function serviceError(response,body){
   if(response.status===405)return '服务处于只读设计稿模式，不能保存配置。';
   if(response.status===413)return '请求体过大或不是合法 UTF-8。';
   if(response.status===502&&body)return '动作执行失败：'+body.replace(/^Action failed:\s*/,'');
-  if(response.status===409){try{const message=JSON.parse(body).message;if(typeof message==='string'&&message.trim())return '快捷键未生效：'+message;}catch{}return '快捷键注册失败，请换一个组合键。';}
+  if(response.status===400||response.status===409){
+    try{const payload=JSON.parse(body);const reason=typeof payload.error==='string'?payload.error:typeof payload.message==='string'?payload.message:'';if(reason.trim())return (response.status===409?'快捷键未生效：':'请求被拒绝：')+reason.trim();}catch{}
+    return response.status===409?'快捷键注册失败，请换一个组合键。':'请求参数无效，请检查填写内容。';
+  }
   if(response.status===500)return '配置写入失败，原配置保留。';
   if(response.status===404)return '服务没有这个接口。';
   return '服务返回 '+response.status+'。';
@@ -384,19 +404,19 @@ function receiveAppEntries(data,started){
  if(document.hidden||remaining<=0){markAppsUnknown('软件状态已过期，等待重新读取。');return;}
  if(data.available)appExpiryTimer=setTimeout(()=>markAppsUnknown('软件状态已过期，等待重新读取。'),remaining);
 }
-document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');if(!document.hidden)refreshApps();});
+document.addEventListener('visibilitychange',()=>{markAppsUnknown('软件状态未知，等待重新读取。');if(!document.hidden){refreshApps();refreshHardware();}});
 async function refreshApps(){if(appsBusy||!serviceToken||document.hidden)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
  try{const response=await api('/api/apps',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken){receiveAppEntries(data,started);refreshShortcuts();}}
  catch{markAppsUnknown('软件状态未知：服务读取失败。');}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
 async function editApp(operation,fields){if(appsBusy||!serviceToken)return;appsBusy=true;appButtonsBusy();const expectedToken=serviceToken,started=performance.now();const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),2000);
   try{const response=await api('/api/apps/'+operation,{method:'POST',signal:controller.signal,body:JSON.stringify({...fields,revision:appRevision})});if(serviceToken!==expectedToken)return false;if(response.status===401||response.status===403){expireBrowserSession();return false;}const result=await response.json();if(!response.ok){$('appReadStatus').textContent=result.error||'保存失败，原条目保留。';return false;}receiveAppEntries(result,started);return true;}
   catch{markAppsUnknown('保存结果未确认，请刷新后再操作。');return false;}finally{clearTimeout(timeout);appsBusy=false;appButtonsBusy();}}
-function startAppPoll(){refreshApps();refreshShortcuts();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
+function startAppPoll(){refreshApps();refreshShortcuts();refreshHardware();if(!appTimer)appTimer=setInterval(refreshApps,2000);}
 
 // Per-application shortcut bindings. The browser sends an opaque application
 // reference from the latest scan; the service resolves and persists the path.
 let shortcutsData=null,shortcutBusy=false,shortcutRenderKey='';
-function integrationLabel(id){return {tencent_meeting:'腾讯会议',wechat_input:'微信输入法',codex:'Codex / ChatGPT',workbuddy:'WorkBuddy'}[id]||'';}
+function integrationLabel(id){return {tencent_meeting:'腾讯会议',wechat_input:'微信输入法',codex:'Codex / ChatGPT',dsh:'DeepSeek Harness',workbuddy:'WorkBuddy'}[id]||'';}
 function shortcutReady(){return mode==='service'&&!!serviceToken&&lastAppsData?.platform==='windows'&&lastAppsData.storage_writable;}
 function renderShortcutApplications(){
   const list=$('shortcutDetected');list.replaceChildren();
@@ -415,13 +435,13 @@ function shortcutEditorApps(selected){
 function openShortcutEditor(app){
   if(!shortcutReady()||!shortcutsData)return;
   shortcutEditorApps(app.selection_id);$('shortcutLabel').value=app.name;
-  $('shortcutTrigger').value='';$('shortcutDispatch').value='';
+  $('shortcutTrigger').value='';$('shortcutDispatch').value='';$('shortcutDeviceButton').value='';
   $('shortcutGlobal').checked=!!app.background;$('shortcutGlobal').disabled=!!app.background;
   $('shortcutEditor').hidden=false;$('shortcutEditor').scrollIntoView({behavior:'instant',block:'nearest'});$('shortcutTrigger').focus();
   $('shortcutStatus').textContent=app.background?'后台应用：只有它运行时才会把快捷键发送到当前前台应用；发送不代表语音已开启。':'触发键由 VibDock 注册；默认只在该应用位于前台时发送，发送不代表语音已开启。';$('shortcutStatus').dataset.kind='idle';
 }
 function renderShortcuts(data){
-  shortcutsData=data;const key=JSON.stringify([data.revision,data.entries,data.error,data.dispatch_available]);if(key===shortcutRenderKey)return;shortcutRenderKey=key;
+  shortcutsData=data;const key=JSON.stringify([data.revision,data.entries,data.error,data.dispatch_available,shortcutHardwareKey()]);if(key===shortcutRenderKey)return;shortcutRenderKey=key;
   if(!$('shortcutEditor').hidden)shortcutEditorApps();
   const list=$('pinnedShortcuts');list.replaceChildren();
   if(data.error){$('shortcutStatus').textContent=data.error;$('shortcutStatus').dataset.kind='error';}
@@ -430,6 +450,13 @@ function renderShortcuts(data){
   if(!data.entries.length){list.append(appNode('p','尚未保存应用快捷键。'));return;}
   for(const entry of data.entries){const row=appNode('div');row.className='row app-row';const body=appNode('div');body.append(appNode('strong',entry.label),appNode('p','触发 '+entry.trigger+' → 发送 '+entry.dispatch));body.append(appNode('p',entry.scope==='running'?'作用域：应用运行时发送到当前前台应用':'作用域：仅当该应用位于前台'));
    const state=appNode('p',entry.armed?'已注册；发送后不验证应用状态':(entry.error?'未注册：'+entry.error:'未注册'));body.append(state);
+   const deviceButton=deviceButtonIndex(entry);
+   if(deviceButton!==null){
+     const badge=appNode('span','Vibe Key · '+hardwareButtonLabel(deviceButton));badge.className='tag';badge.setAttribute('aria-label','Vibe Key '+hardwareButtonLabel(deviceButton));
+     const deviceLine=appNode('p');deviceLine.append(badge);body.append(deviceLine);
+     const hardware=hardwareButtonForBinding(entry.id);
+     if(hardwareData)body.append(appNode('p','设备写入状态：'+(hardware?deviceProvisionText(hardware):'未在设备状态中报告')));
+   }
    const remove=appNode('button','删除');remove.disabled=shortcutBusy||!data.storage_writable;remove.onclick=()=>removeShortcut(entry);row.append(body,remove);list.append(row);}
 }
 // A failed save or remove leaves an error in the status line; re-rendering the
@@ -437,29 +464,309 @@ function renderShortcuts(data){
 function finishShortcutBusy(){shortcutBusy=false;if($('shortcutStatus').dataset.kind!=='error')shortcutRenderKey='';if(shortcutsData)renderShortcuts(shortcutsData);else renderShortcutApplications();}
 async function refreshShortcuts(){
   if(shortcutBusy||!serviceToken||document.hidden)return;shortcutBusy=true;const expectedToken=serviceToken;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
-  try{const response=await api('/api/shortcuts',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken)renderShortcuts(data);}
+  try{const response=await api('/api/shortcuts',{signal:controller.signal});if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error();const data=await response.json();if(serviceToken===expectedToken){renderShortcuts(data);refreshHardware();}}
   catch{$('shortcutStatus').textContent='应用快捷键状态未知：服务读取失败。';$('shortcutStatus').dataset.kind='error';}
   finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 async function saveShortcut(){
   if(shortcutBusy||!shortcutReady())return;
   const reference=$('shortcutApp').value,trigger=$('shortcutTrigger').value.trim(),dispatch=$('shortcutDispatch').value.trim(),label=$('shortcutLabel').value.trim();
+  const chosenButton=$('shortcutDeviceButton').value,deviceButton=deviceButtonIndex({device_button:chosenButton===''?null:Number(chosenButton)});
   if(!reference||!trigger||!dispatch){$('shortcutStatus').textContent='选择应用并填写两条快捷键。';$('shortcutStatus').dataset.kind='error';return;}
   shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
   $('shortcutStatus').textContent='正在保存并注册触发键…';$('shortcutStatus').dataset.kind='idle';
-  try{const response=await api('/api/shortcuts/add',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,application_reference:reference,trigger,dispatch,label,scope:$('shortcutGlobal').checked?'running':'foreground'})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutEditor').hidden=true;$('shortcutStatus').textContent='已保存。只有目标应用位于前台时才会发送该快捷键。';$('shortcutStatus').dataset.kind='ok';refreshApps();}
+  const payload={revision:shortcutsData?.revision??0,application_reference:reference,trigger,dispatch,label,scope:$('shortcutGlobal').checked?'running':'foreground'};if(deviceButton!==null)payload.device_button=deviceButton;
+  try{const response=await api('/api/shortcuts/add',{method:'POST',signal:controller.signal,body:JSON.stringify(payload)});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));const saved=JSON.parse(body);renderShortcuts(saved);if(saved&&saved.hardware)receiveHardware(saved.hardware);const hardwareFailure=saveHardwareFailure(saved,deviceButton);$('shortcutEditor').hidden=true;$('shortcutDeviceButton').value='';if(hardwareFailure){$('shortcutStatus').textContent='快捷键已保存，但 Vibe Key '+hardwareButtonLabel(deviceButton)+' 写入失败：'+hardwareFailure+'。可稍后点“同步到设备”重试。';$('shortcutStatus').dataset.kind='error';}else{$('shortcutStatus').textContent='已保存。只有目标应用位于前台时才会发送该快捷键。';$('shortcutStatus').dataset.kind='ok';}refreshApps();if(!(saved&&saved.hardware))refreshHardware();}
   catch(error){$('shortcutStatus').textContent='未保存：'+error.message;$('shortcutStatus').dataset.kind='error';}
   finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 async function removeShortcut(entry){
   if(shortcutBusy||!serviceToken)return;if(!confirm('删除「'+entry.label+'」的应用快捷键？'))return;
   shortcutBusy=true;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2000);
-  try{const response=await api('/api/shortcuts/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,id:entry.id})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutStatus').textContent='已删除。';$('shortcutStatus').dataset.kind='ok';}
+  try{const response=await api('/api/shortcuts/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:shortcutsData?.revision??0,id:entry.id})});const body=await response.text();if(response.status===401||response.status===403){expireBrowserSession();return;}if(!response.ok)throw Error(serviceError(response,body));renderShortcuts(JSON.parse(body));$('shortcutStatus').textContent='已删除。';$('shortcutStatus').dataset.kind='ok';refreshHardware();}
   catch(error){$('shortcutStatus').textContent='删除未确认：'+error.message;$('shortcutStatus').dataset.kind='error';}
   finally{clearTimeout(timeout);finishShortcutBusy();}
 }
 $('shortcutCancel').onclick=()=>{$('shortcutEditor').hidden=true;};
 $('shortcutSave').onclick=saveShortcut;
+
+// ---- AU05 Vibe Key hardware buttons ---------------------------------------
+// Direct hardware controls: the service writes a saved trigger chord into a
+// physical button and reads it back. `provisioned` means exactly that readback
+// matched. It never means the target application ran, received the chord, or
+// that voice is active.
+let hardwareData=null,hardwareBusy=false,hardwareEventSequence=0,hardwareAutoSynced=false;
+const HARDWARE_BUTTON_NAMES=['按钮 1','按钮 2','按钮 3'];
+function hardwareVisible(){return mode==='service'&&!!serviceToken;}
+function hardwareButtonLabel(index){return HARDWARE_BUTTON_NAMES[index]||('按钮 '+(index+1));}
+function deviceButtonIndex(entry){
+  const value=entry?entry.device_button:null;
+  return Number.isInteger(value)&&value>=0&&value<HARDWARE_BUTTON_NAMES.length?value:null;
+}
+function hardwareButtonForBinding(id){
+  if(!hardwareData||!Array.isArray(hardwareData.buttons)||!id)return null;
+  return hardwareData.buttons.find(button=>button&&button.binding_id===id)||null;
+}
+function hardwareButtonStateText(button){
+  switch(button&&button.state){
+    case 'provisioned':return '已写入设备并读回一致';
+    case 'failed':return '写入失败：'+(button.error||'设备未读回写入值');
+    case 'pending':return '等待写入';
+    case 'unbound':return '未绑定';
+    case 'unavailable':return '不可用';
+    default:return '状态未知';
+  }
+}
+function deviceProvisionText(button){
+  switch(button&&button.state){
+    case 'provisioned':return '已写入设备';
+    case 'failed':return '写入失败：'+(button.error||'设备未读回写入值');
+    case 'pending':return '等待写入';
+    case 'unavailable':return '不可用';
+    default:return '未绑定';
+  }
+}
+function hardwareTagState(state){
+  return state==='provisioned'?'live':state==='failed'?'bad':state==='pending'?'pending':'off';
+}
+// Saved rows join /api/hardware by binding_id; this key keeps that join out of
+// the shortcuts render only while the provisioning state is unchanged.
+function shortcutHardwareKey(){
+  if(!hardwareData||!Array.isArray(hardwareData.buttons))return '';
+  return hardwareData.buttons.map(button=>JSON.stringify([button&&button.button,button&&button.binding_id,button&&button.state,button&&button.error])).join('|');
+}
+function setNodeText(node,text){if(node&&node.textContent!==text)node.textContent=text;}
+function hardwareConnection(data){
+  if(!data)return ['正在读取 Vibe Key 状态…','pending'];
+  if(data.platform==='unsupported'||data.available===false||data.enabled===false)return ['此平台不支持','bad'];
+  if(data.connected===true)return ['已连接','live'];
+  return ['未检测到 AU05','bad'];
+}
+function hardwareControlsBusy(){
+  const visible=hardwareVisible();
+  const unavailable=!!hardwareData&&(hardwareData.available===false||hardwareData.enabled===false||hardwareData.platform==='unsupported');
+  $('hardwareRefresh').disabled=hardwareBusy||!visible;
+  $('hardwareSync').disabled=hardwareBusy||!visible||unavailable;
+  $('hardwareDirectSave').disabled=hardwareBusy||!visible||unavailable;
+  $('hardwareDirectClear').disabled=hardwareBusy||!visible||unavailable;
+}
+function setHardwareStatus(text,kind){const node=$('hardwareStatus');setNodeText(node,text);node.dataset.kind=kind||'idle';}
+function updateHardwareVisibility(){
+  const visible=hardwareVisible();
+  $('hardwareCard').hidden=!visible;
+  if(!visible){hardwareData=null;hardwareBusy=false;hardwareControlsBusy();return;}
+  if(!hardwareData)setHardwareStatus('正在读取 Vibe Key 状态…','idle');
+  renderHardware();
+}
+function renderHardware(){
+  if(!hardwareVisible()){$('hardwareCard').hidden=true;return;}
+  $('hardwareCard').hidden=false;
+  const data=hardwareData;
+  const [connection,connectionState]=hardwareConnection(data);
+  const conn=$('hardwareConn');setNodeText(conn,connection);conn.dataset.state=connectionState;
+  const device=data&&data.device;
+  if(device&&device.name){
+    const parts=[device.name];
+    if(device.vendor_id&&device.product_id)parts.push(device.vendor_id+':'+device.product_id);
+    parts.push(device.microphone?'输入设备 · '+device.microphone:'未读取到匹配的麦克风端点');
+    setNodeText($('hardwareDevice'),parts.join(' · '));
+  }else{
+    setNodeText($('hardwareDevice'),data?'未读取到 AU05 设备信息。':'正在读取设备信息…');
+  }
+  const buttons=data&&Array.isArray(data.buttons)?data.buttons:[];
+  const list=$('hardwareButtons');list.replaceChildren();
+  if(!buttons.length){
+    const unsupported=!!data&&(data.platform==='unsupported'||data.available===false||data.enabled===false);
+    list.append(appNode('p',unsupported?'此平台没有可用的 Vibe Key 按键状态。':'尚未读取到按键状态。连接设备后刷新。'));
+  }
+  for(const button of buttons){
+    const index=Number.isInteger(button&&button.button)?button.button:0;
+    const row=appNode('div');row.className='row';
+    const body=appNode('div');
+    body.append(appNode('strong',hardwareButtonLabel(index)));
+    body.append(appNode('p',button.binding_label?'已绑定应用 · '+button.binding_label:(button.binding_id?'已绑定':'未绑定')));
+    if(button.trigger)body.append(appNode('p','触发键 '+button.trigger));
+    if(button.direct_chord)body.append(appNode('p','直发快捷键 '+button.direct_chord+(button.direct_label?' · '+button.direct_label:'')));
+    const state=appNode('span',hardwareButtonStateText(button));state.className='tag';state.dataset.state=hardwareTagState(button&&button.state);
+    row.append(body,state);list.append(row);
+  }
+  const hint=$('hardwareHint');
+  const showHint=!!data&&connectionState==='bad'&&data.platform!=='unsupported'&&data.available!==false&&data.enabled!==false;
+  hint.hidden=!showHint;
+  if(showHint)setNodeText(hint,'没有检测到设备：插好 2.4G 接收器，给 AU05 通电，按任意按键唤醒，然后点“刷新”。'+(data.error?'（服务：'+data.error+'）':''));
+  renderHardwareEvents(data&&data.recent_actions);
+  const events=data&&Array.isArray(data.recent_actions)?data.recent_actions:[];
+  const newest=events.length?events[events.length-1]:null;
+  if(newest&&Number(newest.sequence)>hardwareEventSequence){
+    hardwareEventSequence=Number(newest.sequence);
+    const source=newest.source==='vibe_key'?('按钮 '+(Number.isInteger(newest.device_button)?newest.device_button+1:1)):(newest.source==='microphone'?'麦克风绑定':'快捷键');
+    const result=newest.state?newest.state:('失败：'+(newest.error||'未知'));
+    setHardwareStatus(source+' 触发 · 目标 '+(newest.label||'未知')+' · 发送 '+(newest.dispatch||'—')+' · '+result,newest.state?'ok':'error');
+  }
+  hardwareControlsBusy();
+}
+function renderHardwareEvents(events){
+  const list=$('hardwareEvents');
+  if(!list)return;
+  const rows=(Array.isArray(events)?events:[]).slice().reverse().slice(0,6);
+  list.replaceChildren();
+  if(!rows.length){
+    list.append(appNode('p','还没有收到按键触发。按下 AU05 按键后，这里会显示服务收到的时间和发送的组合键。'));
+    return;
+  }
+  for(const event of rows){
+    const row=appNode('div');row.className='row';
+    const body=appNode('div');
+    const source=event&&event.source==='vibe_key'
+      ?('Vibe Key · 按钮 '+(Number.isInteger(event.device_button)?event.device_button+1:1))
+      :(event&&event.source==='microphone'?'麦克风绑定':'应用快捷键');
+    body.append(appNode('strong',source+(event&&event.label?' · '+event.label:'')));
+    let detail='';
+    try{detail=event&&event.at?new Date(event.at).toLocaleTimeString():'';}catch{}
+    if(event&&event.trigger)detail+=(detail?' · ':'')+'触发 '+event.trigger;
+    if(event&&event.dispatch)detail+=(detail?' · ':'')+'发送 '+event.dispatch;
+    body.append(appNode('p',detail||'无详细信息'));
+    const text=event&&event.state?event.state:(event&&event.error?'失败：'+event.error:'未知');
+    const tag=appNode('span',text);tag.className='tag';tag.dataset.state=event&&event.state?'live':'error';
+    row.append(body,tag);
+    list.append(row);
+  }
+}
+function isHardwarePayload(data){
+  return !!data&&typeof data==='object'&&(typeof data.schema_version==='number'||Array.isArray(data.buttons)||typeof data.connected==='boolean'||typeof data.platform==='string');
+}
+function receiveHardware(data){
+  if(!isHardwarePayload(data))return false;
+  hardwareData=data;
+  renderHardware();
+  // A service restart forgets the last provisioning results even though the
+  // firmware kept the chords. Re-verify once per page load instead of leaving
+  // every button showing 等待写入.
+  const directEntries=data.direct&&Array.isArray(data.direct.entries)?data.direct.entries:[];
+  const pending=(data.buttons||[]).some(button=>button&&button.direct_state==='pending');
+  if(!hardwareAutoSynced&&data.connected===true&&data.enabled!==false&&directEntries.length&&pending){
+    hardwareAutoSynced=true;
+    setTimeout(syncHardware,250);
+  }
+  // Re-render saved rows for the new provisioning state, but never replace a
+  // visible save/remove error with an optimistic refresh message.
+  if(shortcutsData&&$('shortcutStatus').dataset.kind!=='error')renderShortcuts(shortcutsData);
+  return true;
+}
+async function refreshHardware(options){
+  if(hardwareBusy||!hardwareVisible()||document.hidden)return;
+  const manual=!!(options&&options.manual);
+  hardwareBusy=true;hardwareControlsBusy();
+  if(manual)setHardwareStatus('正在读取 Vibe Key 状态…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
+  try{
+    const response=await api('/api/hardware',{signal:controller.signal});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const data=await readJson(response);
+    if(serviceToken!==expectedToken)return;
+    if(!response.ok){setHardwareStatus('读取 Vibe Key 状态失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
+    if(!receiveHardware(data)){setHardwareStatus('服务没有返回 Vibe Key 状态。','error');return;}
+    const statusNode=$('hardwareStatus'),statusText=statusNode.textContent;
+    const readingPlaceholder=statusText==='尚未读取 Vibe Key 状态。'||statusText==='正在读取 Vibe Key 状态…';
+    const readFailure=statusNode.dataset.kind==='error'&&(statusText.startsWith('读取 Vibe Key 状态失败：')||statusText.startsWith('无法读取 Vibe Key 状态：'));
+    if(manual||readingPlaceholder||readFailure){
+      const reason=data&&data.error;
+      setHardwareStatus(reason?'已读取设备状态：'+reason:'已读取 Vibe Key 状态。',reason?'error':(manual?'ok':'idle'));
+    }
+  }catch(error){
+    if(serviceToken===expectedToken)setHardwareStatus('无法读取 Vibe Key 状态：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);hardwareBusy=false;hardwareControlsBusy();}
+}
+async function syncHardware(){
+  if(hardwareBusy||!hardwareVisible())return;
+  hardwareBusy=true;hardwareControlsBusy();
+  setHardwareStatus('正在把已绑定按键写入设备…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  try{
+    const response=await api('/api/hardware/sync',{method:'POST',signal:controller.signal,body:'{}'});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const data=await readJson(response);
+    if(serviceToken!==expectedToken)return;
+    if(!response.ok){setHardwareStatus('同步失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
+    if(!isHardwarePayload(data)){setHardwareStatus('同步结果未确认：服务没有返回设备状态。','error');return;}
+    receiveHardware(data);
+    const failed=(data.buttons||[]).filter(button=>button&&button.state==='failed');
+    if(data.platform==='unsupported'||data.available===false||data.enabled===false){
+      setHardwareStatus('此平台不支持 Vibe Key 写入。','error');
+    }else if(data.connected!==true){
+      setHardwareStatus('同步未完成：未检测到 AU05。'+(data.error?'（'+data.error+'）':''),'error');
+    }else if(failed.length){
+      setHardwareStatus('同步完成，但 '+failed.length+' 个按键写入失败：'+(failed[0].error||'设备未读回写入值')+'。','error');
+    }else{
+      setHardwareStatus('已同步到设备：已绑定按键均已读回一致。','ok');
+    }
+  }catch(error){
+    if(serviceToken===expectedToken)setHardwareStatus('同步失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);hardwareBusy=false;hardwareControlsBusy();}
+}
+async function saveDirectHardware(){
+  if(hardwareBusy||!hardwareVisible())return;
+  const chord=($('hardwareDirectChord').value||'').trim();
+  if(!chord){setHardwareStatus('请先输入要写入的组合键，例如 Ctrl + Win。','error');return;}
+  if(!hardwareData||!hardwareData.direct){setHardwareStatus('还没有读取到硬件直发配置，请先刷新。','error');return;}
+  const button=Number($('hardwareDirectButton').value||0);
+  const label=($('hardwareDirectLabel').value||'').trim();
+  const body={revision:hardwareData.direct.revision,button,chord};
+  if(label)body.label=label;
+  hardwareBusy=true;hardwareControlsBusy();
+  setHardwareStatus('正在写入直发组合键…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+  try{
+    const response=await api('/api/hardware/direct',{method:'POST',signal:controller.signal,body:JSON.stringify(body)});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const data=await readJson(response);
+    if(serviceToken!==expectedToken)return;
+    if(!response.ok){setHardwareStatus('写入直发快捷键失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
+    if(!isHardwarePayload(data)){setHardwareStatus('写入结果未确认：服务没有返回设备状态。','error');return;}
+    receiveHardware(data);
+    const entry=(data.buttons||[]).find(row=>row&&row.button===button);
+    const state=entry&&(entry.direct_state||entry.state);
+    if(state==='provisioned')setHardwareStatus('已写入按钮 '+(button+1)+' 并读回一致：'+chord+'。','ok');
+    else setHardwareStatus('按钮 '+(button+1)+' 尚未读回写入值：'+((entry&&(entry.direct_error||entry.error))||'设备未确认')+'。','error');
+  }catch(error){
+    if(serviceToken===expectedToken)setHardwareStatus('写入直发快捷键失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);hardwareBusy=false;hardwareControlsBusy();}
+}
+async function clearDirectHardware(){
+  if(hardwareBusy||!hardwareVisible())return;
+  if(!hardwareData||!hardwareData.direct){setHardwareStatus('还没有读取到硬件直发配置，请先刷新。','error');return;}
+  const button=Number($('hardwareDirectButton').value||0);
+  hardwareBusy=true;hardwareControlsBusy();
+  setHardwareStatus('正在清除按钮 '+(button+1)+' 的直发组合键…','idle');
+  const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+  try{
+    const response=await api('/api/hardware/direct/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:hardwareData.direct.revision,button})});
+    if(serviceToken!==expectedToken)return;
+    if(response.status===401||response.status===403){expireBrowserSession();return;}
+    const data=await readJson(response);
+    if(serviceToken!==expectedToken)return;
+    if(!response.ok){setHardwareStatus('清除直发快捷键失败：'+((data&&data.error)||serviceError(response,'')),'error');return;}
+    if(!isHardwarePayload(data)){setHardwareStatus('清除结果未确认：服务没有返回设备状态。','error');return;}
+    receiveHardware(data);
+    setHardwareStatus('已清除按钮 '+(button+1)+' 的直发组合键。','ok');
+  }catch(error){
+    if(serviceToken===expectedToken)setHardwareStatus('清除直发快捷键失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
+  }finally{clearTimeout(timeout);hardwareBusy=false;hardwareControlsBusy();}
+}
+function saveHardwareFailure(data,deviceButton){
+  if(deviceButton===null||!data||!data.hardware||!Array.isArray(data.hardware.buttons))return '';
+  const button=data.hardware.buttons.find(item=>item&&item.button===deviceButton);
+  if(!button||button.state!=='failed')return '';
+  return button.error||'设备未读回写入值';
+}
+$('hardwareRefresh').onclick=()=>refreshHardware({manual:true});
+$('hardwareSync').onclick=syncHardware;
+$('hardwareDirectSave').onclick=saveDirectHardware;
+$('hardwareDirectClear').onclick=clearDirectHardware;
+renderHardware();
 
 async function redeemBootstrap(code){
   const response=await fetch('/api/bootstrap',{method:'POST',cache:'no-store',
@@ -543,6 +850,10 @@ function expireBrowserSession(){
   if(appTimer){clearInterval(appTimer);appTimer=null;}
   clearTimeout(appExpiryTimer);appExpiryTimer=null;appsRenderKey='';lastAppsData=null;$('pinnedApps').replaceChildren();$('appChoices').replaceChildren();
   $('appReadStatus').textContent='会话已失效，软件状态未知。请从 Settings 重新打开。';
+  hardwareData=null;hardwareBusy=false;hardwareEventSequence=0;hardwareAutoSynced=false;
+  $('hardwareCard').hidden=true;$('hardwareButtons').replaceChildren();$('hardwareEvents').replaceChildren();
+  $('hardwareStatus').textContent='Vibe Key 状态未知 · 页面未授权';$('hardwareStatus').dataset.kind='idle';
+  hardwareControlsBusy();
   bindingPollStarted=false;
   $('conn').dataset.state='bad';$('conn').textContent='服务会话失效 · 需要重新授权';
   $('authRow').hidden=false;

@@ -12,13 +12,19 @@ mod app_session_stub;
 #[cfg(windows)]
 mod app_session_windows;
 mod app_shortcuts;
+// AU05 Vibe Key vendor protocol. Windows-only in production; kept platform
+// independent so the wire format is testable on every build host.
+mod au05;
 mod browser_auth;
+// Platform adapter that provisions the AU05 buttons. The stub reports
+// unavailable on hosts without the Windows HID adapter.
 mod capabilities;
 #[cfg(all(windows, feature = "stt"))]
 mod dictation;
 pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
+mod hardware;
 mod instance_proof;
 mod integrations;
 #[cfg(all(test, not(target_os = "macos")))]
@@ -95,6 +101,9 @@ pub enum Action {
     ShortcutApps,
     ShortcutAdd,
     ShortcutRemove,
+    HardwareStatus,
+    HardwareBind,
+    HardwareUnbind,
 }
 
 impl fmt::Display for Action {
@@ -125,6 +134,9 @@ impl fmt::Display for Action {
             Action::ShortcutApps => "shortcut-apps",
             Action::ShortcutAdd => "shortcut-add",
             Action::ShortcutRemove => "shortcut-remove",
+            Action::HardwareStatus => "hardware-status",
+            Action::HardwareBind => "hardware-bind",
+            Action::HardwareUnbind => "hardware-unbind",
         };
         f.write_str(name)
     }
@@ -173,10 +185,12 @@ pub const USAGE: &str = "Usage: vibdock <serve|service-start|service-stop|servic
        vibdock dictate [--seconds <1-30>] [--hold --trigger <chord>] [--vad] \\
                [--insert [--target <title>]] [--json]
        vibdock dictate --wav <path> [--insert] [--json]
-       vibdock <shortcut-list|shortcut-apps> [--json]
+       vibdock <shortcut-list|shortcut-apps|hardware-status> [--json]
        vibdock shortcut-add --application <reference>|--app <name> --trigger <chord> \\
-               --dispatch <chord> [--scope foreground|running] [--label <text>]
-       vibdock shortcut-remove --id <saved-id>";
+               --dispatch <chord> [--scope foreground|running] [--label <text>] [--device-button <1-3>]
+       vibdock shortcut-remove --id <saved-id>
+       vibdock hardware-bind --button <1-3> --chord <chord> [--label <text>]
+       vibdock hardware-unbind --button <1-3>";
 
 /// Parses command-line arguments into an [`Action`].
 ///
@@ -216,6 +230,9 @@ pub fn parse(args: &[String]) -> Result<Action> {
         Some("shortcut-apps") => Action::ShortcutApps,
         Some("shortcut-add") => Action::ShortcutAdd,
         Some("shortcut-remove") => Action::ShortcutRemove,
+        Some("hardware-status") => Action::HardwareStatus,
+        Some("hardware-bind") => Action::HardwareBind,
+        Some("hardware-unbind") => Action::HardwareUnbind,
         _ => return Err(format!("{USAGE}\nRun `vibdock help` for details.").into()),
     };
     let rest = &args[1..];
@@ -280,7 +297,13 @@ pub fn help() {
     println!("  shortcut-list    List saved per-application shortcut bindings");
     println!("  shortcut-apps    List detected applications and opaque references");
     println!("  shortcut-add     Bind a trigger and dispatch chord to a detected application");
+    println!("                   --device-button 1-3 writes that trigger into an AU05 button");
     println!("  shortcut-remove  Remove one saved per-application shortcut");
+    println!("  hardware-status  Show the AU05 device and its button provisioning state");
+    println!("                   --sync re-detects the device and rewrites bound buttons");
+    println!("  hardware-bind    Write a chord straight into one AU05 button's firmware");
+    println!("                   --button 1-3 --chord <chord> [--label <text>]");
+    println!("  hardware-unbind  Clear one AU05 button's direct chord");
     println!("  help             Show this message");
     println!();
     println!("Exit codes are zero on success and nonzero on error. `service-start`");
@@ -507,7 +530,10 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
         Action::ShortcutList
         | Action::ShortcutApps
         | Action::ShortcutAdd
-        | Action::ShortcutRemove => {
+        | Action::ShortcutRemove
+        | Action::HardwareStatus
+        | Action::HardwareBind
+        | Action::HardwareUnbind => {
             #[cfg(windows)]
             {
                 shortcut_cli::run(action, args)
@@ -515,7 +541,10 @@ pub fn run_action(action: Action, args: &[String]) -> Result<()> {
             #[cfg(not(windows))]
             {
                 let _ = args;
-                Err("Application shortcuts require the Windows service.".into())
+                Err(
+                    "Application shortcuts and AU05 hardware control require the Windows service."
+                        .into(),
+                )
             }
         }
         Action::AppList
