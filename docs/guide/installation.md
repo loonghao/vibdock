@@ -179,7 +179,9 @@ first-run design:
 
 The production Settings page now serves this wizard in service mode. Saving uses
 the authenticated `/api/gestures` API and shows a failed firmware readback instead
-of claiming success. The standalone page remains the visual reference and the
+of claiming success. If a button already has a firmware direct chord, the wizard
+explains that direct actions such as WeChat voice may stop and asks for
+confirmation before clearing it. The standalone page remains the visual reference and the
 source of the **Let an agent configure** prompt. The install and configuration
 semantics above remain authoritative.
 
@@ -240,6 +242,7 @@ vibdock service-status
 ---
 
 简体中文：[installation.zh-CN.md](installation.zh-CN.md) · Back to [README](../../README.md)
+
 
 
 

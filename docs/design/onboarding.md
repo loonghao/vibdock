@@ -35,7 +35,10 @@ After step 4 the done screen offers **Open Workbench**, **Open Virtual Pad**, or
 | Blank | unassigned | unassigned | unassigned |
 
 Templates seed a useful subset of the 9 slots. Remaining cells can be assigned in
-the wizard via Profile, manual chord, or recorded chord. Multi-key combos are
+the wizard via Profile, manual chord, or recorded chord. A button with an existing
+firmware direct chord must be cleared first: the wizard warns that direct actions
+such as WeChat voice may stop working and asks for confirmation before removing the
+chord. It never silently overwrites a direct, application or action binding. Multi-key combos are
 added later in the workbench; the wizard never claims they are active before the
 gesture layer exists.
 
@@ -86,6 +89,7 @@ When Settings migrates to the clean workbench:
 The install/configuration semantics remain in
 [`docs/guide/installation.md`](../guide/installation.md) and
 [`docs/guide/installation.zh-CN.md`](../guide/installation.zh-CN.md).
+
 
 
 

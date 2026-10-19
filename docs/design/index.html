@@ -1999,6 +1999,34 @@ function onboardChangedSlots(){
   }
   return slots;
 }
+function onboardDirectEntry(button){
+  const entries=onboardHardware&&onboardHardware.direct&&Array.isArray(onboardHardware.direct.entries)?onboardHardware.direct.entries:[];
+  return entries.find(entry=>entry&&entry.button===button)||null;
+}
+async function clearOnboardDirectConflicts(slots){
+  const buttons=[...new Set(slots.map(slot=>slot.button))].filter(button=>!!onboardDirectEntry(button));
+  if(!buttons.length)return '';
+  const lines=buttons.map(button=>'按钮 '+(button+1)+'：'+(onboardDirectEntry(button).chord||'直发组合键'));
+  if(!confirm('以下按键当前是固件直发，改为手势会先清除直发：\n\n'+lines.join('\n')+'\n\n微信语音等依赖固件直发的动作可能不再工作；确定继续吗？'))return 'cancelled';
+  for(const button of buttons){
+    const direct=onboardHardware&&onboardHardware.direct;
+    if(!direct||!Number.isSafeInteger(direct.revision))return '无法读取直发 revision，未清除任何绑定。';
+    const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
+    try{
+      const response=await api('/api/hardware/direct/remove',{method:'POST',signal:controller.signal,body:JSON.stringify({revision:direct.revision,button})});
+      if(serviceToken!==expectedToken)return '页面授权已变化，已停止保存。';
+      if(response.status===401||response.status===403){expireBrowserSession();return '页面授权已失效，已停止保存。';}
+      const text=await response.text();
+      if(!response.ok)return '清除按钮 '+(button+1)+' 的直发失败：'+actionErrorText(response,text);
+      let data=null;try{data=JSON.parse(text);}catch{data=null;}
+      if(!data||!data.direct){return '清除按钮 '+(button+1)+' 的直发结果未确认。';}
+      onboardHardware=data;
+    }catch(error){
+      return '清除按钮 '+(button+1)+' 的直发失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应');
+    }finally{clearTimeout(timeout);}
+  }
+  return '';
+}
 function onboardStepPayload(value){
   if(value.type==='send_keys')return {type:'send_keys',keys:String(value.keys||'').trim()};
   if(value.type==='launch')return {type:'launch',application_reference:value.application_reference,args:[]};
@@ -2023,6 +2051,13 @@ async function saveOnboard(){
   if(latest.storage_writable===false){onboardBusy=false;onboardSetStatus('保存失败：服务的手势存储当前不可写。','error');renderOnboardButtons();return;}
   const slots=onboardChangedSlots();
   if(!slots.length){onboardBusy=false;onboardSetStatus('手势列表已变化：没有剩余需要保存的手势位。','idle');renderOnboardButtons();return;}
+  const conflict=await clearOnboardDirectConflicts(slots);
+  if(conflict==='cancelled'){
+    onboardBusy=false;onboardSetStatus('已取消：没有修改固件直发，也没有保存手势。','idle');renderOnboardButtons();return;
+  }
+  if(conflict){
+    onboardBusy=false;onboardSetStatus(conflict,'error');renderOnboardButtons();refreshHardware();return;
+  }
   let savedCount=0,failure='';
   for(let index=0;index<slots.length;index+=1){
     const slot=slots[index];

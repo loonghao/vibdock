@@ -155,7 +155,7 @@ AU05 的单击/双击/长按已经接通：服务把 `Ctrl+Alt+Shift+F10/F11/F12
 3. 确认 9 个动作位（每个按键的单击 / 双击 / 长按，可选 Profile、手动输入或录入组合键）；
 4. 测试反馈并完成。
 
-生产 Settings 的服务模式已经接入这个向导，保存会调用认证的 `/api/gestures` 并显示固件读回失败。独立的 `docs/design/onboarding.html` 仍作为视觉参考和“让 Agent 配置”的指令来源；安装路径和配置语义以本文为准。
+生产 Settings 的服务模式已经接入这个向导，保存会调用认证的 `/api/gestures` 并显示固件读回失败。若按键已有固件直发，向导会先说明并征得确认，再清除直发；微信语音等直发动作可能因此停止工作。独立的 `docs/design/onboarding.html` 仍作为视觉参考和“让 Agent 配置”的指令来源；安装路径和配置语义以本文为准。
 
 ## 10. 用 Agent 配置
 
@@ -205,6 +205,7 @@ vibdock service-status
 ---
 
 English version: [installation.md](installation.md) · 返回 [README](../../README.zh-CN.md)
+
 
 
 
