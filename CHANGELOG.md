@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/loonghao/vibdock/compare/v0.4.0...v0.5.0) (2026-10-20)
+
+
+### Features
+
+* **status:** show a taskbar-adjacent desktop status strip ([#73](https://github.com/loonghao/vibdock/issues/73)) ([db3b72c](https://github.com/loonghao/vibdock/commit/db3b72cf2d6fe4535900751955cd62afef8b9de3))
+* Vibe Key hardware bindings, action sequences, and plugin foundation ([#62](https://github.com/loonghao/vibdock/issues/62)) ([8cdd28c](https://github.com/loonghao/vibdock/commit/8cdd28c8eef6a2bb421ac8841f027d8e806a0fed))
+
+
+### Bug Fixes
+
+* **release:** version workspace path dependencies ([#72](https://github.com/loonghao/vibdock/issues/72)) ([65635df](https://github.com/loonghao/vibdock/commit/65635df3e64828246717bbafc255c1a560e4b9b9))
+* **status:** draw the strip inside the Windows taskbar ([#74](https://github.com/loonghao/vibdock/issues/74)) ([084dbe6](https://github.com/loonghao/vibdock/commit/084dbe6753475e6bf60b76d0a58ac874eb3e19c1))
+* **status:** make the in-taskbar strip visible on launch ([#75](https://github.com/loonghao/vibdock/issues/75)) ([cdcc513](https://github.com/loonghao/vibdock/commit/cdcc5135dcd2382a07ca6d5c43096fc86c49deef))
+* **stt:** make hold-to-talk Escape cancellation deterministic ([a5c23e1](https://github.com/loonghao/vibdock/commit/a5c23e12336fb262bd9e24d30ac3643822dc85b6)), closes [#55](https://github.com/loonghao/vibdock/issues/55)
+
 ## [0.4.0](https://github.com/loonghao/vibdock/compare/v0.3.0...v0.4.0) (2026-10-18)
 
 
