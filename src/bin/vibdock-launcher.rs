@@ -53,30 +53,8 @@ fn run() -> Result<()> {
         // startup; this process only waits for a service to prove itself.
         start_detached_service()?;
         wait_for_service()?;
-        request_taskbar_nudge();
         tray::run()
     }
-}
-
-/// Ask a short-lived external helper to re-assert the taskbar child.
-///
-/// Windows 11 applies the child z-order change only when another process
-/// performs it; the service creates the window, this helper makes it visible.
-#[cfg(windows)]
-fn request_taskbar_nudge() {
-    use std::os::windows::process::CommandExt;
-    use std::process::Stdio;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let Ok(cli) = sibling_cli() else {
-        return;
-    };
-    let _ = std::process::Command::new(cli)
-        .arg("_taskbar_nudge")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
 }
 
 /// Starts the resident service as a separate, detached process.

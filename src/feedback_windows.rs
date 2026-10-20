@@ -590,6 +590,18 @@ fn run_overlay(
                             | SWP_SHOWWINDOW,
                     );
                     let _ = InvalidateRect(Some(window), None, true);
+                    if let Ok(executable) = std::env::current_exe() {
+                        use std::os::windows::process::CommandExt;
+                        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                        let _ = std::process::Command::new(executable)
+                            .arg("_taskbar_nudge")
+                            .arg(raw.to_string())
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .spawn();
+                    }
                 }
             });
         }
