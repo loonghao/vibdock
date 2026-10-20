@@ -35,9 +35,13 @@ use crate::{
 };
 
 /// Width of the indicator window, in pixels.
-const WIDTH: i32 = 260;
+const WIDTH: i32 = 340;
 /// Height of the indicator window, in pixels.
-const HEIGHT: i32 = 64;
+const HEIGHT: i32 = 48;
+/// Horizontal offset from the taskbar left edge. The blank left/centre band is
+/// after the weather/start controls and before the app buttons on common
+/// Windows 11 layouts.
+const TASKBAR_OFFSET_X: i32 = 300;
 /// Margin from the screen edge, in pixels.
 const MARGIN: i32 = 16;
 
@@ -305,8 +309,10 @@ enum ThreadReady {
 /// left or top taskbar the indicator may overlap the taskbar band. It is kept
 /// because a misplaced indicator is still better than one that never appears.
 fn place(corner: Corner) -> (i32, i32) {
-    // The only platform calls in this path; everything below is pure so it can
-    // be verified against a fixture instead of the real display.
+    // The work area deliberately excludes the taskbar. The taskbar corner sits
+    // immediately above it, at the left/centre of the band, so the status stays
+    // visible when the browser is minimized without covering Start or the
+    // notification area.
     let area = work_area().unwrap_or_else(|| Rect {
         left: 0,
         top: 0,
@@ -317,15 +323,8 @@ fn place(corner: Corner) -> (i32, i32) {
 }
 
 /// Reads the primary monitor's work area: the monitor rectangle minus the
-/// space the shell reserves for the taskbar and other app bars.
-///
-/// The origin is preserved rather than reduced to a width and height:
-/// `SPI_GETWORKAREA` reports `left`/`top` greater than zero when the taskbar
-/// sits on the left or top, and dropping that origin would place the indicator
-/// underneath the taskbar.
-///
-/// Returns `None` if the call fails, leaving the caller to fall back to the
-/// full monitor rectangle.
+/// space the shell reserves for the taskbar and other app bars. The origin is
+/// preserved for left/top taskbars; an unusable result falls back to the caller.
 fn work_area() -> Option<Rect> {
     let mut area = RECT::default();
     unsafe {
@@ -343,8 +342,6 @@ fn work_area() -> Option<Rect> {
         right: area.right,
         bottom: area.bottom,
     };
-    // A non-positive area means the call succeeded but reported something
-    // unusable; treat it as a failure so the caller falls back.
     if area.width() > 0 && area.height() > 0 {
         Some(area)
     } else {
@@ -354,15 +351,8 @@ fn work_area() -> Option<Rect> {
 
 /// Places the indicator inside the given work-area rectangle.
 ///
-/// Pure: it takes the rectangle as an argument rather than reading the display,
-/// so placement can be verified against fixtures. The origin is honoured: with
-/// a left or top taskbar the area starts away from zero, and the offset is
-/// added to the corner result. The result is always clamped so the window stays
-/// fully inside the area, because an indicator pushed partly or wholly outside
-/// it is indistinguishable from one that failed to start.
+/// Pure so placement can be checked against fixtures; every result is clamped.
 fn place_in(corner: Corner, area: Rect) -> (i32, i32) {
-    // An area smaller than the window leaves no room for margins, so the
-    // window is pinned to the area's origin instead of being pushed off it.
     let max_x = (area.width() - WIDTH).max(0);
     let max_y = (area.height() - HEIGHT).max(0);
     let margin_x = MARGIN.min(max_x);
@@ -374,6 +364,9 @@ fn place_in(corner: Corner, area: Rect) -> (i32, i32) {
         Corner::BottomLeft => (margin_x, bottom),
         Corner::TopRight => (right, margin_y),
         Corner::TopLeft => (margin_x, margin_y),
+        // Left/centre of the strip immediately above the taskbar, clear of
+        // Start, the app buttons and the notification area.
+        Corner::Taskbar => (TASKBAR_OFFSET_X.min(max_x), bottom),
     };
     (area.left + offset_x, area.top + offset_y)
 }
@@ -645,11 +638,12 @@ mod tests {
     use super::*;
 
     /// Every corner, so placement invariants can be asserted over all of them.
-    const CORNERS: [Corner; 4] = [
+    const CORNERS: [Corner; 5] = [
         Corner::BottomRight,
         Corner::BottomLeft,
         Corner::TopRight,
         Corner::TopLeft,
+        Corner::Taskbar,
     ];
 
     /// A work-area rectangle with no reserved band: the fallback shape and the
@@ -680,6 +674,17 @@ mod tests {
             assert!(x + WIDTH <= 1920, "{corner:?} overflows width at x={x}");
             assert!(y + HEIGHT <= 1040, "{corner:?} overflows height at y={y}");
         }
+    }
+
+    #[test]
+    fn taskbar_status_sits_in_the_blank_band() {
+        let area = Rect {
+            left: 0,
+            top: 2160 - 84,
+            right: 3840,
+            bottom: 2160,
+        };
+        assert_eq!(place_in(Corner::Taskbar, area), (300, 2096));
     }
 
     #[test]
@@ -727,9 +732,9 @@ mod tests {
             bottom: 1080,
         };
         assert_eq!(place_in(Corner::TopLeft, area), (56, 16));
-        assert_eq!(place_in(Corner::BottomLeft, area), (56, 1000));
-        assert_eq!(place_in(Corner::TopRight, area), (1644, 16));
-        assert_eq!(place_in(Corner::BottomRight, area), (1644, 1000));
+        assert_eq!(place_in(Corner::BottomLeft, area), (56, 1016));
+        assert_eq!(place_in(Corner::TopRight, area), (1564, 16));
+        assert_eq!(place_in(Corner::BottomRight, area), (1564, 1016));
     }
 
     #[test]
@@ -743,9 +748,9 @@ mod tests {
             bottom: 1080,
         };
         assert_eq!(place_in(Corner::TopLeft, area), (16, 56));
-        assert_eq!(place_in(Corner::TopRight, area), (1644, 56));
-        assert_eq!(place_in(Corner::BottomLeft, area), (16, 1000));
-        assert_eq!(place_in(Corner::BottomRight, area), (1644, 1000));
+        assert_eq!(place_in(Corner::TopRight, area), (1564, 56));
+        assert_eq!(place_in(Corner::BottomLeft, area), (16, 1016));
+        assert_eq!(place_in(Corner::BottomRight, area), (1564, 1016));
     }
 
     #[test]

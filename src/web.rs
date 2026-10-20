@@ -689,18 +689,23 @@ fn show_latest_frame(
     let Some(overlay) = overlay else {
         return;
     };
-    let target = feedback
-        .target
-        .as_deref()
-        .map(|id| {
-            if id.is_empty() {
-                "No target selected"
-            } else {
-                id
-            }
-        })
-        .unwrap_or("No target selected")
-        .to_string();
+    let initial = feedback.sequence == 0;
+    let target = if initial {
+        "VibDock · local".to_string()
+    } else {
+        feedback
+            .target
+            .as_deref()
+            .map(|id| {
+                if id.is_empty() {
+                    "No target selected"
+                } else {
+                    id
+                }
+            })
+            .unwrap_or("No target selected")
+            .to_string()
+    };
     // Nothing changed since the last enqueue: skip the send and the wake.
     if cursor.sequence == feedback.sequence && cursor.target == target {
         return;
@@ -715,10 +720,21 @@ fn show_latest_frame(
         state: feedback.state.clone(),
         error: feedback.error.clone(),
     };
+    let frame = if initial {
+        crate::feedback::StatusFrame {
+            kind: crate::feedback::StatusKind::Idle,
+            icon: "●",
+            text: "Vibe Key · ready".to_string(),
+            target: target.clone(),
+            sequence: 0,
+        }
+    } else {
+        frame_from(&view, &config)
+    };
     // The cursor advances only once the frame is actually queued and woken.
     // Advancing it first would mark this state as delivered and never retry it,
     // leaving the indicator stuck on an older state.
-    if overlay.show(&frame_from(&view, &config)) {
+    if overlay.show(&frame) {
         cursor.sequence = feedback.sequence;
         cursor.target = target;
     }
