@@ -25,6 +25,23 @@ fn run() -> Result<()> {
         vibdock::resident_apps::print_snapshot();
         return Ok(());
     }
+    #[cfg(windows)]
+    if args == ["_taskbar_nudge"] {
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if vibdock::nudge_taskbar_auto() {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    #[cfg(windows)]
+    if args.len() == 2 && args[0] == "_taskbar_nudge" {
+        if let Ok(raw) = args[1].parse::<isize>() {
+            let _ = vibdock::nudge_taskbar(raw);
+        }
+        return Ok(());
+    }
     if args.is_empty() {
         vibdock::help();
         return Ok(());
