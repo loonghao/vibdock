@@ -11,7 +11,7 @@ resolver = "2"
 
 [package]
 name = "vibdock"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 
@@ -39,11 +39,11 @@ serde_json = "1"
 sha2 = "0.10"
 sherpa-onnx = { version = "1.13.8", optional = true }
 cpal = { version = "0.15", optional = true }
-vibdock-au05 = { version = "0.5.0", path = "crates/vibdock-au05" }
-vibdock-device-au05 = { version = "0.5.0", path = "crates/vibdock-device-au05" }
-vibdock-actions = { version = "0.5.0", path = "crates/vibdock-actions" }
-vibdock-input = { version = "0.5.0", path = "crates/vibdock-input" }
-vibdock-plugin-api = { version = "0.5.0", path = "crates/vibdock-plugin-api" }
+vibdock-au05 = { version = "0.6.0", path = "crates/vibdock-au05" }
+vibdock-device-au05 = { version = "0.6.0", path = "crates/vibdock-device-au05" }
+vibdock-actions = { version = "0.6.0", path = "crates/vibdock-actions" }
+vibdock-input = { version = "0.6.0", path = "crates/vibdock-input" }
+vibdock-plugin-api = { version = "0.6.0", path = "crates/vibdock-plugin-api" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Exact, MIT-compatible published bindings; only the resident UI's frameworks.
@@ -52,7 +52,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "objc2-core-foundation", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSImageView", "NSMenu", "NSMenuItem", "NSPanel", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
 
 [target.'cfg(windows)'.dependencies]
-vibdock-device-gamepad = { version = "0.5.0", path = "crates/vibdock-device-gamepad" }
+vibdock-device-gamepad = { version = "0.6.0", path = "crates/vibdock-device-gamepad" }
 windows = { version = "0.61", features = ["Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Variant", "Win32_System_Com", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_UI_Input_KeyboardAndMouse", "Win32_Devices_FunctionDiscovery", "Win32_Devices_HumanInterfaceDevice", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Storage_FileSystem", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_IO", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Registry", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
 
 
