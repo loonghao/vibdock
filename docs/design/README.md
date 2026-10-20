@@ -179,3 +179,4 @@ The [onboarding.html](onboarding.html) prototype covers the guided first-run pat
 
 The Windows strip is in [desktop-status.md](desktop-status.md). It sits above the taskbar, is click-through, and is enabled by the normal launcher while direct service-start remains opt-in.
 
+
