@@ -30,13 +30,16 @@ A notification-area icon is part of the supported Windows shell contract, so it
 is visible inside the taskbar without signing, UIAccess, a COM deskband, or
 undocumented z-band APIs.
 
-## Status source
+The service writes a bounded `%LOCALAPPDATA%\VibDock\status.json` only when the
+recorded action sequence changes:
 
-The tray worker already polls the authenticated service. Each poll now also
-fetches `GET /api/hardware` and derives:
+```json
+{"tone":"ready","text":"Vibe Key · 就绪","detail":null,"sequence":0}
+```
 
-- `connected`;
-- the last `recent_actions` entry (`label`, `state`, `error`).
+The tray reads that local file on its timer. This deliberately avoids a network
+or device request on every tray tick, so service shutdown and the desktop
+acceptance lifecycle stay independent of hardware I/O.
 
 The primary tray icon is updated with one of the generated ring icons:
 
@@ -63,3 +66,4 @@ The Windows 11 taskbar may paint it behind the shell; do not treat its
 - Windows can collapse new notification icons into the overflow flyout; pin the
   VibDock icon if needed.
 - The icon shows the last completed action, not a live per-button state.
+

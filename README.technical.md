@@ -15,7 +15,7 @@ Use a microphone button to talk to an agent, silence an input device, and get ba
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline predates the desktop and microphone-association changes. New candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
-**Desktop status feedback:** The primary notification-area icon is the persistent status indicator. The tray worker polls `GET /api/hardware` and maps the last recent action to a green/amber/red/grey generated ring icon plus a bounded tooltip; a change also raises a short balloon. Clicking the icon opens Settings. This uses the supported notification-area contract, so it remains inside the Windows 11 taskbar without UIAccess, a deskband or undocumented z-band calls. An earlier topmost strip remains behind `VIBDOCK_OVERLAY=1` for experiments but is not started by the launcher. The optional breathing border is still planned.
+**Desktop status feedback:** The primary notification-area icon is the persistent status indicator. The service writes a small `status.json` when the recorded action sequence changes; the tray reads it locally and maps the last action to a green/amber/red/grey generated ring icon plus a bounded tooltip; a change also raises a short balloon. Clicking the icon opens Settings. This uses the supported notification-area contract, so it remains inside the Windows 11 taskbar without UIAccess, a deskband or undocumented z-band calls. An earlier topmost strip remains behind `VIBDOCK_OVERLAY=1` for experiments but is not started by the launcher. The optional breathing border is still planned.
 
 ## Download and run
 
@@ -980,6 +980,7 @@ Integration evidence and shortcut ownership are tracked in [voice integration ev
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
 
 
 
