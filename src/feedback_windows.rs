@@ -15,12 +15,12 @@ use std::sync::{
 };
 
 use windows::{
-    core::PCWSTR,
+    core::{w, PCWSTR},
     Win32::{
         Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
             BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-            GetStockObject, InvalidateRect, SelectObject, SetBkMode, SetTextColor,
+            GetStockObject, InvalidateRect, SelectObject, SetBkMode, SetTextColor, UpdateWindow,
             DEFAULT_GUI_FONT, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HBRUSH, HGDIOBJ, PAINTSTRUCT,
             TRANSPARENT,
         },
@@ -371,6 +371,73 @@ fn place_in(corner: Corner, area: Rect) -> (i32, i32) {
     (area.left + offset_x, area.top + offset_y)
 }
 
+/// The shell taskbar window, when it exists and is horizontal.
+fn taskbar_window() -> Option<HWND> {
+    let tray = unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) }.ok()?;
+    // The XAML content host is a child of the classic taskbar. Parenting the
+    // strip to that host puts it above the rendered taskbar surface; parenting
+    // to Shell_TrayWnd itself leaves it behind the XAML child.
+    let bridge = unsafe {
+        FindWindowExW(
+            Some(tray),
+            None,
+            w!("Windows.UI.Composition.DesktopWindowContentBridge"),
+            PCWSTR::null(),
+        )
+    }
+    .ok();
+    let window = bridge.unwrap_or(tray);
+    let mut area = RECT::default();
+    unsafe { GetWindowRect(window, &mut area) }.ok()?;
+    (area.right - area.left > area.bottom - area.top).then_some(window)
+}
+
+/// Position inside the taskbar client area, in client coordinates.
+fn taskbar_child_place(taskbar: HWND) -> (i32, i32) {
+    let mut client = RECT::default();
+    if unsafe { GetClientRect(taskbar, &mut client) }.is_err() {
+        return (TASKBAR_OFFSET_X, 0);
+    }
+    let width = client.right - client.left;
+    let height = client.bottom - client.top;
+    (
+        TASKBAR_OFFSET_X.min((width - WIDTH).max(0)),
+        (height - HEIGHT).max(0) / 2,
+    )
+}
+
+/// Reparent the created popup into the shell taskbar.
+///
+/// `CreateWindowExW` rejects a cross-process `WS_CHILD`, but `SetParent`
+/// supports it. The taskbar's XAML content is a sibling child; after parenting,
+/// `HWND_TOP` plus `SWP_FRAMECHANGED` puts the strip above that surface. The
+/// topmost style is removed because it is meaningless for a child window.
+fn attach_to_taskbar(window: HWND, taskbar: HWND) {
+    unsafe {
+        let _ = SetParent(window, Some(taskbar));
+        let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+        SetWindowLongPtrW(
+            window,
+            GWL_STYLE,
+            ((style & !WS_POPUP.0) | WS_CHILD.0) as isize,
+        );
+        let ex_style = GetWindowLongPtrW(window, GWL_EXSTYLE) as u32;
+        SetWindowLongPtrW(window, GWL_EXSTYLE, (ex_style & !WS_EX_TOPMOST.0) as isize);
+        let (x, y) = taskbar_child_place(taskbar);
+        let _ = SetWindowPos(
+            window,
+            None,
+            x,
+            y,
+            WIDTH,
+            HEIGHT,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+        );
+        let _ = InvalidateRect(Some(window), None, true);
+        let _ = UpdateWindow(window);
+    }
+}
+
 /// The extended window styles the indicator is created with.
 ///
 /// A named constant rather than flags rebuilt at each call site, so the style
@@ -414,7 +481,14 @@ fn run_overlay(
         // previous overlay in the same process is gone by the time we respawn.
         // The return is an atom (0 on failure), not a Result.
         let _ = RegisterClassW(&window_class);
-        let (x, y) = place(config.corner);
+        let taskbar = (config.corner == Corner::Taskbar)
+            .then(taskbar_window)
+            .flatten();
+        let (x, y) = if taskbar.is_some() {
+            (0, 0)
+        } else {
+            place(config.corner)
+        };
         let window = match create_overlay_window(instance, class.as_ptr(), x, y) {
             Ok(window) => window,
             Err(error) => {
@@ -431,6 +505,40 @@ fn run_overlay(
         // SW_SHOWNOACTIVATE is the whole point: the window appears without
         // taking focus from whatever the user is typing into.
         let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+        if let Some(taskbar) = taskbar {
+            // Attach after the initial show so the shell does not reset the
+            // child z-order when the popup is first shown. Re-assert once after
+            // the taskbar has finished its own layout pass.
+            attach_to_taskbar(window, taskbar);
+            // The taskbar can finish its XAML layout after our initial show.
+            // Re-assert the child once from a short-lived thread, the same
+            // operation a user or compositor nudge performs, so the strip is
+            // painted in the taskbar band rather than behind it.
+            let raw = window.0 as isize;
+            std::thread::spawn(move || {
+                let window = HWND(raw as *mut std::ffi::c_void);
+                for delay in [600_u64, 1_500, 3_000] {
+                    std::thread::sleep(std::time::Duration::from_millis(delay));
+                    if !IsWindow(Some(window)).as_bool() {
+                        return;
+                    }
+                    let _ = SetWindowPos(
+                        window,
+                        None,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE
+                            | SWP_NOSIZE
+                            | SWP_NOACTIVATE
+                            | SWP_FRAMECHANGED
+                            | SWP_SHOWWINDOW,
+                    );
+                    let _ = InvalidateRect(Some(window), None, true);
+                }
+            });
+        }
         // Report readiness only once the loop can actually be woken. The
         // thread id is published here so no wake or stop can be missed.
         let thread_id = GetCurrentThreadId();

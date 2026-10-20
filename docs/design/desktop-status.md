@@ -14,31 +14,32 @@ when the browser is minimized.
 
 ## Placement
 
-The Windows adapter (`src/feedback_windows.rs`) places the `taskbar` corner just
-above the work-area bottom edge, offset 300 px from the left:
+The strip is drawn **inside the taskbar**, in the blank band to the left of the
+app buttons:
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │ desktop                                                      │
-│                                                              │
-│   ┌──────────────────────────┐                               │
-│   │ ● Vibe Key · ready        │  ← status strip               │
-│   │ VibDock · local           │                               │
-│   └──────────────────────────┘                               │
 ├──────────────────────────────────────────────────────────────┤
-│ taskbar: weather   blank band   app buttons   tray / clock   │
+│ weather   ┌──────────────────────┐   app buttons   tray/clock │
+│           │ ● Vibe Key · ready    │                          │
+│           │ VibDock · local       │  ← status strip           │
+│           └──────────────────────┘                          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The work area excludes the taskbar, so the strip lands immediately above it and
-does not cover Start, app buttons or the notification area. It is a topmost,
-layered, mouse-transparent tool window: it does not take focus or swallow clicks.
+The Windows adapter creates a normal layered popup, then reparents it into
+`Shell_TrayWnd` with `SetParent`, converts it to `WS_CHILD`, removes
+`WS_EX_TOPMOST`, and uses `SetWindowPos(HWND_TOP, SWP_FRAMECHANGED)` so it sits
+above the taskbar's XAML content child. It is placed 300 px from the taskbar's
+left edge and vertically centred. A short delayed re-assert handles the taskbar
+finishing its own layout after startup.
 
-This is **not** a Windows deskband or a taskbar-internal widget. Windows 11's
-XAML taskbar does not provide a stable public child-window slot; an attempt to
-reparent into `Shell_TrayWnd` can be painted behind the XAML surface. The strip
-therefore sits directly above the taskbar, where it remains visible with the
-normal taskbar layout.
+This is not a COM deskband. It is a child window of the classic taskbar host,
+which is the practical way to put text in the Windows 11 taskbar without a
+signed UIAccess binary or undocumented z-band APIs. If `Shell_TrayWnd` cannot
+be found or is vertical, it falls back to the work-area corner above the
+taskbar. Explorer restarting destroys the child; restart VibDock to recreate it.
 
 ## Enabling
 
@@ -71,3 +72,5 @@ to 340×48 px at 96 DPI and respects the process DPI awareness.
   cover it, like other desktop overlays.
 - A future desktop-status toggle in Settings can replace the environment
   variables; none is implemented yet.
+
+

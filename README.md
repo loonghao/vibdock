@@ -85,7 +85,7 @@ UI open.
 ![Desktop status](assets/screenshots/desktop-status.png)
 
 - The strip is mouse-transparent and never steals focus.
-- It sits above the taskbar at the left/centre, not over the notification area.
+- It is drawn inside the taskbar blank band at the left/centre, not over the notification area.
 - The normal launcher enables it automatically; `vibdock service-start` stays
   opt-in. Set `VIBDOCK_OVERLAY=0` to disable it, or
   `VIBDOCK_OVERLAY_CORNER=bottom-right` for another corner.
@@ -167,7 +167,7 @@ the next extraction steps are tracked in the open roadmap.
 | AU05 direct firmware bindings | Verified on a real device: defaults, readback, direct chord, physical action |
 | Hardware action sequences | Wait-step execution verified; launch/send-keys/mic/command chain implemented, full chain not live-tested |
 | Gestures and combos | AU05 single/double/long slots are persisted and executed by the service; multi-key combos and hook-based suppression are still pending |
-| Desktop status | Windows taskbar-adjacent strip: launcher default, last-action state + target, click-through |
+| Desktop status | Windows taskbar strip: launcher default, last-action state + target, click-through |
 | Gamepad | Adapter implemented; no live gamepad was available for acceptance |
 | Virtual Pad | Prototype + saved-action execution endpoint; `/pad` route and pairing pending |
 | Plugin framework | Device/action/input crates extracted; read-only built-in registry; third-party sidecar pending |
@@ -204,6 +204,8 @@ MIT. VibDock is independent of Ulanzi, OpenAI, DeepSeek, Tencent and WorkBuddy;
 product names are used only to describe integrations.
 
 <p align="center"><a href="README.zh-CN.md">阅读中文版 →</a></p>
+
+
 
 
 

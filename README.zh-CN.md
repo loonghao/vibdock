@@ -74,7 +74,7 @@ launcher 启动后，Settings 最小化时任务栏附近会保留一条常驻�
 ![桌面状态条](assets/screenshots/desktop-status.png)
 
 - 鼠标穿透，不抢焦点。
-- 位于任务栏上方的左侧/中间空白区，不遮通知区域。
+- 直接绘制在任务栏左侧/中间的空白区，不遮通知区域。
 - 正常从 launcher 启动时自动开启；直接执行 `vibdock service-start` 仍是手动
   开启。设置 `VIBDOCK_OVERLAY=0` 可关闭，设置
   `VIBDOCK_OVERLAY_CORNER=bottom-right` 可换到其他角落。
@@ -147,7 +147,7 @@ vibdock-launcher / vibdock-cli
 | AU05 固件直发绑定 | 已在真实设备验证：默认布局、读回、直发组合键、物理动作 |
 | 硬件动作序列 | `wait` 步骤已实机验证；launch / send-keys / mic / command 链路已实现，完整链路未实机验收 |
 | 手势与多键组合 | AU05 的单击/双击/长按动作位已持久化并由服务执行；多键组合与钩子级按键吞掉仍在开发 |
-| 桌面状态条 | Windows 任务栏上方状态条：launcher 默认开启，显示最近动作与目标，鼠标穿透 |
+| 桌面状态条 | Windows 任务栏内状态条：launcher 默认开启，显示最近动作与目标，鼠标穿透 |
 | 游戏手柄 | 适配器已实现；验收环境没有可用手柄 |
 | Virtual Pad | 原型 + 已保存动作执行 API；`/pad` 路由和配对未完成 |
 | 插件框架 | 设备 / 动作 / 输入 crate 已拆出；内置清单只读；第三方 sidecar 未完成 |
@@ -184,6 +184,7 @@ MIT。VibDock 与 Ulanzi、OpenAI、DeepSeek、Tencent、WorkBuddy 均无隶属�
 产品名称仅用于描述集成目标。
 
 <p align="center"><a href="README.md">Read in English →</a></p>
+
 
 
 
