@@ -15,7 +15,7 @@ Use a microphone button to talk to an agent, silence an input device, and get ba
 
 **Service acceptance:** Integrated baseline `3b44b770` passes [hosted Windows, Linux and macOS CI](https://github.com/loonghao/vibdock/actions/runs/38841945041), including the local service identity and authorization regressions. That baseline predates the desktop and microphone-association changes. New candidates must pass their exact-head CI and the native/browser evidence checks below. Cross-platform build success is not platform audio or physical-device acceptance.
 
-**Desktop status feedback:** The corner status indicator is implemented in source as an opt-in Windows overlay, **off by default**. Enable it by setting `VIBDOCK_OVERLAY=1` (`on`, `true`, and `yes` also work) before starting the service; `VIBDOCK_OVERLAY_CORNER` selects a corner (`bottom-right` default, or `bottom-left`, `top-right`, `top-left`). The window is placed in the taskbar-free work area of the primary monitor; if that work area cannot be read it falls back to the full monitor rectangle, which is **not** taskbar-aware and may let the indicator overlap a taskbar band. It has unit tests for its status contracts and placement but has **not** been accepted against live Windows: no run has verified typing/focus behaviour, multi-monitor placement, or failed-action feedback on a real desktop. The optional breathing border is planned and not implemented.
+**Desktop status feedback:** The status strip is a Windows overlay. A direct `vibdock service-start` keeps it **off by default**; the normal launcher sets `VIBDOCK_OVERLAY=1` and `VIBDOCK_OVERLAY_CORNER=taskbar` when those variables are unset. `VIBDOCK_OVERLAY=0` disables it. `VIBDOCK_OVERLAY_CORNER` also accepts `bottom-right`, `bottom-left`, `top-right` and `top-left`. The `taskbar` corner sits just above the work-area bottom edge, offset 300 px from the left; it is not a taskbar-internal deskband. The window is placed in the taskbar-free work area of the primary monitor; if that work area cannot be read it falls back to the full monitor rectangle, which is **not** taskbar-aware and may let the indicator overlap a taskbar band. It has unit tests for status contracts and placement. A live run created the `VibDockOverlay` window at `300,1328..1376` on a 2560×1440 display with a 48 px taskbar and captured its painted content; typing/focus, multi-monitor and failed-action feedback on the user desktop are still not exhaustively accepted. The optional breathing border is planned and not implemented.
 
 ## Download and run
 
@@ -936,7 +936,7 @@ as unknown or unverified rather than claiming a working application connection.
 
 - Configure a binding by pressing a hardware button, choosing a target and action, then testing it.
 - Keep input mute, application output mute, and platform voice-session controls separate.
-- Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The corner status indicator is implemented on Windows behind an opt-in that defaults to off; the optional breathing border is planned and not implemented.
+- Provide optional non-focus-stealing desktop feedback, with text/icons as well as color. The taskbar-adjacent status strip is implemented on Windows and enabled by the normal launcher; direct `service-start` remains opt-in. The optional breathing border is planned and not implemented.
 - Silence an agent's output during a meeting without changing meeting audio. Current Windows source provides playback commands and authenticated exact-session actions from native software-icon menus. A two-session exact-session state check is recorded, while meeting-level isolation and hardware bindings for these playback actions remain open. The opt-in two-application harness checks session state, not audibility.
 - Expose explicit capabilities, results, and queryable state to agents through CLI, local API, and later MCP.
 - Add adapters for personal-agent platforms and input tools without coupling hardware to any one vendor.
@@ -980,6 +980,7 @@ Integration evidence and shortcut ownership are tracked in [voice integration ev
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
 
 
 

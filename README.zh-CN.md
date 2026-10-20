@@ -66,7 +66,18 @@ VibDock 把小巧的实体键盘变成 AI 编程助手、语音输入和桌面�
 > 当前源码仍构建旧版 Settings。Pad 已有可用的 `POST /api/pad/execute` 和静态
 > 原型，但 `/pad` 路由与配对流程尚未开放。
 
-## 快速开始
+## 桌面状态条
+
+launcher 启动后，Settings 最小化时任务栏附近会保留一条常驻状态条。初始显示
+`Vibe Key · ready`，之后显示最近一次动作的状态和目标，不需要一直开着网页。
+
+![桌面状态条](assets/screenshots/desktop-status.png)
+
+- 鼠标穿透，不抢焦点。
+- 位于任务栏上方的左侧/中间空白区，不遮通知区域。
+- 正常从 launcher 启动时自动开启；直接执行 `vibdock service-start` 仍是手动
+  开启。设置 `VIBDOCK_OVERLAY=0` 可关闭，设置
+  `VIBDOCK_OVERLAY_CORNER=bottom-right` 可换到其他角落。
 
 **普通用户：** 从 [Releases](https://github.com/loonghao/vibdock/releases) 下载
 已发布压缩包，把两个 exe 解压到同一目录，运行 `vibdock-launcher.exe`。启动器会
@@ -136,6 +147,7 @@ vibdock-launcher / vibdock-cli
 | AU05 固件直发绑定 | 已在真实设备验证：默认布局、读回、直发组合键、物理动作 |
 | 硬件动作序列 | `wait` 步骤已实机验证；launch / send-keys / mic / command 链路已实现，完整链路未实机验收 |
 | 手势与多键组合 | AU05 的单击/双击/长按动作位已持久化并由服务执行；多键组合与钩子级按键吞掉仍在开发 |
+| 桌面状态条 | Windows 任务栏上方状态条：launcher 默认开启，显示最近动作与目标，鼠标穿透 |
 | 游戏手柄 | 适配器已实现；验收环境没有可用手柄 |
 | Virtual Pad | 原型 + 已保存动作执行 API；`/pad` 路由和配对未完成 |
 | 插件框架 | 设备 / 动作 / 输入 crate 已拆出；内置清单只读；第三方 sidecar 未完成 |
@@ -146,6 +158,7 @@ vibdock-launcher / vibdock-cli
 
 ## 设计与 Agent 文档
 
+- [桌面状态条设计](docs/design/desktop-status.md)
 - [工作台设计稿（简洁方向）](docs/design/prototype-clean.html)
 - [Virtual Pad 设计](docs/design/virtual-pad.md)
 - [插件模块化方案](docs/design/plugin-modularization.md)
@@ -171,6 +184,10 @@ MIT。VibDock 与 Ulanzi、OpenAI、DeepSeek、Tencent、WorkBuddy 均无隶属�
 产品名称仅用于描述集成目标。
 
 <p align="center"><a href="README.md">Read in English →</a></p>
+
+
+
+
 
 
 

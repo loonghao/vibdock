@@ -175,4 +175,7 @@ The same profiles can be projected as large touch-first virtual keys on a Pad or
 
 The [onboarding.html](onboarding.html) prototype covers the guided first-run path (connect, template, assign, test) and a copyable Agent prompt. The service-mode Settings page now serves an integrated wizard backed by `/api/gestures`; the interaction and contract are in [onboarding.md](onboarding.md).
 
+## Desktop status strip
+
+The Windows strip is in [desktop-status.md](desktop-status.md). It sits above the taskbar, is click-through, and is enabled by the normal launcher while direct service-start remains opt-in.
 

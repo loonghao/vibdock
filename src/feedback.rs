@@ -22,6 +22,8 @@ pub enum Corner {
     TopRight,
     /// Top-left.
     TopLeft,
+    /// Inside the Windows taskbar, in its blank left/centre region.
+    Taskbar,
 }
 
 /// Opt-in desktop indicator settings.
@@ -54,11 +56,12 @@ pub const ENABLED_ENV: &str = "VIBDOCK_OVERLAY";
 const ENABLED_VALUES: [&str; 4] = ["1", "on", "true", "yes"];
 
 /// Corner names accepted by the placement variable.
-const CORNER_VALUES: [(&str, Corner); 4] = [
+const CORNER_VALUES: [(&str, Corner); 5] = [
     ("bottom-right", Corner::BottomRight),
     ("bottom-left", Corner::BottomLeft),
     ("top-right", Corner::TopRight),
     ("top-left", Corner::TopLeft),
+    ("taskbar", Corner::Taskbar),
 ];
 
 /// Reads the indicator's opt-in state from the environment.
