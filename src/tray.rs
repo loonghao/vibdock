@@ -170,6 +170,7 @@ enum WorkerCommand {
 }
 enum WorkerEvent {
     Observation(Observation),
+    Hardware(Option<serde_json::Value>),
     ActionResult(String),
     Notice(String),
     Shutdown(std::result::Result<bool, String>),
@@ -421,6 +422,7 @@ fn poll_worker(
         let started = Instant::now();
         let result = service::ResidentControlClient::discover().and_then(|candidate| {
             let apps = candidate.summary()?;
+            let hardware = candidate.hardware().ok();
             // The quick toggle must use the saved device identity, never a
             // platform default. A config/read failure leaves the control
             // unavailable instead of guessing.
@@ -434,10 +436,10 @@ fn poll_worker(
                     muted,
                 })
             });
-            Ok((candidate, apps, mic))
+            Ok((candidate, apps, mic, hardware))
         });
-        let observation = match result {
-            Ok((candidate, apps, mic)) => {
+        let (observation, hardware) = match result {
+            Ok((candidate, apps, mic, hardware)) => {
                 if !client
                     .as_ref()
                     .is_some_and(|previous| previous.same_instance(&candidate))
@@ -452,14 +454,17 @@ fn poll_worker(
                     generation,
                 };
                 client = Some(candidate);
-                observation
+                (observation, hardware)
             }
             Err(_) => {
                 client = None;
-                Observation::unavailable(generation)
+                (Observation::unavailable(generation), None)
             }
         };
         latest = Some(observation.clone());
+        if sender.try_send(WorkerEvent::Hardware(hardware)).is_err() {
+            return;
+        }
         match sender.try_send(WorkerEvent::Observation(observation)) {
             Err(mpsc::TrySendError::Disconnected(_)) => return,
             // Full status queues never block the next check or accept a stale
@@ -623,6 +628,142 @@ fn tray_icon() -> HICON {
             .and_then(|module| LoadIconW(Some(HINSTANCE(module.0)), PCWSTR(id as *const u16)).ok())
             .unwrap_or_default()
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusTone {
+    Ready,
+    Active,
+    Error,
+    Unknown,
+}
+
+impl StatusTone {
+    fn asset(self) -> &'static str {
+        match self {
+            Self::Ready => "status-ready.ico",
+            Self::Active => "status-active.ico",
+            Self::Error => "status-error.ico",
+            Self::Unknown => "status-unknown.ico",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TrayStatus {
+    tone: StatusTone,
+    text: String,
+}
+
+impl TrayStatus {
+    fn starting() -> Self {
+        Self {
+            tone: StatusTone::Unknown,
+            text: "Vibe Key · 检查中".to_string(),
+        }
+    }
+}
+
+fn status_from_hardware(value: &serde_json::Value) -> TrayStatus {
+    if value["connected"] != true {
+        return TrayStatus {
+            tone: StatusTone::Error,
+            text: "Vibe Key · 未连接".to_string(),
+        };
+    }
+    let recent = value["recent_actions"]
+        .as_array()
+        .and_then(|rows| rows.last());
+    let Some(recent) = recent else {
+        return TrayStatus {
+            tone: StatusTone::Ready,
+            text: "Vibe Key · 就绪".to_string(),
+        };
+    };
+    let label = recent["label"]
+        .as_str()
+        .filter(|label| !label.is_empty())
+        .unwrap_or("动作");
+    let state = recent["state"].as_str().unwrap_or("unknown");
+    if recent["error"]
+        .as_str()
+        .is_some_and(|error| !error.is_empty())
+    {
+        return TrayStatus {
+            tone: StatusTone::Error,
+            text: format!("{} · 失败", visible_text(label)),
+        };
+    }
+    let tone = if state == "DONE" || state == "DISPATCHED" {
+        StatusTone::Active
+    } else {
+        StatusTone::Unknown
+    };
+    TrayStatus {
+        tone,
+        text: format!("{} · {}", visible_text(label), visible_text(state)),
+    }
+}
+
+fn status_icon(tone: StatusTone) -> HICON {
+    let name = tone.asset();
+    let mut candidates = Vec::new();
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.push(directory.join("assets/brand").join(name));
+        }
+    }
+    candidates.push(std::path::PathBuf::from("assets/brand").join(name));
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        let path = wide(&path.to_string_lossy());
+        if let Ok(handle) = unsafe {
+            LoadImageW(
+                None,
+                PCWSTR(path.as_ptr()),
+                IMAGE_ICON,
+                16,
+                16,
+                LR_LOADFROMFILE,
+            )
+        } {
+            if !handle.is_invalid() {
+                return HICON(handle.0);
+            }
+        }
+    }
+    tray_icon()
+}
+
+fn status_icon_data(window: HWND, status: &TrayStatus, icon: HICON) -> NOTIFYICONDATAW {
+    let tip = wide(&format!("VibDock · {}", status.text));
+    let mut data = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: window,
+        uID: 1,
+        uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+        uCallbackMessage: TRAY_MESSAGE,
+        hIcon: icon,
+        ..Default::default()
+    };
+    let count = tip.len().min(data.szTip.len());
+    data.szTip[..count].copy_from_slice(&tip[..count]);
+    data
+}
+
+fn status_icon_balloon(window: HWND, status: &TrayStatus, icon: HICON) -> NOTIFYICONDATAW {
+    let mut data = status_icon_data(window, status, icon);
+    data.uFlags |= NIF_INFO;
+    let info = wide(&status.text);
+    let title = wide("VibDock");
+    let info_count = info.len().min(data.szInfo.len());
+    data.szInfo[..info_count].copy_from_slice(&info[..info_count]);
+    let title_count = title.len().min(data.szInfoTitle.len());
+    data.szInfoTitle[..title_count].copy_from_slice(&title[..title_count]);
+    data.dwInfoFlags = NIIF_INFO;
+    data
 }
 
 fn add_icon(window: HWND) -> crate::Result<()> {
@@ -1043,6 +1184,8 @@ fn message_loop(
 ) -> crate::Result<()> {
     let mut observation: Option<Observation> = None;
     let mut busy = false;
+    let mut status = TrayStatus::starting();
+    let mut status_icon_handle: Option<HICON> = None;
     let mut apps = AppIcons::new(window)?;
     unsafe {
         let mut message = MSG::default();
@@ -1056,6 +1199,24 @@ fn message_loop(
                 while let Ok(event) = receiver.try_recv() {
                     match event {
                         WorkerEvent::Observation(next) => observation = Some(next),
+                        WorkerEvent::Hardware(value) => {
+                            let next =
+                                value.as_ref().map(status_from_hardware).unwrap_or_else(|| {
+                                    TrayStatus {
+                                        tone: StatusTone::Error,
+                                        text: "服务未运行".to_string(),
+                                    }
+                                });
+                            if next != status {
+                                let icon = status_icon(next.tone);
+                                let data = status_icon_balloon(window, &next, icon);
+                                let _ = Shell_NotifyIconW(NIM_MODIFY, &data);
+                                if let Some(old) = status_icon_handle.replace(icon) {
+                                    let _ = DestroyIcon(old);
+                                }
+                                status = next;
+                            }
+                        }
                         WorkerEvent::ActionResult(result) => {
                             busy = false;
                             notify_playback(window, &result);
@@ -1597,6 +1758,29 @@ impl Drop for AppIcons {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn tray_status_maps_connection_and_last_action() {
+        let ready = status_from_hardware(&json!({"connected": true, "recent_actions": []}));
+        assert_eq!(ready.tone, StatusTone::Ready);
+        assert!(ready.text.contains("就绪"));
+
+        let active = status_from_hardware(&json!({
+            "connected": true,
+            "recent_actions": [{"label": "Button 2", "state": "DONE", "error": null}]
+        }));
+        assert_eq!(active.tone, StatusTone::Active);
+        assert!(active.text.contains("DONE"));
+
+        let disconnected = status_from_hardware(&json!({"connected": false}));
+        assert_eq!(disconnected.tone, StatusTone::Error);
+
+        let failed = status_from_hardware(&json!({
+            "connected": true,
+            "recent_actions": [{"label": "Button 3", "state": "FAILED", "error": "device busy"}]
+        }));
+        assert_eq!(failed.tone, StatusTone::Error);
+    }
 
     #[test]
     #[ignore = "Bounded native fixture view for project-owned dcc-cua inspection; no live audio"]

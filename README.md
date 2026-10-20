@@ -77,18 +77,21 @@ control with extra privileges.
 
 ## Desktop status
 
-The launcher now shows a compact always-on-top status strip near the taskbar
-while Settings is minimized. It starts with `Vibe Key · ready` and shows the
-latest completed action's state and target, so you do not need to keep the Web
-UI open.
+The primary notification-area icon doubles as a status indicator while Settings
+is minimized:
 
 ![Desktop status](assets/screenshots/desktop-status.png)
 
-- The strip is mouse-transparent and never steals focus.
-- It is drawn inside the taskbar blank band at the left/centre, not over the notification area.
-- The normal launcher enables it automatically; `vibdock service-start` stays
-  opt-in. Set `VIBDOCK_OVERLAY=0` to disable it, or
-  `VIBDOCK_OVERLAY_CORNER=bottom-right` for another corner.
+- green ring: `Vibe Key · ready` / last action completed;
+- amber ring: a recent action was dispatched or completed;
+- red ring: device unavailable or an action failed;
+- hover for the latest action text; a short balloon appears when it changes;
+- click the status icon to open Settings.
+
+This is a real notification-area icon, so it stays inside the Windows 11
+taskbar and works with the normal launcher. The earlier experimental topmost
+strip can still be enabled with `VIBDOCK_OVERLAY=1`, but Windows 11 may paint it
+behind the taskbar; it is not the default.
 
 **For users:** download a published archive from
 [Releases](https://github.com/loonghao/vibdock/releases), extract both
@@ -167,7 +170,7 @@ the next extraction steps are tracked in the open roadmap.
 | AU05 direct firmware bindings | Verified on a real device: defaults, readback, direct chord, physical action |
 | Hardware action sequences | Wait-step execution verified; launch/send-keys/mic/command chain implemented, full chain not live-tested |
 | Gestures and combos | AU05 single/double/long slots are persisted and executed by the service; multi-key combos and hook-based suppression are still pending |
-| Desktop status | Windows taskbar strip: launcher default, last-action state + target, click-through |
+| Desktop status | Notification-area icon: green/amber/red state, tooltip + balloon, click opens Settings |
 | Gamepad | Adapter implemented; no live gamepad was available for acceptance |
 | Virtual Pad | Prototype + saved-action execution endpoint; `/pad` route and pairing pending |
 | Plugin framework | Device/action/input crates extracted; read-only built-in registry; third-party sidecar pending |
@@ -178,7 +181,7 @@ or a successful API response as proof that an application changed state.
 
 ## Design and agent docs
 
-- [Desktop status strip](docs/design/desktop-status.md)
+- [Desktop status icon](docs/design/desktop-status.md)
 - [Design workbench, clean direction](docs/design/prototype-clean.html)
 - [Virtual Pad design](docs/design/virtual-pad.md)
 - [Plugin modularization](docs/design/plugin-modularization.md)
@@ -204,6 +207,8 @@ MIT. VibDock is independent of Ulanzi, OpenAI, DeepSeek, Tencent and WorkBuddy;
 product names are used only to describe integrations.
 
 <p align="center"><a href="README.zh-CN.md">阅读中文版 →</a></p>
+
+
 
 
 

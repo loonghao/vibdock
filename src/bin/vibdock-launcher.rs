@@ -84,16 +84,6 @@ fn start_detached_service() -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    // The launcher is the normal desktop entry point, so the taskbar status is
-    // on by default there. Direct `vibdock service-start` stays opt-in, which
-    // keeps CI and headless runs free of desktop windows. An explicit value
-    // still wins.
-    if std::env::var_os("VIBDOCK_OVERLAY").is_none() {
-        command.env("VIBDOCK_OVERLAY", "1");
-    }
-    if std::env::var_os("VIBDOCK_OVERLAY_CORNER").is_none() {
-        command.env("VIBDOCK_OVERLAY_CORNER", "taskbar");
-    }
     command.spawn().map(|_| ()).map_err(|e| e.into())
 }
 
