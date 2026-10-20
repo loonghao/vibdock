@@ -1,78 +1,65 @@
-# Desktop status strip
+# Desktop status
 
-The Web Settings page is the configuration surface; it is not meant to stay open
-while working. The desktop strip is the at-a-glance view that remains available
-when the browser is minimized.
+The Web Settings page is for configuration; it is not meant to stay open while
+working. The primary notification-area icon now doubles as the persistent status
+indicator.
 
 ## What it shows
 
-- Initially: `● Vibe Key · ready` and `VibDock · local`.
-- After an action: the same verified/pending/failed wording as the action
-  feedback overlay, with the captured target.
-- It does not invent device activity and never reports a dispatched shortcut as
-  a verified application state.
+| Ring | Meaning |
+| --- | --- |
+| green | `Vibe Key · 就绪`, or the latest action completed |
+| amber | a recent action was dispatched / completed |
+| red | device unavailable, or the latest action failed |
+| grey | service not reachable yet |
 
-## Placement
+The tooltip contains the latest action text (for example `Button 2 · DONE`).
+When the text changes, a short balloon appears near the notification area.
+Clicking the icon opens Settings.
 
-The strip is drawn **inside the taskbar**, in the blank band to the left of the
-app buttons:
+## Why the tray icon
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ desktop                                                      │
-├──────────────────────────────────────────────────────────────┤
-│ weather   ┌──────────────────────┐   app buttons   tray/clock │
-│           │ ● Vibe Key · ready    │                          │
-│           │ VibDock · local       │  ← status strip           │
-│           └──────────────────────┘                          │
-└──────────────────────────────────────────────────────────────┘
-```
+Windows 11's taskbar is a XAML surface. A normal application window — even one
+reparented into `Shell_TrayWnd` or its XAML content host — can appear in a
+`PrintWindow` capture while the real desktop composition still paints it behind
+the taskbar. This was tested with a topmost popup, a taskbar child, a XAML-host
+child and an external z-order helper; the strip was not reliably visible on the
+real desktop.
 
-The Windows adapter creates a normal layered popup, then reparents it into
-`Shell_TrayWnd` with `SetParent`, converts it to `WS_CHILD`, removes
-`WS_EX_TOPMOST`, and uses `SetWindowPos(HWND_TOP, SWP_FRAMECHANGED)` so it sits
-above the taskbar's XAML content child. It is placed 300 px from the taskbar's
-left edge and vertically centred. A short delayed re-assert handles the taskbar
-finishing its own layout after startup.
+A notification-area icon is part of the supported Windows shell contract, so it
+is visible inside the taskbar without signing, UIAccess, a COM deskband, or
+undocumented z-band APIs.
 
-This is not a COM deskband. It is a child window of the classic taskbar host,
-which is the practical way to put text in the Windows 11 taskbar without a
-signed UIAccess binary or undocumented z-band APIs. If `Shell_TrayWnd` cannot
-be found or is vertical, it falls back to the work-area corner above the
-taskbar. Explorer restarting destroys the child; restart VibDock to recreate it.
+## Status source
 
-## Enabling
+The tray worker already polls the authenticated service. Each poll now also
+fetches `GET /api/hardware` and derives:
 
-- The normal Windows launcher starts the service with `VIBDOCK_OVERLAY=1` and
-  `VIBDOCK_OVERLAY_CORNER=taskbar` when the variables are not already set.
-- A direct `vibdock service-start` remains opt-in: set both variables manually.
-- Disable with `VIBDOCK_OVERLAY=0`.
-- Other placements: `bottom-right`, `bottom-left`, `top-right`, `top-left`.
-- An explicit environment value always wins over the launcher defaults.
+- `connected`;
+- the last `recent_actions` entry (`label`, `state`, `error`).
 
-The service starts the strip on the accept-loop thread; a window failure is
-logged and does not stop audio, device or action control. The window is resized
-to 340×48 px at 96 DPI and respects the process DPI awareness.
+The primary tray icon is updated with one of the generated ring icons:
 
-## Verification
+- `assets/brand/status-ready.ico`
+- `assets/brand/status-active.ico`
+- `assets/brand/status-error.ico`
+- `assets/brand/status-unknown.ico`
 
-- `cargo test -p vibdock --lib feedback_windows::` covers the taskbar placement,
-  normal corners, origin offsets, style and queue bounds.
-- A live run with `VIBDOCK_OVERLAY=1` creates the `VibDockOverlay` window at
-  `300,1328..1376` on a 2560×1440 display with a 48 px taskbar; its painted
-  content was captured with `PrintWindow` and shows the ready text.
-- The in-app screenshots cannot be used as evidence of the user's desktop; the
-  strip is verified as a window and paint surface, not visually against every
-  Windows taskbar customization.
+If an icon file is unavailable, the tray falls back to the existing brand icon.
+The tooltip is bounded to the Windows notification-icon limit. The balloon is
+only shown after the first state, so startup is quiet.
+
+## Experimental overlay
+
+The older topmost strip remains behind `VIBDOCK_OVERLAY=1` for experiments and
+other placements. It is **not** started by the launcher and is not the default.
+The Windows 11 taskbar may paint it behind the shell; do not treat its
+`PrintWindow` output as proof of on-screen visibility.
 
 ## Known limits
 
-- It shows the last completed action, not a live per-button state.
-- It is a separate topmost window, so a fullscreen exclusive application may
-  cover it, like other desktop overlays.
-- A future desktop-status toggle in Settings can replace the environment
-  variables; none is implemented yet.
-
-
-
-
+- The tray icon lives in the notification area, not the blank left/centre
+  taskbar band.
+- Windows can collapse new notification icons into the overflow flyout; pin the
+  VibDock icon if needed.
+- The icon shows the last completed action, not a live per-button state.
