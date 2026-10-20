@@ -47,7 +47,7 @@ vibdock-plugin-api = { version = "0.6.0", path = "crates/vibdock-plugin-api" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Exact, MIT-compatible published bindings; only the resident UI's frameworks.
-objc2 = "=0.6.3"
+objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSData", "NSDate", "NSDictionary", "NSGeometry", "NSNotification", "NSObject", "NSProcessInfo", "NSRunLoop", "NSString", "NSTimer", "NSURL"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "objc2-core-foundation", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSImageView", "NSMenu", "NSMenuItem", "NSPanel", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSTextField", "NSView", "NSWindow", "NSWorkspace"] }
 
