@@ -438,6 +438,60 @@ fn attach_to_taskbar(window: HWND, taskbar: HWND) {
     }
 }
 
+/// External helper entry: re-assert a taskbar child from another process.
+///
+/// Windows 11's XAML taskbar can ignore a same-process reparent until another
+/// process nudges the child's z-order. This is deliberately narrow: it checks
+/// the window class and only repositions an existing `VibDockOverlay`.
+pub fn nudge_taskbar(raw: isize) -> bool {
+    let window = HWND(raw as *mut std::ffi::c_void);
+    if window.0.is_null() || !unsafe { IsWindow(Some(window)) }.as_bool() {
+        return false;
+    }
+    let mut class = [0u16; 64];
+    let length = unsafe { GetClassNameW(window, &mut class) };
+    if length <= 0 || String::from_utf16_lossy(&class[..length as usize]) != "VibDockOverlay" {
+        return false;
+    }
+    let style = unsafe { GetWindowLongPtrW(window, GWL_STYLE) } as u32;
+    unsafe {
+        SetWindowLongPtrW(
+            window,
+            GWL_STYLE,
+            ((style & !WS_POPUP.0) | WS_CHILD.0) as isize,
+        );
+        let ex_style = GetWindowLongPtrW(window, GWL_EXSTYLE) as u32;
+        SetWindowLongPtrW(window, GWL_EXSTYLE, (ex_style & !WS_EX_TOPMOST.0) as isize);
+        let _ = SetWindowPos(
+            window,
+            None,
+            300,
+            0,
+            WIDTH,
+            HEIGHT,
+            SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+        );
+        let _ = InvalidateRect(Some(window), None, true);
+    }
+    true
+}
+
+/// Find the current taskbar status child and nudge it from this process.
+///
+/// Called by the tiny external helper the launcher starts after the service is
+/// ready. The external process boundary matters: Windows 11 applies the child
+/// z-order change when another process performs it.
+pub fn nudge_taskbar_auto() -> bool {
+    let Some(host) = taskbar_window() else {
+        return false;
+    };
+    let overlay =
+        unsafe { FindWindowExW(Some(host), None, w!("VibDockOverlay"), PCWSTR::null()) }.ok();
+    overlay
+        .map(|window| nudge_taskbar(window.0 as isize))
+        .unwrap_or(false)
+}
+
 /// The extended window styles the indicator is created with.
 ///
 /// A named constant rather than flags rebuilt at each call site, so the style
@@ -536,6 +590,18 @@ fn run_overlay(
                             | SWP_SHOWWINDOW,
                     );
                     let _ = InvalidateRect(Some(window), None, true);
+                    if let Ok(executable) = std::env::current_exe() {
+                        use std::os::windows::process::CommandExt;
+                        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                        let _ = std::process::Command::new(executable)
+                            .arg("_taskbar_nudge")
+                            .arg(raw.to_string())
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .spawn();
+                    }
                 }
             });
         }

@@ -28,6 +28,8 @@ pub mod feedback;
 #[cfg(windows)]
 mod feedback_windows;
 #[cfg(windows)]
+pub use feedback_windows::{nudge_taskbar, nudge_taskbar_auto};
+#[cfg(windows)]
 mod gesture_monitor;
 #[cfg(windows)]
 pub(crate) use vibdock_device_gamepad as gamepad_windows;
