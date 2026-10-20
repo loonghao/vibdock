@@ -666,6 +666,45 @@ struct OverlayCursor {
     target: String,
 }
 
+/// Persists a small status snapshot for the notification-area icon.
+///
+/// The tray must not poll `/api/hardware` on every tick: that would couple its
+/// exit path to device I/O. This file is written only when the recorded action
+/// sequence changes, and the tray reads it locally.
+fn write_desktop_status(feedback: &ActionFeedback) {
+    let Some(directory) = crate::service::state_dir().ok() else {
+        return;
+    };
+    let value = if let Some(last) = feedback.recent.back() {
+        let label = last["label"].as_str().unwrap_or("动作");
+        let state = last["state"].as_str().unwrap_or("unknown");
+        let error = last["error"].as_str().filter(|error| !error.is_empty());
+        if let Some(error) = error {
+            serde_json::json!({
+                "tone": "error",
+                "text": format!("{} · 失败", label),
+                "detail": error,
+                "sequence": feedback.sequence,
+            })
+        } else {
+            serde_json::json!({
+                "tone": if state == "DONE" || state == "DISPATCHED" { "active" } else { "unknown" },
+                "text": format!("{} · {}", label, state),
+                "detail": last["detail"],
+                "sequence": feedback.sequence,
+            })
+        }
+    } else {
+        serde_json::json!({
+            "tone": "ready",
+            "text": "Vibe Key · 就绪",
+            "detail": null,
+            "sequence": 0,
+        })
+    };
+    let _ = std::fs::write(directory.join("status.json"), value.to_string());
+}
+
 /// Renders the latest completed action into the indicator, if one is running.
 ///
 /// Pure view over state the service already recorded: this never performs an
@@ -1065,6 +1104,8 @@ fn accept_loop(
         hardware.ensure_defaults(&shortcuts.device_bindings(), &action_buttons);
     }
     let mut feedback = ActionFeedback::default();
+    let mut status_sequence = u64::MAX;
+    write_desktop_status(&feedback);
     let plugins = crate::plugins::Registry::start();
     // The indicator is opt-in, resolved from the documented environment
     // variable. When it is off, no overlay thread starts and no window is ever
@@ -1221,6 +1262,10 @@ fn accept_loop(
         // The target shown is the one captured with the action, not the live
         // configuration: a rebinding must not repaint an older action's result
         // as if it had applied to the newly selected device.
+        if status_sequence != feedback.sequence {
+            write_desktop_status(&feedback);
+            status_sequence = feedback.sequence;
+        }
         show_latest_frame(overlay.as_ref(), &feedback, None, &mut overlay_cursor);
         // Non-blocking accept keeps this loop responsive to hotkeys and to
         // shutdown, instead of stalling in accept() or on a slow client.
