@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/loonghao/vibdock/compare/v0.5.0...v0.6.0) (2026-10-20)
+
+
+### Features
+
+* **status:** show Vibe Key state in the notification area ([#76](https://github.com/loonghao/vibdock/issues/76)) ([98fc749](https://github.com/loonghao/vibdock/commit/98fc7499eed0567772a6c8ba28659e07a3cac469))
+
+
+### Bug Fixes
+
+* **status:** drive the tray icon from a local status file ([#78](https://github.com/loonghao/vibdock/issues/78)) ([3db0476](https://github.com/loonghao/vibdock/commit/3db047648853263f1b20bf422427ad7c60b541d8))
+
 ## [0.5.0](https://github.com/loonghao/vibdock/compare/v0.4.0...v0.5.0) (2026-10-20)
 
 
