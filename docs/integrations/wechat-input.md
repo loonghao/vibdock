@@ -111,6 +111,40 @@ for microphone mute would change the user's intended action.
 For direct mapping, configure the hardware utility to emit the application's own
 shortcut. That does not require VibDock to register the same chord.
 
+## Optional Vibe Key tap/hold configuration
+
+The existing gesture editor can assign **Single → Toggle microphone** with an
+explicit endpoint ID and **Long → Hold shortcut until release** on the same
+button. Enter the hold-to-talk chord from your own input-method settings; the
+editor leaves it blank. The hold threshold defaults to 550 ms and accepts
+150–5000 ms. A double-click slot cannot share this mode: each short release
+must run Single immediately, including two rapid taps.
+
+The long slot uses the authenticated gesture API and existing `gestures.json`:
+
+```json
+{"revision":1,"name":"Input method hold","button":0,"gesture":"long",
+ "steps":[],"hold_keys":"<your configured hold-to-talk chord>","long_press_ms":550}
+```
+
+This is an opt-in Windows keyboard dispatch mode. It changes that button's
+firmware sentinel to bare F9, F10 or F11 and reserves the corresponding bare
+key across keyboards while enabled; it cannot identify which keyboard sent it.
+Ordinary gesture buttons keep their modified sentinels and double-click timing.
+Conflicting saved bindings must be removed explicitly, and firmware readback or
+runtime activation failures are reported separately from successful persistence.
+Restarting reloads the saved mode without changing microphone routing.
+
+Long presses never execute Single. A dedicated input thread releases the owned
+chord on button release, Escape, configuration change or service exit, even while
+another saved action is waiting. Cancellation does not toggle the microphone.
+The selected endpoint toggle affects applications sharing that endpoint; it is
+separate from input-method dictation and Codex's internal voice controls.
+
+`HELD`/`RELEASED` are keyboard dispatch results, not evidence that WeChat started,
+recognized or submitted speech. Native AU05/input-method and real audio acceptance
+remain required; configure and test them outside an active voice call.
+
 ## Acceptance record required before any verified grade
 
 Retain for the adapter: source URL and check date, client version, installed detection,

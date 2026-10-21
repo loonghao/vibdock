@@ -31,6 +31,8 @@ mod feedback_windows;
 pub use feedback_windows::{nudge_taskbar, nudge_taskbar_auto};
 #[cfg(windows)]
 mod gesture_monitor;
+#[cfg(any(windows, test))]
+mod gesture_voice;
 #[cfg(windows)]
 pub(crate) use vibdock_device_gamepad as gamepad_windows;
 // Gesture and combo recognition live in the platform-independent input crate;

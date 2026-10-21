@@ -371,6 +371,12 @@ impl DirectStore {
     }
 }
 
+fn direct_hotkey(chord: &str) -> Option<Hotkey> {
+    Hotkey::parse(chord)
+        .ok()
+        .or_else(|| Key::parse(chord).map(|key| Hotkey::new([], key)))
+}
+
 fn direct_text(value: Option<&Value>, max: usize) -> Option<String> {
     let text = value?.as_str()?;
     (!text.is_empty() && text.len() <= max && !text.chars().any(char::is_control))
@@ -516,7 +522,7 @@ impl Hardware {
         self.direct
             .entries()
             .iter()
-            .filter_map(|entry| Hotkey::parse(&entry.chord).ok())
+            .filter_map(|entry| direct_hotkey(&entry.chord))
             .collect()
     }
 
@@ -564,11 +570,10 @@ impl Hardware {
     /// well as emitted to the foreground application, so the two modes must
     /// not share it.
     pub fn direct_conflicts_with_trigger(&self, trigger: &Hotkey) -> bool {
-        self.direct.entries().iter().any(|entry| {
-            Hotkey::parse(&entry.chord)
-                .ok()
-                .is_some_and(|parsed| parsed == *trigger)
-        })
+        self.direct
+            .entries()
+            .iter()
+            .any(|entry| direct_hotkey(&entry.chord).is_some_and(|parsed| parsed == *trigger))
     }
 
     /// Re-detect the device and write every saved binding, then return the
