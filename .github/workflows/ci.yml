@@ -52,13 +52,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          work/phone-env/Scripts/python.exe -m PyInstaller --noconfirm --onefile --name vibdock-phone --distpath work/phone-dist --workpath work/phone-build --specpath work --add-data "mobile/pad.html;." --add-data "mobile/pad.js;." --hidden-import qrcode.image.svg mobile/bridge.py
+          work/phone-env/Scripts/python.exe -m PyInstaller --noconfirm --onefile --name vibdock-phone --distpath work/phone-dist --workpath work/phone-build --specpath work --add-data "$PWD/mobile/pad.html;." --add-data "$PWD/mobile/pad.js;." --hidden-import qrcode.image.svg mobile/bridge.py
           if ($LASTEXITCODE -ne 0) { throw 'Phone helper freeze failed' }
           & work/phone-dist/vibdock-phone.exe --self-test
           if ($LASTEXITCODE -ne 0) { throw 'Frozen phone helper smoke test failed' }
           $folder = 'work/phone-package'
           New-Item -ItemType Directory -Force $folder | Out-Null
-          Copy-Item target/release/vibdock.exe,target/release/vibdock-launcher.exe,work/phone-dist/vibdock-phone.exe,mobile/start-preview.ps1,mobile/start-phone.ps1,mobile/PHONE-PAD.md,scripts/vibdock-agent.ps1 -Destination $folder
+          Copy-Item target/release/vibdock.exe,target/release/vibdock-launcher.exe,work/phone-dist/vibdock-phone.exe,mobile/start-preview.ps1,mobile/start-phone.ps1,mobile/PHONE-PAD.md,scripts/vibdock-agent.ps1,LICENSE -Destination $folder
+          work/phone-env/Scripts/python.exe mobile/package-notices.py $folder
+          if ($LASTEXITCODE -ne 0) { throw 'Phone runtime notices missing' }
           $archive = 'vibdock-phone-' + $env:VIBDOCK_SOURCE_REVISION.Substring(0,12) + '-windows.zip'
           Compress-Archive -Path "$folder/*" -DestinationPath $archive -Force
           $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
