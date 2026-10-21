@@ -358,13 +358,10 @@ mod tests {
     use serde_json::json;
 
     fn store() -> (Store, PathBuf) {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
         let dir = std::env::temp_dir().join(format!(
-            "vibdock-gestures-test-{}-{stamp}",
-            std::process::id()
+            "vibdock-gestures-test-{}-{}",
+            std::process::id(),
+            crate::generate_token().unwrap()
         ));
         std::fs::create_dir(&dir).unwrap();
         (Store::start(dir.clone()), dir)

@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 MAX_AUDIO = 2_000_000
+REQUEST_DEADLINE = 10
 
 
 class Bridge:
@@ -252,6 +253,10 @@ class Server(ThreadingHTTPServer):
     def __init__(self, address, handler):
         super().__init__(address, handler)
         self.slots = threading.BoundedSemaphore(8)
+    def handle_error(self, request, client_address):
+        if not isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError, ssl.SSLError)):
+            print("Phone bridge request failed; no action result is assumed.", file=sys.stderr)
+
     def process_request(self, request, client_address):
         if not self.slots.acquire(blocking=False):
             request.close()
@@ -267,6 +272,19 @@ class Server(ThreadingHTTPServer):
 
 def handler(bridge, host, admin=False, admin_secret='', phone_url='', ca=None):
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            def expire():
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            self.deadline = threading.Timer(REQUEST_DEADLINE, expire)
+            self.deadline.daemon = True
+            self.deadline.start()
+        def finish(self):
+            self.deadline.cancel()
+            super().finish()
         def log_message(self, *_args):
             pass  # Never log pairing URLs, session tokens, audio, or transcripts.
         def reply(self, code, value, mime='application/json'):
@@ -281,6 +299,7 @@ def handler(bridge, host, admin=False, admin_secret='', phone_url='', ca=None):
             self.end_headers()
             self.wfile.write(raw)
         def do_GET(self):
+            self.deadline.cancel()
             if self.headers.get('Host') != host:
                 return self.reply(403, {'error': 'Invalid Host'})
             if admin:
@@ -320,6 +339,7 @@ def handler(bridge, host, admin=False, admin_secret='', phone_url='', ca=None):
                 raw = self.rfile.read(length)
                 if len(raw) != length:
                     raise ValueError('Incomplete request body')
+                self.deadline.cancel()
                 if admin or self.headers.get_all('Host') != [host] or self.headers.get_all('Origin') != ['https://' + host]:
                     return self.reply(403, {'error': 'Invalid browser origin'})
                 if self.headers.get_all('Content-Type') != ['application/json']:

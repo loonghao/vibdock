@@ -3,8 +3,11 @@ const $=id=>document.getElementById(id);
 let session='',target='',sequence=1,busy=false,online=false,speech=false,recording=null,activeSpeech=0;
 const say=message=>{$('status').textContent=message;};
 async function api(path,data={}){
- const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session},body:JSON.stringify(data),cache:'no-store',redirect:'error'});
- const value=await response.json();if(!response.ok)throw Error(value.error||'请求失败');return value;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),path==='/execute'?70000:5000);
+ try{
+  const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session},body:JSON.stringify(data),cache:'no-store',redirect:'error',signal:controller.signal});
+  const value=await response.json();if(!response.ok)throw Error(value.error||'请求失败');return value;
+ }finally{clearTimeout(timer);}
 }
 function controls(){
  document.querySelectorAll('#actions button').forEach(b=>b.disabled=busy||!online);
@@ -65,5 +68,6 @@ function cancelRecognition(){const number=activeSpeech;activeSpeech=0;if(number)
 $('voice').onpointerdown=startRecording;$('voice').onpointerup=()=>stopRecording(false);$('voice').onpointercancel=()=>stopRecording(true);$('voice').onlostpointercapture=()=>{if(recording)stopRecording(true);};
 $('cancel').onclick=()=>{stopRecording(true);cancelRecognition();};$('mic').onclick=()=>dispatch('microphone');
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stopRecording(true);cancelRecognition();}});
+window.addEventListener('offline',()=>{online=false;stopRecording(true);cancelRecognition();controls();});
 window.addEventListener('pagehide',()=>{stopRecording(true);if(activeSpeech)fetch('/cancel',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session},body:JSON.stringify({sequence:activeSpeech}),keepalive:true}).catch(()=>{});});
 (async()=>{const ticket=location.hash.slice(1);history.replaceState(null,'',location.pathname);try{const paired=await api('/pair',{ticket});session=paired.session;target=paired.target;$('target').textContent='控制目标：'+target;say('配对成功。仅执行笔记本允许的动作。');await refresh();setInterval(refresh,2000);}catch(error){say(error.message);}})();

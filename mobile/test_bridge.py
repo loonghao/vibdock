@@ -119,6 +119,14 @@ class Tests(unittest.TestCase):
             self.assertEqual(request('/execute',self.request(),token=self.session)[1]['ok'],True)
             self.assertEqual(self.count,1)
             self.assertEqual(request('/pair',{'ticket':'expired'})[0],400)
+            with patch.object(bridge, 'REQUEST_DEADLINE', 0.25):
+                slow=http.client.HTTPSConnection('127.0.0.1',server.server_port,context=ca,timeout=2)
+                slow.connect()
+                slow.sock.sendall(b'POST /status HTTP/1.1\r\nHost: ')
+                started=time.monotonic()
+                self.assertEqual(slow.sock.recv(1),b'')
+                self.assertLess(time.monotonic()-started,2)
+                slow.close()
         finally:
             server.shutdown();server.server_close();thread.join()
 

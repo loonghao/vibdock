@@ -2,9 +2,10 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const elements=new Map();
 function element(id){if(!elements.has(id))elements.set(id,{disabled:false,dataset:{},classList:{add(){},remove(){}},setPointerCapture(){},textContent:'',replaceChildren(){},append(){}});return elements.get(id);}
+const listeners={};
 const document={getElementById:element,querySelectorAll:()=>[],addEventListener(){}};
 let resolvePermission,stopped=0,uploads=0;
-const context=vm.createContext({document,navigator:{mediaDevices:{getUserMedia:()=>new Promise(resolve=>resolvePermission=resolve)}},isSecureContext:true,window:{addEventListener(){}},fetch:async()=>{uploads++;throw Error('No network expected');},setTimeout:()=>1,clearTimeout(){},Float32Array,ArrayBuffer,DataView,Uint8Array,btoa:s=>Buffer.from(s,'binary').toString('base64')});
+const context=vm.createContext({document,navigator:{mediaDevices:{getUserMedia:()=>new Promise(resolve=>resolvePermission=resolve)}},isSecureContext:true,window:{addEventListener(name,callback){listeners[name]=callback;}},AbortController,fetch:async()=>{uploads++;throw Error('No network expected');},setTimeout:()=>1,clearTimeout(){},Float32Array,ArrayBuffer,DataView,Uint8Array,btoa:s=>Buffer.from(s,'binary').toString('base64')});
 const script=fs.readFileSync('mobile/pad.js','utf8');vm.runInContext(script.slice(0,script.lastIndexOf('(async()=>')),context);
 const run=code=>vm.runInContext(code,context);
 (async()=>{
@@ -24,5 +25,10 @@ const run=code=>vm.runInContext(code,context);
  const buffer=Buffer.from(clip,'base64');assert.equal(buffer.readUInt32LE(40),480000*2,'recording must be capped at exactly 30 seconds');
  run('busy=true;online=true;recording={};controls()');
  assert.equal(element('voice').disabled,false,'recording control must retain pointer capture');
+ run('recording=null;busy=false;online=true;speech=true;controls()');
+ const offline=run("startRecording({pointerId:3,preventDefault(){}})");
+ listeners.offline();
+ resolvePermission({getTracks:()=>[{stop(){stopped++;}}]});await offline;
+ assert.equal(stopped,3);assert.equal(uploads,0);
  console.log('PASS: late permission, pointer cancel, track cleanup and WAV deadline (pure JS)');
 })().catch(error=>{console.error(error);process.exitCode=1;});
