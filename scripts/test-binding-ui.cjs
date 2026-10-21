@@ -130,5 +130,8 @@ const entryId = 'a'.repeat(64);
   assert.equal(run('shortcutRequest.body.scope'), 'foreground', 'windowed binding did not default to foreground');
   assert.equal(run(`$('pinnedShortcuts').children.length`), 1, 'saved shortcut was not rendered');
   assert.equal(run(`$('pinnedShortcuts').children[0].children[1].disabled`), false, 'saved shortcut stayed disabled after the save completed');
+  run(`$('actionSourceKind').append(new Option('Virtual Pad','pad'));$('actionSourceKind').value='pad';renderActionSource();`);
+  assert.equal(run('actionSourcePayload().payload.kind'), 'pad', 'virtual action must not allocate a hardware source');
+  assert.equal(elements.get('actionSourceButtonField').hidden, true);
   console.log('PASS: authoritative binding, device identity, atomic UI saves, app association, application recognition and per-app shortcut scope (DOM fixtures only)');
 })().catch(error => {console.error(error);process.exitCode=1;});

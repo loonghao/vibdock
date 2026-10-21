@@ -148,7 +148,7 @@
 <p class="route-note">一个 Vibe Key 按钮只能承载应用快捷键、硬件直发组合键或硬件动作中的一种。若该按钮已有应用快捷键或直发组合键，请先在上方对应卡片清除，再保存硬件动作；服务会返回具体冲突原因。AU05 的触发键由服务生成并写入设备，游戏手柄按键直接派发，不写固件也没有触发键。</p>
 <div id="actionEditor" hidden aria-labelledby="actionEditorTitle"><h2 id="actionEditorTitle">新建硬件动作</h2>
 <label for="actionName">名称</label><input id="actionName" maxlength="80" placeholder="打开 Codex 并静音" autocomplete="off">
-<div class="route-fields"><div><label for="actionSourceKind">按键来源</label><select id="actionSourceKind"><option value="au05">Vibe Key 按钮</option><option value="gamepad">游戏手柄按键</option></select></div><div id="actionSourceButtonField"><label for="actionSourceButton">Vibe Key 按钮</label><select id="actionSourceButton"><option value="0">按钮 1</option><option value="1">按钮 2</option><option value="2">按钮 3</option></select></div></div>
+<div class="route-fields"><div><label for="actionSourceKind">按键来源</label><select id="actionSourceKind"><option value="au05">Vibe Key 按钮</option><option value="gamepad">游戏手柄按键</option><option value="pad">手机 / 虚拟 Pad</option></select></div><div id="actionSourceButtonField"><label for="actionSourceButton">Vibe Key 按钮</label><select id="actionSourceButton"><option value="0">按钮 1</option><option value="1">按钮 2</option><option value="2">按钮 3</option></select></div></div>
 <div id="actionGamepadFields" hidden><div class="route-fields"><div><label for="actionGamepadDevice">游戏手柄</label><select id="actionGamepadDevice"></select></div><div><label>学习按键</label><div class="capture"><button id="actionGamepadUse" disabled>使用这个按键</button><button id="actionGamepadRefresh">刷新手柄</button></div></div></div><p class="muted" id="actionGamepadHint" role="status" aria-live="polite">未检测到手柄（插好/配对后刷新）</p><p id="actionGamepadStatus" role="status" aria-live="polite" class="status" data-kind="idle"></p></div>
 <p class="route-note" id="actionSourceSummary" role="status" aria-live="polite"></p>
 <h3>动作步骤</h3>
@@ -1091,6 +1091,7 @@ function actionErrorText(response,body){
 }
 function actionSourceText(source){
   if(!source||!source.kind)return '来源未知';
+  if(source.kind==='pad')return '手机 / 虚拟 Pad';
   if(source.kind==='au05')return 'Vibe Key '+hardwareButtonLabel(Number(source.button)||0);
   if(source.kind==='gamepad'){const name=actionDeviceName(source.device_key);return '游戏手柄'+(name?' · '+name:'')+' · 按键 '+source.usage;}
   return '来源未知';
@@ -1222,7 +1223,7 @@ function startActionGamepadPoll(){
 }
 function stopActionGamepadPoll(){if(actionGamepadTimer){clearInterval(actionGamepadTimer);actionGamepadTimer=null;}}
 function renderActionSource(){
-  const kind=$('actionSourceKind').value==='gamepad'?'gamepad':'au05';
+  const kind=$('actionSourceKind').value;
   $('actionSourceButtonField').hidden=kind!=='au05';
   $('actionGamepadFields').hidden=kind!=='gamepad';
   renderActionSourceSummary();
@@ -1231,6 +1232,7 @@ function renderActionSource(){
 }
 function renderActionSourceSummary(){
   const node=$('actionSourceSummary');if(!node)return;
+  if($('actionSourceKind').value==='pad'){setNodeText(node,'来源：手机 / 虚拟 Pad。仅保存动作，不占用硬件按键，不写固件；手机仍需单独配对和授权。');return;}
   if($('actionSourceKind').value!=='gamepad'){
     setNodeText(node,'来源：Vibe Key '+hardwareButtonLabel(Number($('actionSourceButton').value)||0)+'。保存后由服务生成一个不冲突的触发键并写入该按键。');
     return;
@@ -1480,6 +1482,7 @@ function actionStepsError(){
   return '';
 }
 function actionSourcePayload(){
+  if($('actionSourceKind').value==='pad')return {payload:{kind:'pad'}};
   const bindings=actionsData&&Array.isArray(actionsData.bindings)?actionsData.bindings:[];
   if($('actionSourceKind').value!=='gamepad'){
     const button=Number($('actionSourceButton').value);
@@ -1523,7 +1526,7 @@ async function saveAction(){
     if(saved&&Array.isArray(saved.bindings)){actionsData=saved;renderActionList();refreshHardware();}else refreshAfterSave=true;
     if(hardwareFailure)setActionStatus('动作已保存，但 Vibe Key '+(button===null?'按键':hardwareButtonLabel(button))+' 写入失败：'+hardwareFailure+'。服务已保存动作，可稍后点“同步到设备”重试。','error');
     else if(provisioned)setActionStatus('已保存硬件动作「'+name+'」，触发键已写入 Vibe Key 并读回一致。','ok');
-    else setActionStatus('已保存硬件动作「'+name+'」'+(source.payload.kind==='gamepad'?'；手柄按键直接派发，不写固件。':'。'),'ok');
+    else setActionStatus('已保存硬件动作「'+name+'」'+(source.payload.kind==='pad'?'；虚拟动作已保存，不写固件。':source.payload.kind==='gamepad'?'；手柄按键直接派发，不写固件。':'。'),'ok');
   }catch(error){
     setActionEditorStatus('未保存：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应'),'error');
   }finally{clearTimeout(timeout);actionsBusy=false;actionControlsBusy();if(refreshAfterSave)refreshActions();}

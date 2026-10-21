@@ -33,11 +33,45 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked --all-targets
+      - run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - run: cargo test --workspace --locked --all-targets
       - name: Verify binding UI contracts
         run: node scripts/test-binding-ui.cjs
       - run: cargo build --locked --release
+      - name: Verify opt-in phone bridge
+        shell: bash
+        run: |
+          python -m venv work/phone-env
+          if [ "$RUNNER_OS" = "Windows" ]; then py=work/phone-env/Scripts/python.exe; else py=work/phone-env/bin/python; fi
+          "$py" -m pip install -r mobile/requirements.txt
+          "$py" -m unittest discover -s mobile -v
+          "$py" mobile/test_service.py "$PWD/target/release/vibdock${{ runner.os == 'Windows' && '.exe' || '' }}"
+          node --check mobile/pad.js
+          node mobile/test-pad.cjs
+      - name: Package opt-in Windows phone preview
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          work/phone-env/Scripts/python.exe -m PyInstaller --noconfirm --onefile --name vibdock-phone --distpath work/phone-dist --workpath work/phone-build --specpath work --add-data "mobile/pad.html;." --add-data "mobile/pad.js;." --hidden-import qrcode.image.svg mobile/bridge.py
+          if ($LASTEXITCODE -ne 0) { throw 'Phone helper freeze failed' }
+          & work/phone-dist/vibdock-phone.exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen phone helper smoke test failed' }
+          $folder = 'work/phone-package'
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          Copy-Item target/release/vibdock.exe,target/release/vibdock-launcher.exe,work/phone-dist/vibdock-phone.exe,mobile/start-preview.ps1,mobile/start-phone.ps1,mobile/PHONE-PAD.md,scripts/vibdock-agent.ps1 -Destination $folder
+          $archive = 'vibdock-phone-' + $env:VIBDOCK_SOURCE_REVISION.Substring(0,12) + '-windows.zip'
+          Compress-Archive -Path "$folder/*" -DestinationPath $archive -Force
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $archive" | Set-Content "$archive.sha256" -Encoding ascii
+      - name: Upload opt-in Windows phone preview
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vibdock-mobile-windows-candidate
+          path: |
+            vibdock-phone-*-windows.zip
+            vibdock-phone-*-windows.zip.sha256
+          if-no-files-found: error
       - name: Check optional native speech-to-text build
         if: runner.os == 'Windows'
         run: cargo test --locked --features stt --lib
