@@ -14,6 +14,9 @@ pub(crate) enum Event {
     Failed(u8, String),
 }
 
+#[cfg(windows)]
+pub(crate) static INPUT_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const FIRST_TRIGGER: u16 = 0x78; // F9; F12 is reserved by Windows.
 const MODIFIERS: [u16; 8] = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
 
@@ -107,6 +110,10 @@ impl Capture {
 trait Input {
     fn is_down(&self, key: u16) -> bool;
     fn send(&mut self, key: u16, up: bool) -> Result<(), String>;
+    fn reserve(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn unreserve(&mut self) {}
 }
 
 #[derive(Default)]
@@ -130,6 +137,7 @@ impl HeldKeys {
         {
             return Err("A voice shortcut key is already held; nothing was pressed.".into());
         }
+        input.reserve()?;
         for key in keys {
             if let Err(error) = input.send(*key, false) {
                 let cleanup = self.release(physical, input);
@@ -170,7 +178,7 @@ enum Phase {
     #[default]
     Idle,
     Pending(u64),
-    Holding,
+    Holding(u64),
     Blocked,
 }
 
@@ -191,7 +199,7 @@ impl Machine {
     fn cancel(&mut self, physical: &[bool; 256], input: &mut impl Input) -> Vec<Event> {
         let mut events = Vec::new();
         for (index, button) in self.buttons.iter_mut().enumerate() {
-            if matches!(button.phase, Phase::Pending(_) | Phase::Holding) {
+            if matches!(button.phase, Phase::Pending(_) | Phase::Holding(_)) {
                 events.push(Event::Cancelled(index as u8));
             }
             button.phase = if button.down {
@@ -259,7 +267,7 @@ impl Machine {
                             _ => vec![Event::Cancelled(index)],
                         }
                     }
-                    Phase::Holding => match button.held.release(physical, input) {
+                    Phase::Holding(_) => match button.held.release(physical, input) {
                         Ok(()) => vec![Event::Released(index)],
                         Err(error) => vec![Event::Failed(index, error)],
                     },
@@ -284,10 +292,19 @@ impl Machine {
 
     fn tick(&mut self, now: u64, physical: &[bool; 256], input: &mut impl Input) -> Vec<Event> {
         let mut events = Vec::new();
+        for (index, button) in self.buttons.iter_mut().enumerate() {
+            if matches!(button.phase, Phase::Holding(start) if now.saturating_sub(start) >= 30_000)
+            {
+                button.phase = Phase::Blocked;
+                events.push(Event::Cancelled(index as u8));
+                if let Err(error) = button.held.release(physical, input) {
+                    events.push(Event::Failed(index as u8, error));
+                }
+            }
+        }
         for binding in &self.bindings {
             let overlapping = self.buttons.iter().enumerate().any(|(index, button)| {
-                index != usize::from(binding.button)
-                    && button.held.0.iter().any(|key| binding.keys.contains(key))
+                index != usize::from(binding.button) && !button.held.0.is_empty()
             });
             let button = &mut self.buttons[usize::from(binding.button)];
             if let Phase::Pending(start) = button.phase {
@@ -302,7 +319,7 @@ impl Machine {
                     } else {
                         match button.held.press(&binding.keys, physical, input) {
                             Ok(()) => {
-                                button.phase = Phase::Holding;
+                                button.phase = Phase::Holding(now);
                                 events.push(Event::Started(binding.button));
                             }
                             Err(error) => events.push(Event::Failed(binding.button, error)),
@@ -314,9 +331,12 @@ impl Machine {
         // Retain ownership after a failed key-up so the next worker cycle can
         // retry cleanup, including after the binding has been removed.
         for button in &mut self.buttons {
-            if !matches!(button.phase, Phase::Holding) {
+            if !matches!(button.phase, Phase::Holding(_)) {
                 let _ = button.held.release(physical, input);
             }
+        }
+        if self.released() {
+            input.unreserve();
         }
         events
     }
@@ -417,9 +437,23 @@ mod native {
     }
 
     #[derive(Default)]
-    struct NativeInput;
+    struct NativeInput {
+        guard: Option<std::sync::MutexGuard<'static, ()>>,
+    }
 
     impl Input for NativeInput {
+        fn reserve(&mut self) -> Result<(), String> {
+            if self.guard.is_none() {
+                self.guard = Some(INPUT_SERIAL.try_lock().map_err(|_| {
+                    "Another input dispatch is active; the hold was not started.".to_string()
+                })?);
+            }
+            Ok(())
+        }
+        fn unreserve(&mut self) {
+            self.guard = None;
+        }
+
         fn is_down(&self, key: u16) -> bool {
             (unsafe { GetAsyncKeyState(i32::from(key)) < 0 })
                 || modifier_family(key)
@@ -505,6 +539,7 @@ mod native {
 
     enum Command {
         Configure(u64, Vec<HoldBinding>, Sender<Result<(), String>>),
+        Prepare(u64, Vec<u8>, Sender<Result<(), String>>),
         Stop,
     }
 
@@ -542,11 +577,50 @@ mod native {
             }
         }
 
+        pub(crate) fn error(&self) -> Option<String> {
+            if self.failure_reported {
+                return Some(
+                    "The held voice input worker stopped; restart the service before rearming."
+                        .into(),
+                );
+            }
+            self.configured
+                .as_ref()
+                .and_then(|(_, _, result)| result.as_ref().err().cloned())
+        }
+
+        pub(crate) fn prepare(&mut self, buttons: Vec<u8>) -> Result<(), String> {
+            let _ = self.poll();
+            if self.failure_reported {
+                return Err(self
+                    .error()
+                    .unwrap_or_else(|| "Input worker failed; restart service.".into()));
+            }
+            if self.worker.is_none() {
+                // Starting capture is safe before firmware is written; no binding can dispatch yet.
+                self.configure_worker(Vec::new())?;
+            }
+            let Some(worker) = &self.worker else {
+                return Ok(());
+            };
+            self.generation = self.generation.wrapping_add(1);
+            self.configured = None;
+            let (reply, receive) = mpsc::channel();
+            worker
+                .commands
+                .send(Command::Prepare(self.generation, buttons, reply))
+                .map_err(|_| "Input worker stopped.".to_string())?;
+            receive
+                .recv()
+                .map_err(|_| "Input worker stopped.".to_string())?
+        }
+
         pub(crate) fn configure(
             &mut self,
             revision: u64,
             mut bindings: Vec<HoldBinding>,
         ) -> Result<(), String> {
+            let _ = self.poll();
             bindings.sort_by_key(|binding| binding.button);
             if let Some((old_revision, old_bindings, result)) = &self.configured {
                 if *old_revision == revision
@@ -556,8 +630,12 @@ mod native {
                     return result.clone();
                 }
             }
+            if self.failure_reported {
+                return Err(self
+                    .error()
+                    .unwrap_or_else(|| "Input worker failed; restart service.".into()));
+            }
             self.generation = self.generation.wrapping_add(1);
-            self.failure_reported = false;
             let result = self.configure_worker(bindings.clone());
             self.configured = Some((revision, bindings, result.clone()));
             result
@@ -569,10 +647,8 @@ mod native {
                 .as_ref()
                 .is_some_and(|worker| worker.join.as_ref().is_some_and(JoinHandle::is_finished))
             {
-                self.worker = None;
-            }
-            if bindings.is_empty() && self.worker.is_none() {
-                return Ok(());
+                self.failure_reported = true;
+                return Err("The input worker exited; restart the service.".into());
             }
             if self.worker.is_none() {
                 let (commands, receive) = mpsc::channel();
@@ -710,7 +786,7 @@ mod native {
         let _hook = Hook(hook);
         let mut session = Session::default();
         let Session { machine, input } = &mut session;
-        let mut guards = Vec::new();
+        let mut guards = std::collections::BTreeMap::new();
         let mut generation = 0;
         let mut stopping = false;
         while !stopping {
@@ -728,15 +804,6 @@ mod native {
                         for event in machine.configure(Vec::new(), &physical, input) {
                             let _ = events.send((generation, event));
                         }
-                        HOOK_STATE.with(|state| {
-                            state
-                                .borrow_mut()
-                                .as_mut()
-                                .expect("hook installed")
-                                .capture
-                                .configure(std::iter::empty())
-                        });
-                        guards.clear();
                         let result = (|| {
                             if !machine.released() {
                                 return Err("The previous voice shortcut could not be released; new bindings remain disarmed.".into());
@@ -753,18 +820,23 @@ mod native {
                                 }
                                 compiled.push(compile(binding)?);
                             }
-                            let mut next_guards = Vec::new();
                             for binding in &compiled {
                                 let hotkey = Hotkey::new([], Key::Function(9 + binding.button));
-                                next_guards.push(crate::windows::RegisteredHotkey::register(
-                                    &hotkey,
-                                    0x5A00 + i32::from(binding.button),
-                                )?);
+                                if let std::collections::btree_map::Entry::Vacant(entry) =
+                                    guards.entry(binding.button)
+                                {
+                                    entry.insert(crate::windows::RegisteredHotkey::register(
+                                        &hotkey,
+                                        0x5A00 + i32::from(binding.button),
+                                    )?);
+                                }
                             }
+                            let compiled_buttons: Vec<_> =
+                                compiled.iter().map(|b| b.button).collect();
                             for event in machine.configure(compiled, &physical, input) {
                                 let _ = events.send((generation, event));
                             }
-                            guards = next_guards;
+                            guards.retain(|button, _| compiled_buttons.contains(button));
                             HOOK_STATE.with(|state| {
                                 state
                                     .borrow_mut()
@@ -775,6 +847,52 @@ mod native {
                             });
                             Ok(())
                         })();
+                        HOOK_STATE.with(|state| {
+                            state
+                                .borrow_mut()
+                                .as_mut()
+                                .expect("hook installed")
+                                .capture
+                                .configure(guards.keys().copied())
+                        });
+                        let _ = reply.send(result);
+                    }
+                    Ok(Command::Prepare(next_generation, buttons, reply)) => {
+                        generation = next_generation;
+                        for event in machine.cancel(&physical, input) {
+                            let _ = events.send((generation, event));
+                        }
+                        let result = (|| {
+                            if !machine.released() {
+                                return Err(
+                                    "Previous shortcut cleanup failed; firmware was not changed."
+                                        .into(),
+                                );
+                            }
+                            for button in buttons {
+                                if button > 2 {
+                                    return Err("Invalid button.".into());
+                                }
+                                if let std::collections::btree_map::Entry::Vacant(entry) =
+                                    guards.entry(button)
+                                {
+                                    let hotkey = Hotkey::new([], Key::Function(9 + button));
+                                    entry.insert(crate::windows::RegisteredHotkey::register(
+                                        &hotkey,
+                                        0x5A00 + i32::from(button),
+                                    )?);
+                                }
+                            }
+                            Ok(())
+                        })();
+                        HOOK_STATE.with(|state| {
+                            state
+                                .borrow_mut()
+                                .as_mut()
+                                .expect("hook installed")
+                                .capture
+                                .configure(guards.keys().copied())
+                        });
                         let _ = reply.send(result);
                     }
                     Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
@@ -1084,6 +1202,47 @@ mod tests {
         assert_eq!(
             machine.edge(Edge::Up(0, 700), &physical, &mut input),
             vec![Event::Released(0)]
+        );
+    }
+
+    #[test]
+    fn disjoint_chords_are_also_serialized() {
+        let (mut machine, mut input, physical) = ready();
+        let second = Binding {
+            button: 1,
+            keys: vec![0xA4, 0x20],
+            long_press_ms: 550,
+        };
+        machine.configure(vec![binding(), second], &physical, &mut input);
+        machine.edge(Edge::Down(0, true, 0), &physical, &mut input);
+        machine.edge(Edge::Down(1, true, 0), &physical, &mut input);
+        assert!(matches!(
+            machine.tick(550, &physical, &mut input).as_slice(),
+            [Event::Started(0), Event::Failed(1, _)]
+        ));
+        assert_eq!(input.down, BTreeSet::from([0xA2, 0x5B]));
+    }
+
+    #[test]
+    fn lost_key_up_times_out_and_cannot_rearm_before_a_real_release() {
+        let (mut machine, mut input, physical) = ready();
+        machine.edge(Edge::Down(0, true, 0), &physical, &mut input);
+        machine.tick(550, &physical, &mut input);
+        assert!(machine.tick(30_549, &physical, &mut input).is_empty());
+        assert_eq!(
+            machine.tick(30_550, &physical, &mut input),
+            vec![Event::Cancelled(0)]
+        );
+        assert!(input.down.is_empty());
+        machine.edge(Edge::Down(0, true, 31_000), &physical, &mut input);
+        assert!(machine.tick(40_000, &physical, &mut input).is_empty());
+        assert!(machine
+            .edge(Edge::Up(0, 40_001), &physical, &mut input)
+            .is_empty());
+        machine.edge(Edge::Down(0, true, 40_010), &physical, &mut input);
+        assert_eq!(
+            machine.edge(Edge::Up(0, 40_020), &physical, &mut input),
+            vec![Event::Tap(0)]
         );
     }
 

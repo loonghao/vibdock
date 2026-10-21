@@ -1640,7 +1640,8 @@ function updateOnboardCardStatus(){
   const gestures=onboardServer.gestures||[];
   if(!gestures.length)setNodeText(node,onboardStoredDone()?'尚未保存手势位；可以再次打开向导。':'尚未配置手势位，建议先完成首次配置。');
   else setNodeText(node,'已保存 '+gestures.length+' / '+(Number.isSafeInteger(onboardServer.limit)?onboardServer.limit:9)+' 个手势位'+(onboardServer.storage_writable===false?'；手势存储不可写。':'。'));
-  if(onboardServer.error)setNodeText(node,node.textContent+' 手势运行失败：'+onboardServer.error);
+  const runtimeError=onboardServer.error||onboardServer.hold_error||(gestures.find(entry=>entry.error)||{}).error;
+  if(runtimeError)setNodeText(node,node.textContent+' 手势运行失败：'+runtimeError);
 }
 async function fetchOnboardGestures(quiet){
   const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
@@ -2124,7 +2125,8 @@ async function saveOnboard(){
         failure='已保存手势，但 '+buttonLabel+' 固件写入失败：'+(hardware.error||'设备未读回写入值')+'。设备可能不会触发这个手势；请稍后重试或同步到设备。';
         break;
       }
-      if(saved.error){failure='已保存手势，但运行失败：'+saved.error;break;}
+      const runtimeError=saved.error||saved.hold_error||(saved.gestures.find(entry=>entry.error)||{}).error;
+      if(runtimeError){failure='已保存手势，但运行失败：'+runtimeError;break;}
     }catch(error){failure='保存失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应');break;}
     finally{clearTimeout(timeout);}
   }

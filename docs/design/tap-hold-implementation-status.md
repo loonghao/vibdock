@@ -1,80 +1,68 @@
-# Tap/hold voice implementation status
+# Configurable tap/hold voice candidate
 
-This source snapshot is work in progress. It is not a qualified hardware or
-input-method release. The existing service and device configuration have not
-been changed by this development work.
+This opt-in mode reuses `gestures.json`. A short release runs the button's Single
+slot once; two rapid taps run it twice. A held Long slot contains explicit
+`hold_keys`, empty `steps`, and `long_press_ms` (150–5000, default 550). It emits
+one key-down sequence after the threshold and releases on up, Escape, physical
+modifier intervention, reconfiguration, shutdown, or a 30-second safety deadline.
+Long press and cancellation never run the Single slot. Ordinary gesture timing
+and modified sentinels remain unchanged.
 
-## Intended behavior
+The held mode uses bare F9/F10/F11, globally reserved by the service and swallowed
+by its keyboard hook. It cannot identify which keyboard emitted them. Output
+never contains the ordinary Ctrl/Alt/Shift sentinel modifiers. The IME shortcut
+must come from the user's confirmed configuration; none is prefilled.
 
-- An opt-in AU05 button runs its existing Single action on each short release.
-  The microphone action retains an explicit endpoint ID; two rapid taps toggle twice.
-- A Long slot accepts explicit `hold_keys` and `long_press_ms` (150–5000, default550),
-  with empty `steps`. It holds the configured input-method chord until release
-  or cancellation and never also runs Single. No input-method chord is prefilled.
-- The mode is stored in the existing revisioned `gestures.json`. Ordinary saved
-  single/double/long macros retain their old sentinels and timing.
-- Opt-in held buttons use bare F9/F10/F11, with global keyboard scope rather than
-  physical-device identity. The service owns capture and held output on a separate
-  worker so blocking macros cannot defer key release.
-- This keyboard dispatch remains separate from endpoint mute, application playback
-  mute, local speech recognition, and an application's internal voice session.
+A separate input worker owns held keys so a blocking macro or firmware write
+cannot postpone release. Capture/reservations are prepared before firmware writes
+and retained through cancellation and failed setup. Replacement capture reuses
+existing reservations. Already-held triggers stay blocked until their real up.
+Held output is serialized, including disjoint chords; ordinary service key
+injection uses the same nonblocking lock and fails explicitly during a hold.
+Failed key-up ownership is retained for cleanup retries, and a dead worker is
+reported as disarmed until service restart. Settings checks root and per-slot
+runtime errors before reporting setup completion.
 
-## Remaining correctness work before deployment
+## Windows preview setup and rollback
 
-1. `src/web.rs` currently cancels by configuring an empty held-binding set before
-   gesture mutations. This drops capture/reservation before a blocking firmware
-   write, and new bare keys can be written before replacement capture succeeds.
-   Separate cancellation from suppression, reserve/prepare replacement capture
-   before provisioning, and preserve fail-closed behavior on setup failure.
-2. `src/gesture_voice.rs` only rejects simultaneous held chords that share a key.
-   Disjoint chords can still combine modifiers. Serialize held output globally;
-   coordinate ordinary `send_keys` actions with active holds as well.
-3. The Settings completion path checks root `error` but the service reports
-   `hold_error` and per-slot `error`. Test and consume the actual wire format so a
-   runtime failure cannot display setup completion.
-4. Add an activation-error accessor/current fatal status; the service's cached
-   `voice_error` must reflect worker disconnects. Do not let cached successful
-   snapshots hide a dead worker. Recovery must not rearm a still-held suppressed
-   sentinel or bypass permanent cleanup failure.
-5. Add a bounded active-hold safety deadline (30 seconds) and release lockout for
-   lost release events. An absent USB/hook key-up can currently hold indefinitely.
-6. Finish regression coverage for those issues, run final-source workspace checks
-   on Windows/Linux/macOS, then qualify exact-head hosted CI. Physical AU05,
-   input-method behavior and audio remain separate acceptance gates.
+Extract the candidate ZIP into a new directory. Verify it with
+`Get-FileHash .\vibdock-candidate-*.zip -Algorithm SHA256` against its `.sha256`.
+Do not replace an installed copy. In a new PowerShell window:
 
-## Checks already performed
+```powershell
+$env:LOCALAPPDATA = Join-Path $PWD 'preview-data'
+$env:VIBDOCK_PORT = '38941'
+.\vibdock-launcher.exe
+```
 
-Windows workspace tests and strict workspace Clippy passed on an earlier draft.
-The input worker subsequently passed 16 focused mock/state-machine tests and
-Windows library Clippy. The Settings contract tests passed. These checks occurred
-on successive uncommitted drafts, so they do not qualify this final source tree.
-The first formatting check found changes; selected files were formatted later,
-but a final all-workspace formatting check is still required. No native input,
-firmware, microphone, input-method session or installed service was exercised.
+This isolates files and service discovery; it does not virtualize Windows global
+hotkeys or AU05 firmware. Do not run two hardware-owning services together. Close
+an existing instance yourself before hardware acceptance. Never test microphone
+toggle during a call. Open Settings, select the exact microphone, then use the
+onboarding matrix: Single = toggle selected microphone; Long = hold shortcut.
+Enter the IME's existing configured chord. Review the button/firmware confirmation
+before saving. Do not add a Double slot to that button.
 
-## Separate phone-control follow-up
+Acceptance: tap twice with state readback after each; hold and release; hold and
+Escape; cancel while held; unplug/reconnect; test another ordinary gesture.
+Check the recent events for HELD/RELEASED/CANCELLED and explicit failures.
+These receipts prove service dispatch, not IME recording state. Hardware, WeChat,
+Windows audio, hooks and laptop acceptance remain pending until observed.
 
-Keep phone networking and pairing in a separate change. A phone control panel
-must target an explicitly selected local executor: a remote host's SendInput
-cannot control the user's laptop. Preserve the existing authenticated loopback
-service and its Host/Origin policy.
+Rollback: Exit VibDock through this preview's tray or use `vibdock service-stop`
+from the same PowerShell environment. Release physical keys. Restore previous
+firmware bindings explicitly from your saved configuration if you changed them.
+Delete `preview-data` only if you no longer need its isolated settings; start your
+previous installation normally. No existing user settings are overwritten.
 
-The smallest runnable proposal is an opt-in HTTPS private-LAN Pad on the laptop,
-with a separate restricted phone pairing principal, persisted executor identity
-and approved action-ID/digest allowlist, consume-before-dispatch idempotency, and
-status readback. Do not install a VPN, open a public listener, modify firewall
-rules, distribute the service token or silently select another executor.
+## Validation scope
 
-Reuse `browser_auth.rs` expiry/replay patterns, `resident_actions.rs` request
-receipts, the saved-action Pad executor, and `stt.rs::transcribe_samples`.
-`Cargo.lock` already contains rustls transitively, but TLS is not implemented in
-this snapshot. Existing TCP transport clones streams and cannot simply clone TLS
-state. Bounded binary WAV upload needs its own strict framing/size validation.
+The candidate includes platform-independent tests for short taps, rapid taps,
+threshold boundaries, repeat downs, cancellation, partial injection cleanup,
+physical modifier ownership, disjoint concurrent holds, and lost key-up timeout
+with release lockout. DOM fixtures exercise the actual runtime-error wire format.
+Required workspace fmt, strict Clippy and tests run in hosted three-platform CI.
+Windows resources require the Microsoft SDK; Linux GNU cross-check cannot package
+the Windows launcher. Use the exact-head Windows CI candidate archive/checksum.
 
-The phone can hold its own audio recording and upload validated PCM WAV on
-release; cancellation/hidden/pagehide/disconnect discard recording and stop tracks.
-Do not add a remote keydown protocol to a finite-tap prototype. Default builds lack
-STT: without the feature/model return unavailable, never synthetic text. Remote
-recognition remains explicitly unconfigured until a trusted channel and target
-routing are selected. Certificates/phone trust, laptop deployment and live network
-acceptance require explicit setup; none has been performed by this snapshot.
+The phone Pad is a separate PR and does not install a virtual audio driver.

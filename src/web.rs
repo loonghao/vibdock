@@ -1232,6 +1232,7 @@ fn accept_loop(
                         recorded,
                     );
                 }
+                voice_error = voice_monitor.error();
                 for (button, kind) in gesture_monitor.poll() {
                     if let Some(steps) = gestures.steps_for(button, kind) {
                         let name = gestures
@@ -1404,7 +1405,15 @@ fn accept_loop(
         let hold_preflight = if gesture_mutation {
             // Release held keys before a potentially blocking firmware write.
             voice_monitor
-                .configure(gestures.revision(), Vec::new())
+                .prepare(
+                    serde_json::from_str::<serde_json::Value>(body)
+                        .ok()
+                        .filter(|v| path == "/api/gestures/add" && v.get("hold_keys").is_some())
+                        .and_then(|v| v["button"].as_u64())
+                        .filter(|b| *b <= 2)
+                        .map(|b| vec![b as u8])
+                        .unwrap_or_default(),
+                )
                 .err()
                 .map(|error| {
                     (

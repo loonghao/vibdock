@@ -442,6 +442,9 @@ unsafe fn unicode_input(unit: u16, up: bool) -> INPUT {
 /// modifier. Letters are deliberately excluded: `Ctrl + A` means the A key, not
 /// `Ctrl + Shift + A`.
 unsafe fn inject_dispatch(hotkey: &Hotkey, code: HotkeyCode) -> std::result::Result<(), String> {
+    let _input_guard = crate::gesture_voice::INPUT_SERIAL.try_lock().map_err(|_| {
+        "A held voice shortcut is active; ordinary key dispatch was refused.".to_string()
+    })?;
     let mut inputs = Vec::with_capacity(hotkey.modifiers().len() * 2 + 4);
     let mut modifiers: Vec<u16> = hotkey
         .modifiers()
