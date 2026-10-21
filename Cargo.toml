@@ -34,7 +34,7 @@ name = "vibdock-launcher"
 path = "src/bin/vibdock-launcher.rs"
 
 [dependencies]
-hmac = "0.12"
+hmac = "0.13"
 serde_json = "1"
 sha2 = "0.10"
 sherpa-onnx = { version = "1.13.8", optional = true }
