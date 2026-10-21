@@ -8,6 +8,7 @@
 use super::{atomic_write, bounded_text, generate_token, token, CommandRegistry, Step, MAX_STEPS};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use vibdock_input::hotkey::{Hotkey, Key};
 
 pub const MAX_GESTURE_BINDINGS: usize = 9;
 const MAX_FILE: usize = 64 * 1024;
@@ -51,18 +52,37 @@ pub struct Binding {
     pub button: u8,
     pub gesture: GestureKind,
     pub steps: Vec<Step>,
+    pub hold: Option<HoldBinding>,
+}
+
+/// A lifecycle-bound chord, never an executable macro or Pad action.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoldBinding {
+    pub button: u8,
+    pub chord: Hotkey,
+    pub long_press_ms: u64,
+}
+
+pub fn hold_sentinel(button: u8) -> Option<Hotkey> {
+    // F12 is reserved by Windows for debugging.
+    (button <= 2).then(|| Hotkey::new([], Key::Function(9 + button)))
 }
 
 impl Binding {
     fn view(&self) -> Value {
-        json!({
+        let mut value = json!({
             "id": self.id,
             "name": self.name,
             "button": self.button,
             "gesture": self.gesture.as_str(),
             "steps": self.steps.iter().map(Step::view).collect::<Vec<_>>(),
             "armed": true,
-        })
+        });
+        if let Some(hold) = &self.hold {
+            value["hold_keys"] = json!(hold.chord.as_string());
+            value["long_press_ms"] = json!(hold.long_press_ms);
+        }
+        value
     }
 }
 
@@ -156,10 +176,49 @@ impl Store {
         buttons
     }
 
+    pub fn hold_bindings(&self) -> Vec<HoldBinding> {
+        self.bindings
+            .iter()
+            .filter_map(|binding| binding.hold.clone())
+            .collect()
+    }
+
+    pub fn has_hold(&self, button: u8) -> bool {
+        self.bindings
+            .iter()
+            .any(|binding| binding.button == button && binding.hold.is_some())
+    }
+
+    pub fn sentinel(&self, button: u8) -> Option<Hotkey> {
+        if self.has_hold(button) {
+            hold_sentinel(button)
+        } else {
+            GestureKind::sentinel_text(button).and_then(|text| Hotkey::parse(&text).ok())
+        }
+    }
+
+    pub fn conflicts_with_trigger(&self, trigger: &Hotkey) -> bool {
+        self.buttons()
+            .into_iter()
+            .any(|button| self.sentinel(button).as_ref() == Some(trigger))
+            || self
+                .hold_bindings()
+                .iter()
+                .any(|hold| hold.chord == *trigger)
+    }
+
+    pub fn conflicts_with_chord(&self, text: &str) -> bool {
+        Hotkey::parse(text)
+            .ok()
+            .or_else(|| Key::parse(text).map(|key| Hotkey::new([], key)))
+            .is_some_and(|chord| self.conflicts_with_trigger(&chord))
+    }
+
     pub fn steps_for(&self, button: u8, gesture: GestureKind) -> Option<Vec<Step>> {
         self.bindings
             .iter()
             .find(|binding| binding.button == button && binding.gesture == gesture)
+            .filter(|binding| binding.hold.is_none())
             .map(|binding| binding.steps.clone())
     }
 
@@ -212,10 +271,24 @@ impl Store {
         if self.bindings.len() >= MAX_GESTURE_BINDINGS {
             return fail(409, "The gesture limit has been reached");
         }
+        let hold = match parse_hold(&value, button, gesture) {
+            Ok(hold) => hold,
+            Err(error) => return fail(400, error),
+        };
+        if self.bindings.iter().any(|binding| {
+            binding.button == button
+                && ((hold.is_some() && binding.gesture == GestureKind::Double)
+                    || (gesture == GestureKind::Double && binding.hold.is_some()))
+        }) {
+            return fail(
+                409,
+                "Tap/hold mode cannot share a button with a double-click slot",
+            );
+        }
         let Some(steps) = value.get("steps").and_then(Value::as_array) else {
             return fail(400, "steps must be a non-empty array");
         };
-        if steps.is_empty() || steps.len() > MAX_STEPS {
+        if (hold.is_none() && steps.is_empty()) || steps.len() > MAX_STEPS {
             return fail(400, "steps must contain 1-8 entries");
         }
         let mut parsed_steps = Vec::with_capacity(steps.len());
@@ -244,6 +317,7 @@ impl Store {
             button,
             gesture,
             steps,
+            hold,
         };
         let mut updated = self.bindings.clone();
         updated.push(binding);
@@ -292,13 +366,12 @@ impl Store {
         let stored = json!({
             "schema_version": 1,
             "revision": self.revision + 1,
-            "gestures": bindings.iter().map(|binding| json!({
-                "id": binding.id,
-                "name": binding.name,
-                "button": binding.button,
-                "gesture": binding.gesture.as_str(),
-                "steps": binding.steps.iter().map(Step::stored_json).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
+            "gestures": bindings.iter().map(|binding| {
+                let mut value = binding.view();
+                value.as_object_mut().unwrap().remove("armed");
+                value["steps"] = json!(binding.steps.iter().map(Step::stored_json).collect::<Vec<_>>());
+                value
+            }).collect::<Vec<_>>(),
         });
         atomic_write(&self.path, stored.to_string().as_bytes())
             .map_err(|_| "Could not save gestures; previous state is unchanged".to_string())
@@ -323,12 +396,13 @@ fn parse_file(bytes: &[u8]) -> Option<(u64, Vec<Binding>)> {
             .ok()
             .filter(|b| *b <= 2)?;
         let gesture = entry["gesture"].as_str().and_then(GestureKind::parse)?;
+        let hold = parse_hold(entry, button, gesture).ok()?;
         let steps = entry["steps"]
             .as_array()?
             .iter()
             .map(Step::parse_stored)
             .collect::<Option<Vec<_>>>()?;
-        if steps.is_empty() || steps.len() > MAX_STEPS {
+        if (hold.is_none() && steps.is_empty()) || steps.len() > MAX_STEPS {
             return None;
         }
         if bindings
@@ -343,9 +417,57 @@ fn parse_file(bytes: &[u8]) -> Option<(u64, Vec<Binding>)> {
             button,
             gesture,
             steps,
+            hold,
         });
     }
+    if bindings.iter().any(|binding| {
+        binding.hold.is_some()
+            && bindings
+                .iter()
+                .any(|other| other.button == binding.button && other.gesture == GestureKind::Double)
+    }) {
+        return None;
+    }
     Some((revision, bindings))
+}
+
+fn parse_hold(
+    value: &Value,
+    button: u8,
+    gesture: GestureKind,
+) -> Result<Option<HoldBinding>, &'static str> {
+    if value.get("hold_keys").is_none() {
+        return if value.get("long_press_ms").is_none() {
+            Ok(None)
+        } else {
+            Err("long_press_ms requires hold_keys")
+        };
+    }
+    let keys = bounded_text(value.get("hold_keys"), 80)
+        .ok_or("hold_keys requires a configured voice chord")?;
+    let chord = Hotkey::parse(&keys).map_err(|_| "hold_keys must be a valid shortcut")?;
+    let threshold = value
+        .get("long_press_ms")
+        .unwrap_or(&Value::from(550))
+        .as_u64()
+        .filter(|ms| (150..=5_000).contains(ms))
+        .ok_or("long_press_ms must be 150-5000")?;
+    if gesture != GestureKind::Long
+        || value["steps"]
+            .as_array()
+            .is_none_or(|steps| !steps.is_empty())
+    {
+        return Err("hold_keys is only allowed in a long slot with empty steps");
+    }
+    // A held output must never become another managed trigger or Escape cancel.
+    if matches!(chord.key(), Key::Function(9..=12) | Key::Escape) {
+        return Err("hold_keys cannot use Escape or a managed function key");
+    }
+    Ok(Some(HoldBinding {
+        button,
+        chord,
+        long_press_ms: threshold,
+    }))
 }
 
 fn fail(code: u16, message: &str) -> (u16, Value) {
@@ -449,6 +571,104 @@ mod tests {
         let removed = store.remove(&json!({"revision":3,"id":id}).to_string());
         assert_eq!(removed.0, 200);
         assert_eq!(store.bindings().len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn hold_body(revision: u64) -> Value {
+        json!({"revision":revision,"name":"WeChat hold","button":1,"gesture":"long",
+            "steps":[],"hold_keys":"Ctrl + Win","long_press_ms":650})
+    }
+
+    #[test]
+    fn tap_and_hold_reload_exact_endpoint_chord_and_threshold() {
+        let (mut store, dir) = store();
+        let single = json!({"revision":0,"name":"Microphone","button":1,"gesture":"single",
+            "steps":[{"type":"toggle_microphone","device_id":"exact-endpoint-id"}]});
+        assert_eq!(add(&mut store, &single.to_string()).0, 200);
+        assert_eq!(add(&mut store, &hold_body(1).to_string()).0, 200);
+        let mut reloaded = Store::start(dir.clone());
+        assert_eq!(
+            reloaded.hold_bindings(),
+            vec![HoldBinding {
+                button: 1,
+                chord: Hotkey::parse("Ctrl + Win").unwrap(),
+                long_press_ms: 650,
+            }]
+        );
+        assert_eq!(reloaded.sentinel(1).unwrap().as_string(), "F10");
+        assert_eq!(
+            reloaded.view()["gestures"][0]["steps"][0]["device_id"],
+            "exact-endpoint-id"
+        );
+        assert!(reloaded.steps_for(1, GestureKind::Long).is_none());
+        assert!(reloaded.conflicts_with_chord("F10"));
+        assert!(reloaded.conflicts_with_chord("Ctrl+Win"));
+        let id = reloaded.view()["gestures"][1]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            reloaded
+                .remove(&json!({"revision":2,"id":id}).to_string())
+                .0,
+            200
+        );
+        assert_eq!(
+            reloaded.sentinel(1).unwrap().as_string(),
+            "Ctrl + Alt + Shift + F11"
+        );
+        assert!(reloaded.steps_for(1, GestureKind::Single).is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn held_chords_reject_ambiguous_modes_and_unsafe_values_without_writing() {
+        let (mut store, dir) = store();
+        for (field, value) in [
+            ("gesture", json!("single")),
+            ("gesture", json!("double")),
+            ("hold_keys", json!("")),
+            ("hold_keys", json!(null)),
+            ("hold_keys", json!("Ctrl+Escape")),
+            ("hold_keys", json!("Ctrl+F10")),
+            ("long_press_ms", json!(149)),
+            ("long_press_ms", json!(5001)),
+            ("long_press_ms", json!(true)),
+            ("long_press_ms", json!(550.5)),
+            ("steps", json!([{"type":"wait","ms":100}])),
+        ] {
+            let mut body = hold_body(0);
+            body[field] = value;
+            assert_eq!(add(&mut store, &body.to_string()).0, 400, "{body}");
+            assert_eq!(store.revision(), 0);
+            assert!(!dir.join("gestures.json").exists());
+        }
+        assert_eq!(add(&mut store, &body_at(0, "Double", 1, "double")).0, 200);
+        let before = std::fs::read(dir.join("gestures.json")).unwrap();
+        assert_eq!(add(&mut store, &hold_body(1).to_string()).0, 409);
+        assert_eq!(before, std::fs::read(dir.join("gestures.json")).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+        let (mut store, dir) = self::store();
+        assert_eq!(add(&mut store, &hold_body(0).to_string()).0, 200);
+        assert_eq!(add(&mut store, &body_at(1, "Double", 1, "double")).0, 409);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_held_configuration_preserves_original_bytes() {
+        let (_, dir) = store();
+        let bytes = json!({"schema_version":1,"revision":2,"gestures":[{
+            "id":"a".repeat(64),"name":"Bad","button":0,"gesture":"single",
+            "steps":[],"hold_keys":"Ctrl+Win","long_press_ms":550}]})
+        .to_string();
+        std::fs::write(dir.join("gestures.json"), &bytes).unwrap();
+        let reloaded = Store::start(dir.clone());
+        assert_eq!(reloaded.view()["storage_writable"], false);
+        assert!(reloaded.hold_bindings().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("gestures.json")).unwrap(),
+            bytes
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

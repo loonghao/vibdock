@@ -186,12 +186,13 @@
 <div class="onboard-pane" id="onboardMatrix" hidden>
 <div class="onboard-matrix-head"><p>点击格子编辑。每个手势位只能保存一个动作；已保存的手势位不会在本次向导中被覆盖。</p><span class="tag" id="onboardCount">0 / 9 已配置</span></div>
 <div class="onboard-grid" id="onboardGrid" role="group" aria-label="AU05 手势矩阵"></div>
-<p class="onboard-note" id="onboardMatrixNote">保存时先读取当前 revision，再逐个写入改动的手势位；服务会拒绝已占用或重复的按钮手势。双击窗口 300ms，长按阈值 550ms。</p>
+<p class="onboard-note" id="onboardMatrixNote">保存时先读取当前 revision，再逐个写入改动的手势位；服务会拒绝已占用或重复的按钮手势。双击窗口 300ms，普通长按阈值 550ms。需要短按切换麦克风、长按语音时，在同一按钮的单击格选择麦克风，长按格选择“按住快捷键直到松开”；该按钮不能同时配置双击。</p>
 <div class="onboard-editor" id="onboardEditor" hidden aria-labelledby="onboardEditorTitle">
 <div class="onboard-editor-head"><h3 id="onboardEditorTitle">编辑手势位</h3><span class="tag" id="onboardEditorSlot"></span></div>
 <label for="onboardEditorMode">动作方式</label>
-<select id="onboardEditorMode"><option value="none">不配置</option><option value="keys">手动快捷键</option><option value="launch">启动应用</option><option value="mic">切换麦克风</option><option value="wait">等待</option></select>
+<select id="onboardEditorMode"><option value="none">不配置</option><option value="keys">手动快捷键</option><option value="hold" id="onboardHoldOption" hidden disabled>按住快捷键直到松开</option><option value="launch">启动应用</option><option value="mic">切换麦克风</option><option value="wait">等待</option></select>
 <div id="onboardEditorKeysField" hidden><label for="onboardChord">快捷键</label><div class="capture"><input id="onboardChord" placeholder="例如 Ctrl + Shift + Space" autocomplete="off" spellcheck="false" aria-describedby="onboardRecordHint"><button id="onboardRecord" type="button" aria-pressed="false">录入按键</button></div><p class="muted" id="onboardRecordHint">可以直接输入，也可以点“录入按键”后在本页按下组合键；按 Escape 取消。</p></div>
+<div id="onboardEditorHoldField" hidden><label for="onboardHoldChord">微信输入法中当前设置的“按住说话”快捷键</label><input id="onboardHoldChord" autocomplete="off" spellcheck="false" aria-describedby="onboardHoldNote"><label for="onboardHoldDelay">长按阈值（毫秒，150–5000；留空为 550）</label><input id="onboardHoldDelay" type="number" min="150" max="5000" step="1" value="550"><p class="muted" id="onboardHoldNote">请手动填写已在微信输入法中确认的快捷键，不会自动推断。短按松开时执行单击格配置的麦克风切换；达到阈值后持续按住语音快捷键，松开时释放，不再触发单击。这里只确认按键发送，不能确认微信已开始或结束语音。保存会改写此按钮固件，并在所有键盘上全局保留对应的 F9 / F10 / F11；触发键不能识别物理设备。</p></div>
 <div id="onboardEditorLaunchField" hidden><label for="onboardAppSelect">应用</label><select id="onboardAppSelect"></select><p class="muted" id="onboardAppNote">只能从服务当前识别到的运行应用中选择。</p></div>
 <div id="onboardEditorMicField" hidden><label for="onboardMicSelect">麦克风</label><select id="onboardMicSelect"></select><p class="muted" id="onboardMicNote">选择明确的采集设备，不会自动回退到默认麦克风。</p></div>
 <div id="onboardEditorWaitField" hidden><label for="onboardWait">等待毫秒（0–10000）</label><input id="onboardWait" type="number" min="0" max="10000" step="10" value="200"></div>
@@ -1623,13 +1624,15 @@ function onboardStorageWritable(){return !!onboardServer&&onboardServer.storage_
 function onboardStepLabel(step){
   if(!step||typeof step!=='object')return '';
   if(step.type==='send_keys')return '发送 '+(step.keys||'快捷键');
+  if(step.type==='hold_keys')return '按住 '+step.keys+' · '+step.long_press_ms+'ms 后开始，松开释放';
   if(step.type==='launch')return '启动 '+(step.label||'应用');
   if(step.type==='toggle_microphone'){const device=captureDevices.find(item=>item.id===step.device_id);return '切换麦克风'+(device&&device.name?' · '+device.name:'');}
   if(step.type==='wait'){const value=Number(step.ms);return '等待 '+(Number.isFinite(value)?value:0)+'ms';}
   return '动作';
 }
 function onboardStepsLabel(steps){const list=Array.isArray(steps)?steps:[];if(!list.length)return '';return onboardStepLabel(list[0])+(list.length>1?' 等 '+list.length+' 步':'');}
-function onboardModeValue(type){return type==='send_keys'?'keys':type==='launch'?'launch':type==='toggle_microphone'?'mic':'wait';}
+function onboardBindingLabel(binding){return binding.hold_keys?onboardStepLabel({type:'hold_keys',keys:binding.hold_keys,long_press_ms:binding.long_press_ms}):onboardStepsLabel(binding.steps);}
+function onboardModeValue(type){return type==='hold_keys'?'hold':type==='send_keys'?'keys':type==='launch'?'launch':type==='toggle_microphone'?'mic':'wait';}
 function onboardSetStatus(text,kind){const node=$('onboardSaveStatus');if(!node)return;node.textContent=text;node.dataset.kind=kind||'idle';}
 function updateOnboardCardStatus(){
   const node=$('onboardCardStatus');if(!node)return;
@@ -1637,6 +1640,7 @@ function updateOnboardCardStatus(){
   const gestures=onboardServer.gestures||[];
   if(!gestures.length)setNodeText(node,onboardStoredDone()?'尚未保存手势位；可以再次打开向导。':'尚未配置手势位，建议先完成首次配置。');
   else setNodeText(node,'已保存 '+gestures.length+' / '+(Number.isSafeInteger(onboardServer.limit)?onboardServer.limit:9)+' 个手势位'+(onboardServer.storage_writable===false?'；手势存储不可写。':'。'));
+  if(onboardServer.error)setNodeText(node,node.textContent+' 手势运行失败：'+onboardServer.error);
 }
 async function fetchOnboardGestures(quiet){
   const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),3000);
@@ -1735,7 +1739,7 @@ function renderOnboardStep(){
     $('onboardSubtitle').textContent='已完成首次配置；之后可以随时从“首次配置”卡片重新打开。';
     $('onboardGrid').hidden=true;$('onboardEditor').hidden=true;$('onboardMatrixNote').hidden=true;
     $('onboardFinish').hidden=false;
-    setNodeText($('onboardFinishText'),'已保存 '+onboardSavedCount+' 个手势位到本机服务。按下按键试试：单击后松开，双击在 300ms 内按两次，长按按住 550ms 以上。触发记录会出现在上方 Vibe Key 卡片的“最近触发”列表里；手势发送成功不代表目标应用已执行。');
+    setNodeText($('onboardFinishText'),'已保存 '+onboardSavedCount+' 个手势位到本机服务。单击松开后执行；普通双击窗口为 300ms，普通长按阈值为 550ms。选择“按住快捷键直到松开”的按钮使用保存的阈值，松开时释放快捷键，不触发单击。触发记录会出现在上方 Vibe Key 卡片的“最近触发”列表里；手势发送成功不代表目标应用已执行。');
   }else{
     $('onboardKicker').textContent='首次配置 · 第 '+onboardStep+' / 3 步';
     $('onboardTitle').textContent=onboardStep===1?'连接 Vibe Key':onboardStep===2?'选择模板':'确认 9 个手势位';
@@ -1870,11 +1874,11 @@ function renderOnboardMatrix(){
       const gesture=ONBOARD_GESTURES[index],server=saved[button+':'+gesture.id],draft=onboardDraft[button][index];
       const cell=appNode('button');cell.type='button';cell.className='onboard-cell';
       cell.dataset.button=String(button);cell.dataset.gesture=gesture.id;
-      const description=server?('已保存 '+onboardStepsLabel(server.steps)):draft?onboardStepLabel(draft):'未配置';
+      const description=server?('已保存 '+onboardBindingLabel(server)):draft?onboardStepLabel(draft):'未配置';
       cell.setAttribute('aria-label',ONBOARD_BUTTONS[button]+' '+gesture.name+'：'+description+'；点击编辑');
       cell.setAttribute('aria-haspopup','dialog');
-      if(server){cell.dataset.saved='true';cell.append(appNode('b',onboardStepsLabel(server.steps)||'已保存'),appNode('small','已保存'));}
-      else if(draft){cell.dataset.filled='true';cell.append(appNode('b',onboardStepLabel(draft)),appNode('small',draft.type==='send_keys'?'手动快捷键':draft.type==='launch'?'启动应用':draft.type==='toggle_microphone'?'切换麦克风':'等待'));}
+      if(server){cell.dataset.saved='true';cell.append(appNode('b',onboardBindingLabel(server)||'已保存'),appNode('small',server.error?'运行失败：'+server.error:'已保存'));}
+      else if(draft){cell.dataset.filled='true';cell.append(appNode('b',onboardStepLabel(draft)),appNode('small',draft.type==='hold_keys'?'按住直到松开':draft.type==='send_keys'?'手动快捷键':draft.type==='launch'?'启动应用':draft.type==='toggle_microphone'?'切换麦克风':'等待'));}
       else cell.append(appNode('b','未配置'),appNode('small','点击配置'));
       cell.onclick=()=>openOnboardEditor(button,index);
       row.append(cell);
@@ -1908,7 +1912,10 @@ function fillOnboardMicSelect(){
 }
 function updateOnboardEditorFields(){
   const mode=$('onboardEditorMode').value;
+  const longSlot=!!onboardCell&&ONBOARD_GESTURES[onboardCell.gesture].id==='long';
+  $('onboardHoldOption').hidden=!longSlot;$('onboardHoldOption').disabled=!longSlot;
   $('onboardEditorKeysField').hidden=mode!=='keys';
+  $('onboardEditorHoldField').hidden=mode!=='hold'||!longSlot;
   $('onboardEditorLaunchField').hidden=mode!=='launch';
   $('onboardEditorMicField').hidden=mode!=='mic';
   $('onboardEditorWaitField').hidden=mode!=='wait';
@@ -1936,6 +1943,8 @@ function openOnboardEditor(button,index){
   $('onboardEditorMode').value=draft?onboardModeValue(draft.type):'none';
   $('onboardEditorError').textContent='';
   $('onboardChord').value=draft&&draft.type==='send_keys'?(draft.keys||''):'';
+  $('onboardHoldChord').value=draft&&draft.type==='hold_keys'?(draft.keys||''):'';
+  $('onboardHoldDelay').value=draft&&draft.type==='hold_keys'?String(draft.long_press_ms):'550';
   $('onboardWait').value=draft&&draft.type==='wait'?String(draft.ms):'200';
   fillOnboardAppSelect();fillOnboardMicSelect();
   if(draft&&draft.type==='launch'&&onboardApplications().some(app=>app.selection_id===draft.application_reference))$('onboardAppSelect').value=draft.application_reference;
@@ -1969,6 +1978,9 @@ function applyOnboardEditor(){
     const keys=$('onboardChord').value.trim();
     if(!keys){$('onboardEditorError').textContent='请输入或录入快捷键。';$('onboardChord').setAttribute('aria-invalid','true');$('onboardChord').focus();return;}
     value={type:'send_keys',keys};
+  }else if(mode==='hold'){
+    const keys=$('onboardHoldChord').value.trim(),delay=$('onboardHoldDelay').value.trim();
+    value={type:'hold_keys',keys,long_press_ms:delay===''?550:Number(delay)};
   }else if(mode==='launch'){
     const reference=$('onboardAppSelect').value,app=onboardApplications().find(item=>item.selection_id===reference);
     if(!reference||!app){$('onboardEditorError').textContent='请选择一个服务当前识别到的应用。';return;}
@@ -1982,6 +1994,8 @@ function applyOnboardEditor(){
     if(!Number.isFinite(ms)||ms<0||ms>10000){$('onboardEditorError').textContent='等待时间必须在 0 到 10000 毫秒之间。';return;}
     value={type:'wait',ms:Math.round(ms)};
   }
+  const error=onboardSlotError({button:onboardCell.button,gesture:ONBOARD_GESTURES[onboardCell.gesture].id,value});
+  if(error){$('onboardEditorError').textContent=error;return;}
   const label=ONBOARD_BUTTONS[onboardCell.button]+' '+ONBOARD_GESTURES[onboardCell.gesture].name;
   onboardDraft[onboardCell.button][onboardCell.gesture]=value;
   onboardCell=null;
@@ -2002,11 +2016,26 @@ function onboardDirectEntry(button){
   const entries=onboardHardware&&onboardHardware.direct&&Array.isArray(onboardHardware.direct.entries)?onboardHardware.direct.entries:[];
   return entries.find(entry=>entry&&entry.button===button)||null;
 }
+function onboardSlotError(slot){
+  const saved=onboardServerMap(),value=slot.value;
+  if(value&&value.type==='hold_keys'){
+    if(slot.gesture!=='long')return '只有长按格可以配置按住快捷键。';
+    if(!String(value.keys||'').trim())return '请手动填写微信输入法中当前设置的按住说话快捷键。';
+    if(!Number.isInteger(value.long_press_ms)||value.long_press_ms<150||value.long_press_ms>5000)return '长按阈值必须是 150 到 5000 毫秒之间的整数。';
+    if(saved[slot.button+':double']||onboardDraft[slot.button][1])return '按住快捷键不能与同一按钮的双击并存，请先清除双击。';
+  }
+  const long=saved[slot.button+':long'],draft=onboardDraft[slot.button][2];
+  if(value&&slot.gesture==='double'&&((long&&long.hold_keys)||(draft&&draft.type==='hold_keys')))return '此按钮已配置按住快捷键，不能再配置双击。';
+  return '';
+}
 async function clearOnboardDirectConflicts(slots){
   const buttons=[...new Set(slots.map(slot=>slot.button))].filter(button=>!!onboardDirectEntry(button));
-  if(!buttons.length)return '';
+  const heldButtons=[...new Set(slots.filter(slot=>slot.value.type==='hold_keys').map(slot=>slot.button))];
+  if(!buttons.length&&!heldButtons.length)return '';
   const lines=buttons.map(button=>'按钮 '+(button+1)+'：'+(onboardDirectEntry(button).chord||'直发组合键'));
-  if(!confirm('以下按键当前是固件直发，改为手势会先清除直发：\n\n'+lines.join('\n')+'\n\n微信语音等依赖固件直发的动作可能不再工作；确定继续吗？'))return 'cancelled';
+  const directNote=buttons.length?'以下按键当前是固件直发，改为手势会先清除直发：\n'+lines.join('\n')+'\n\n微信语音等依赖固件直发的动作可能不再工作。\n\n':'';
+  const holdNote=heldButtons.map(button=>'按钮 '+(button+1)+'：固件改写为 F'+(9+button)+'，并在所有键盘上全局保留此键；不识别物理设备。短按松开执行单击格动作，长按持续按住配置的快捷键、松开释放；同键双击不可用。').join('\n');
+  if(!confirm(directNote+holdNote+'\n\n确定保存并改写以上按钮固件吗？'))return 'cancelled';
   for(const button of buttons){
     const direct=onboardHardware&&onboardHardware.direct;
     if(!direct||!Number.isSafeInteger(direct.revision))return '无法读取直发 revision，未清除任何绑定。';
@@ -2035,8 +2064,15 @@ function onboardStepPayload(value){
 }
 function onboardGestureName(slot){
   const value=slot.value;
-  const detail=value.type==='send_keys'?value.keys:value.type==='launch'?(value.label||'应用'):value.type==='toggle_microphone'?'切换麦克风':'等待 '+value.ms+'ms';
+  const detail=value.type==='hold_keys'?'按住 '+value.keys:value.type==='send_keys'?value.keys:value.type==='launch'?(value.label||'应用'):value.type==='toggle_microphone'?'切换麦克风':'等待 '+value.ms+'ms';
   return onboardTruncate('B'+(slot.button+1)+' '+ONBOARD_GESTURES[slot.index].name+' · '+detail,78);
+}
+function onboardGesturePayload(slot,revision){
+  const error=onboardSlotError(slot);if(error)throw new Error(error);
+  const request={revision:Number.isSafeInteger(revision)?revision:0,name:onboardGestureName(slot),button:slot.button,gesture:slot.gesture,steps:[]};
+  if(slot.value.type==='hold_keys'){request.hold_keys=slot.value.keys.trim();request.long_press_ms=slot.value.long_press_ms;}
+  else request.steps=[onboardStepPayload(slot.value)];
+  return request;
 }
 async function saveOnboard(){
   if(!onboardSupported()){onboardSetStatus('保存失败：页面未授权，请从托盘重新打开配置。','error');return;}
@@ -2050,6 +2086,8 @@ async function saveOnboard(){
   if(latest.storage_writable===false){onboardBusy=false;onboardSetStatus('保存失败：服务的手势存储当前不可写。','error');renderOnboardButtons();return;}
   const slots=onboardChangedSlots();
   if(!slots.length){onboardBusy=false;onboardSetStatus('手势列表已变化：没有剩余需要保存的手势位。','idle');renderOnboardButtons();return;}
+  const invalid=slots.map(onboardSlotError).find(Boolean);
+  if(invalid){onboardBusy=false;onboardSetStatus('未保存：'+invalid,'error');renderOnboardButtons();return;}
   const conflict=await clearOnboardDirectConflicts(slots);
   if(conflict==='cancelled'){
     onboardBusy=false;onboardSetStatus('已取消：没有修改固件直发，也没有保存手势。','idle');renderOnboardButtons();return;
@@ -2067,7 +2105,8 @@ async function saveOnboard(){
     if(!revisionView){failure='保存中断：无法读取当前手势 revision。';break;}
     if(revisionView.storage_writable===false){failure='保存失败：服务的手势存储当前不可写。';break;}
     if(onboardServerMap()[slot.button+':'+slot.gesture])continue;
-    const body=JSON.stringify({revision:Number.isSafeInteger(revisionView.revision)?revisionView.revision:0,name:onboardGestureName(slot),button:slot.button,gesture:slot.gesture,steps:[onboardStepPayload(slot.value)]});
+    const error=onboardSlotError(slot);if(error){failure='未保存：'+error;break;}
+    const body=JSON.stringify(onboardGesturePayload(slot,revisionView.revision));
     const expectedToken=serviceToken,controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
     try{
       const response=await api('/api/gestures/add',{method:'POST',signal:controller.signal,body});
@@ -2085,6 +2124,7 @@ async function saveOnboard(){
         failure='已保存手势，但 '+buttonLabel+' 固件写入失败：'+(hardware.error||'设备未读回写入值')+'。设备可能不会触发这个手势；请稍后重试或同步到设备。';
         break;
       }
+      if(saved.error){failure='已保存手势，但运行失败：'+saved.error;break;}
     }catch(error){failure='保存失败：'+(error&&error.name==='AbortError'?'请求超时':(error&&error.message)||'服务未响应');break;}
     finally{clearTimeout(timeout);}
   }

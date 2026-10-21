@@ -109,6 +109,27 @@ API shape:
 ```
 
 
+## Recipe: one button — microphone toggle on tap, input-method voice on hold
+
+Use the existing gesture editor or authenticated `/api/gestures/add`:
+
+1. Read the existing button and gesture slots. Explain any replacement and the
+   globally reserved bare F9/F10/F11 key, then obtain the existing firmware-write
+   confirmation. Do not overwrite direct/application/action bindings silently.
+2. Save a `single` slot with `toggle_microphone` and the exact selected `device_id`.
+3. Save a `long` slot with `steps: []`, explicit user-supplied `hold_keys`, and
+   `long_press_ms` (150–5000, default 550). Do not guess a WeChat chord or infer
+   that an existing start/stop shortcut has hold semantics.
+4. No `double` slot may share this mode. Short releases each run Single;
+   long presses hold the chord until release, Escape, edit or shutdown.
+5. Read back `gestures`, `hardware.state`, `hold_error` and each held slot's
+   `armed`/`error`. Persistence, firmware readback, keyboard dispatch and actual
+   input-method voice acceptance are distinct results. No audio mutation or
+   physical test during a current voice call.
+
+The configuration remains in `gestures.json`; ordinary gesture bindings retain
+their existing behavior. See [the held-shortcut contract](../../../docs/integrations/wechat-input.md#optional-vibe-key-taphold-configuration).
+
 ## Recipe: app shortcut → AU05 button
 
 Use the application shortcut path when the target accepts a chord and the user
