@@ -107,6 +107,7 @@ class Tests(unittest.TestCase):
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             ca=ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert((Path(self.temp.name)/'tls/phone-ca.cer').read_bytes()))
+            ca.verify_flags |= ssl.VERIFY_X509_STRICT
             def request(path,body,origin='valid',token=None):
                 conn=http.client.HTTPSConnection('127.0.0.1',server.server_port,context=ca,timeout=3)
                 headers={'Content-Type':'application/json','Origin':'https://'+host if origin=='valid' else origin}

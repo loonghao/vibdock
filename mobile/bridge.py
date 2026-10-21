@@ -228,6 +228,8 @@ def certificates(directory, address):
     ca = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
           .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(minutes=5))
           .not_valid_after(now + datetime.timedelta(days=2)).add_extension(x509.BasicConstraints(ca=True, path_length=0), True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), False)
+          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), False)
           .add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), True)
           .sign(key, hashes.SHA256()))
     leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -236,6 +238,8 @@ def certificates(directory, address):
             .not_valid_before(now - datetime.timedelta(minutes=5)).not_valid_after(now + datetime.timedelta(days=2))
             .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(address))]), False)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()), False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), False)
             .add_extension(x509.KeyUsage(True, False, True, False, False, False, False, False, False), True)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), False).sign(key, hashes.SHA256()))
     for filename, data in [('phone-ca.cer', ca.public_bytes(serialization.Encoding.DER)),
