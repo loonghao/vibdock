@@ -30,11 +30,13 @@ Extract the candidate ZIP into a new directory. Verify it with
 Do not replace an installed copy. In a new PowerShell window:
 
 ```powershell
-$env:LOCALAPPDATA = Join-Path $PWD 'preview-data'
-$env:VIBDOCK_PORT = '38941'
-.\vibdock-launcher.exe
+.\docs\start-gesture-preview.ps1
 ```
 
+The script uses `preview-data` and port 38941. It creates an empty hardware
+configuration only when absent, preventing automatic first-run firmware defaults.
+If downloaded scripts are blocked, use a process-scoped invocation:
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\docs\start-gesture-preview.ps1`.
 This isolates files and service discovery; it does not virtualize Windows global
 hotkeys or AU05 firmware. Do not run two hardware-owning services together. Close
 an existing instance yourself before hardware acceptance. Never test microphone
@@ -50,7 +52,8 @@ These receipts prove service dispatch, not IME recording state. Hardware, WeChat
 Windows audio, hooks and laptop acceptance remain pending until observed.
 
 Rollback: Exit VibDock through this preview's tray or use `vibdock service-stop`
-from the same PowerShell environment. Release physical keys. Restore previous
+with `LOCALAPPDATA` set to the extracted folder’s `preview-data` and
+`VIBDOCK_PORT=38941`. Release physical keys. Restore previous
 firmware bindings explicitly from your saved configuration if you changed them.
 Delete `preview-data` only if you no longer need its isolated settings; start your
 previous installation normally. No existing user settings are overwritten.
