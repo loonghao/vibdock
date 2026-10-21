@@ -358,22 +358,17 @@ mod tests {
     use serde_json::json;
 
     fn store() -> (Store, PathBuf) {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
         let dir = std::env::temp_dir().join(format!(
-            "vibdock-gestures-test-{}-{stamp}",
-            std::process::id()
+            "vibdock-gestures-test-{}-{}",
+            std::process::id(),
+            crate::generate_token().unwrap()
         ));
         std::fs::create_dir(&dir).unwrap();
         (Store::start(dir.clone()), dir)
     }
 
     fn add(store: &mut Store, body: &str) -> (u16, Value) {
-        let executable = std::env::current_exe()
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| r"C:\Fixture\App.exe".to_string());
+        let executable = r"C:\Fixture\App.exe".to_string();
         let mut resolve = move |_reference: &str| Some((executable.clone(), "App".to_string()));
         store.add(body, &CommandRegistry::empty_for_test(), &mut resolve)
     }

@@ -1097,7 +1097,7 @@ fn accept_loop(
             .iter()
             .filter_map(|binding| match binding.source {
                 crate::actions::Source::Au05Button(button) => Some(button),
-                crate::actions::Source::Gamepad { .. } => None,
+                crate::actions::Source::Gamepad { .. } | crate::actions::Source::VirtualPad => None,
             })
             .collect();
         action_buttons.extend(gestures.buttons());

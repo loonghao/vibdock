@@ -106,6 +106,7 @@ pub const HOTKEY_ID_BASE: i32 = 2000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
+    VirtualPad,
     Au05Button(u8),
     Gamepad {
         device_key: String,
@@ -117,6 +118,7 @@ pub enum Source {
 impl Source {
     fn json(&self) -> Value {
         match self {
+            Source::VirtualPad => json!({"kind":"pad"}),
             Source::Au05Button(button) => json!({"kind":"au05","button":button}),
             Source::Gamepad {
                 device_key,
@@ -128,6 +130,7 @@ impl Source {
 
     fn parse(value: &Value) -> Option<Self> {
         match value["kind"].as_str()? {
+            "pad" => Some(Source::VirtualPad),
             "au05" => {
                 let button = u8::try_from(value["button"].as_u64()?).ok()?;
                 (button <= 2).then_some(Source::Au05Button(button))
@@ -359,7 +362,7 @@ impl Binding {
             Source::Au05Button(_) => {
                 trigger.as_ref()?;
             }
-            Source::Gamepad { .. } => {
+            Source::Gamepad { .. } | Source::VirtualPad => {
                 if trigger.is_some() {
                     return None;
                 }
@@ -599,7 +602,7 @@ impl Registry {
         let binding = self.bindings.get(index)?;
         let button = match binding.source {
             Source::Au05Button(button) => Some(button),
-            Source::Gamepad { .. } => None,
+            Source::Gamepad { .. } | Source::VirtualPad => None,
         };
         Some((binding.name.clone(), binding.trigger.clone(), button))
     }
@@ -611,7 +614,7 @@ impl Registry {
             .find(|binding| binding.id == id)
             .and_then(|binding| match binding.source {
                 Source::Au05Button(button) => Some(button),
-                Source::Gamepad { .. } => None,
+                Source::Gamepad { .. } | Source::VirtualPad => None,
             })
     }
 
@@ -690,9 +693,13 @@ impl Registry {
             return fail(400, "Action name must be plain text under 80 bytes");
         };
         let Some(source) = Source::parse(&value["source"]) else {
-            return fail(400, "source must be an AU05 button or a gamepad button");
+            return fail(
+                400,
+                "source must be an AU05 button, gamepad button or virtual Pad",
+            );
         };
         let duplicate = match &source {
+            Source::VirtualPad => false,
             Source::Au05Button(button) => self.has_button(*button),
             Source::Gamepad {
                 device_key, usage, ..
@@ -716,7 +723,7 @@ impl Registry {
                     );
                 }
             }
-            Source::Gamepad { .. } => {}
+            Source::Gamepad { .. } | Source::VirtualPad => {}
         }
         let Some(raw_steps) = value["steps"].as_array() else {
             return fail(400, "steps must be an array");
@@ -752,7 +759,7 @@ impl Registry {
                     )
                 }
             },
-            Source::Gamepad { .. } => None,
+            Source::Gamepad { .. } | Source::VirtualPad => None,
         };
         let Ok(id) = generate_token() else {
             return fail(503, "Secure action identifiers are unavailable");
@@ -953,10 +960,9 @@ fn parse_file(bytes: &[u8], commands: &CommandRegistry) -> Option<(Vec<Binding>,
         {
             return None;
         }
-        if bindings
-            .iter()
-            .any(|existing: &Binding| existing.source == binding.source)
-        {
+        if bindings.iter().any(|existing: &Binding| {
+            existing.source == binding.source && binding.source != Source::VirtualPad
+        }) {
             return None;
         }
         bindings.push(binding);
@@ -1312,6 +1318,29 @@ mod tests {
         assert_eq!(view["bindings"][0]["steps"][0]["type"], "wait");
         let stored = std::fs::read_to_string(registry.path.clone()).unwrap();
         assert!(stored.contains("\"bindings\""));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn multiple_virtual_actions_persist_without_hardware_or_hotkeys() {
+        let (mut registry, dir) = registry();
+        for revision in 0..2 {
+            let body = serde_json::json!({"revision":revision,"name":"Phone shortcut",
+                "source":{"kind":"pad"},"steps":[{"type":"send_keys","keys":"Alt + V"}]})
+            .to_string();
+            let (code, view) = registry.add(&body, &Reserved::default(), &mut |_| None);
+            assert_eq!(code, 200, "{view}");
+        }
+        assert!(registry
+            .bindings
+            .iter()
+            .all(|binding| binding.trigger.is_none()));
+        assert!(!registry.has_button(0) && !registry.has_button(1) && !registry.has_button(2));
+        let stored = std::fs::read(&registry.path).unwrap();
+        let (bindings, revision) = parse_file(&stored, registry.commands()).unwrap();
+        assert_eq!(revision, 2);
+        assert_eq!(bindings.len(), 2);
+        assert!(registry.steps_for_id(&bindings[0].id).is_some());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
