@@ -18,7 +18,9 @@ Open PowerShell in the extracted folder:
 .\start-preview.ps1
 ```
 
-This uses `preview-data` and port 38942, preserving existing settings. Close an
+This uses `preview-data` and port 38942, preserving existing settings. On first
+launch the script creates an empty isolated hardware configuration to prevent
+built-in AU05 firmware defaults from being written automatically. Close an
 older hardware-owning instance yourself before using physical controls. Creating
 phone actions does not require writing AU05 firmware: in the existing action
 editor choose source **手机 / 虚拟 Pad**, add allowed shortcut steps and save.
