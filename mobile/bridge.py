@@ -80,6 +80,8 @@ class Bridge:
         with self.lock:
             if time.monotonic() > self.ticket_until or not self.ticket or not hmac.compare_digest(ticket, self.ticket):
                 raise ValueError('Pairing expired or already used. Restart the bridge for a new QR.')
+            if len(self.sessions) >= 8:
+                raise ValueError('Eight phone sessions already paired; restart bridge to revoke them.')
             self.ticket = ''
             session = secrets.token_urlsafe(32)
             self.sessions[session] = {'until': time.monotonic() + 28800, 'next': 1, 'results': {}}
@@ -286,7 +288,12 @@ def handler(bridge, host, admin=False, admin_secret='', phone_url='', ca=None):
                     return self.reply(404, {'error': 'Not found'})
                 import qrcode
                 import qrcode.image.svg
-                qr = qrcode.make(phone_url, image_factory=qrcode.image.svg.SvgPathImage)
+                # Renew only from the secret laptop panel, retaining this run's certificate.
+                with bridge.lock:
+                    bridge.ticket = secrets.token_urlsafe(32)
+                    bridge.ticket_until = time.monotonic() + 120
+                    current_url = phone_url.split('#', 1)[0] + '#' + bridge.ticket
+                qr = qrcode.make(current_url, image_factory=qrcode.image.svg.SvgPathImage)
                 stream = io.BytesIO()
                 qr.save(stream)
                 image = base64.b64encode(stream.getvalue()).decode()
@@ -296,7 +303,7 @@ def handler(bridge, host, admin=False, admin_secret='', phone_url='', ca=None):
                         f'Expires in 2 minutes, usable once. Only selected saved actions are allowed.</p>'
                         f'<a download="vibdock-phone-ca.cer" href="data:application/pkix-cert;base64,{cert}">Download local CA</a>'
                         f'<p><img width="320" src="data:image/svg+xml;base64,{image}"></p>'
-                        f'<p>{phone_url}</p><p>Stop this console to revoke all access. No remote PC keyboard is controlled.</p>')
+                        f'<p>{current_url}</p><p>Refresh this laptop panel to renew the QR after certificate setup.</p><p>Stop this console to revoke all access. No remote PC keyboard is controlled.</p>')
                 return self.reply(200, html.encode(), 'text/html; charset=utf-8')
             if self.path in ('/', '/pad.js'):
                 file = ROOT / ('pad.html' if self.path == '/' else 'pad.js')

@@ -77,7 +77,8 @@ when finished. If the browser still reports certificate errors or
 `isSecureContext` is false, recording stays unavailable. Do not assume clicking
 through a certificate warning enables microphone access.
 
-Then scan the QR. It contains a one-use pairing ticket in the URL fragment,
+After certificate setup, refresh the laptop pairing panel to renew its two-minute
+QR without restarting the bridge or changing its certificate. Then scan the QR. It contains a one-use pairing ticket in the URL fragment,
 which is removed immediately after loading. Confirm that the phone target equals
 the laptop panel. The local CA is regenerated on every bridge restart; repeat
 phone trust setup for a new run and remove the old CA.
