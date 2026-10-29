@@ -55,7 +55,7 @@ jobs:
         run: python3 scripts/test-macos-desktop.py
       - name: Upload macOS candidate archive
         if: runner.os == 'macOS' && success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vibdock-macos-candidate
           path: |
@@ -125,7 +125,7 @@ jobs:
           ./scripts/verify-windows-package.ps1 -Archive "vibdock-$tag-$target.zip" -EvidenceDirectory work/package-check
       - name: Upload Windows candidate archive
         if: runner.os == 'Windows' && success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vibdock-windows-candidate
           path: |
@@ -134,7 +134,7 @@ jobs:
           if-no-files-found: error
       - name: Upload desktop and browser evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-evidence-${{ matrix.os }}
           path: |
